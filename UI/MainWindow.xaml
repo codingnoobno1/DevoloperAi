@@ -1,0 +1,226 @@
+﻿<Window x:Class="DeveloperAI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DeveloperAI - Advanced Script Generator"
+        Height="700" Width="1000"
+        Background="#1E1E2F"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI">
+
+    <Window.Resources>
+        <SolidColorBrush x:Key="PrimaryBrush" Color="#1E1E2F"/>
+        <SolidColorBrush x:Key="SecondaryBrush" Color="#2D2D3D"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#4FC3F7"/>
+        <SolidColorBrush x:Key="TextBrush" Color="White"/>
+        <SolidColorBrush x:Key="SuccessBrush" Color="#4CAF50"/>
+        <SolidColorBrush x:Key="WarningBrush" Color="#FF9800"/>
+    </Window.Resources>
+
+    <Grid Margin="15" Background="{StaticResource PrimaryBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>     <!-- Title -->
+            <RowDefinition Height="Auto"/>     <!-- Configuration Panel -->
+            <RowDefinition Height="Auto"/>     <!-- Input Box -->
+            <RowDefinition Height="*"/>        <!-- Output Display -->
+            <RowDefinition Height="Auto"/>     <!-- Buttons -->
+        </Grid.RowDefinitions>
+
+        <!-- Title -->
+        <TextBlock Text="🤖 DeveloperAI Advanced Script Generator"
+                   FontSize="24"
+                   FontWeight="Bold"
+                   Foreground="{StaticResource AccentBrush}"
+                   Margin="0,0,0,15"/>
+
+        <!-- Configuration Panel -->
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Terminal & Path Configuration -->
+            <StackPanel Grid.Column="0" Margin="0,0,10,0">
+                <TextBlock Text="📁 Working Directory" 
+                           Foreground="{StaticResource AccentBrush}" 
+                           FontWeight="Bold" 
+                           Margin="0,0,0,5"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="WorkingDirectoryInput"
+                             Grid.Column="0"
+                             Text="C:\"
+                             Background="{StaticResource SecondaryBrush}"
+                             Foreground="{StaticResource TextBrush}"
+                             Padding="5"
+                             Margin="0,0,5,0"/>
+                    <Button Grid.Column="1" 
+                            Content="📂" 
+                            Width="30"
+                            Background="{StaticResource AccentBrush}"
+                            Click="BrowseDirectory_Click"/>
+                </Grid>
+            </StackPanel>
+
+            <!-- Environment Configuration -->
+            <StackPanel Grid.Column="1" Margin="5,0">
+                <TextBlock Text="🐍 Environment" 
+                           Foreground="{StaticResource AccentBrush}" 
+                           FontWeight="Bold" 
+                           Margin="0,0,0,5"/>
+                <ComboBox x:Name="EnvironmentComboBox"
+                          Background="{StaticResource SecondaryBrush}"
+                          Foreground="{StaticResource TextBrush}"
+                          Padding="5"
+                          SelectedIndex="0">
+                    <ComboBoxItem Content="None"/>
+                    <ComboBoxItem Content="Python"/>
+                    <ComboBoxItem Content="Node.js"/>
+                    <ComboBoxItem Content="Java"/>
+                    <ComboBoxItem Content="C#/.NET"/>
+                    <ComboBoxItem Content="Go"/>
+                    <ComboBoxItem Content="Rust"/>
+                </ComboBox>
+            </StackPanel>
+
+            <!-- Port Configuration -->
+            <StackPanel Grid.Column="2" Margin="10,0,0,0">
+                <TextBlock Text="🔌 Port Configuration" 
+                           Foreground="{StaticResource AccentBrush}" 
+                           FontWeight="Bold" 
+                           Margin="0,0,0,5"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="PortInput"
+                             Grid.Column="0"
+                             Text="3000"
+                             Background="{StaticResource SecondaryBrush}"
+                             Foreground="{StaticResource TextBrush}"
+                             Padding="5"
+                             Margin="0,0,5,0"/>
+                    <Button Grid.Column="1" 
+                            Content="🔍" 
+                            Width="30"
+                            Background="{StaticResource WarningBrush}"
+                            Click="CheckPort_Click"/>
+                </Grid>
+                <Button Content="🔍 Check Environments"
+                        Height="25"
+                        Margin="0,5,0,0"
+                        Background="{StaticResource AccentBrush}"
+                        Foreground="White"
+                        FontSize="10"
+                        Click="CheckEnvironments_Click"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- Prompt Input -->
+        <TextBox x:Name="PromptInput"
+                 Grid.Row="2"
+                 AcceptsReturn="True"
+                 Height="80"
+                 Margin="0,0,0,10"
+                 Background="{StaticResource SecondaryBrush}"
+                 Foreground="{StaticResource TextBrush}"
+                 FontSize="14"
+                 Padding="10"
+                 TextWrapping="Wrap"
+                 Text="Create a Python web server on port 3000 with Flask"/>
+
+        <!-- Response Display -->
+        <ScrollViewer Grid.Row="3"
+                      VerticalScrollBarVisibility="Auto"
+                      Background="{StaticResource SecondaryBrush}"
+                      Padding="10"
+                      Margin="0,5,0,5">
+            <TextBlock x:Name="ResponseDisplay"
+                       Text=""
+                       TextWrapping="Wrap"
+                       Foreground="{StaticResource TextBrush}"
+                       FontSize="14"/>
+        </ScrollViewer>
+
+        <!-- Buttons Panel -->
+        <Grid Grid.Row="4" Margin="0,10,0,5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Generate Button -->
+            <Button Content="🚀 Generate Script"
+                    Grid.Column="0"
+                    Height="40"
+                    Margin="0,0,10,0"
+                    Background="{StaticResource AccentBrush}"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    Click="GenerateButton_Click"/>
+
+            <!-- Install Libraries Button -->
+            <Button Content="📦 Install Libraries"
+                    Grid.Column="1"
+                    Height="40"
+                    Width="120"
+                    Margin="0,0,10,0"
+                    Background="{StaticResource SuccessBrush}"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    Click="InstallLibraries_Click"/>
+
+            <!-- Open Terminal Button -->
+            <Button Content="💻 Open Terminal"
+                    Grid.Column="2"
+                    Height="40"
+                    Width="120"
+                    Margin="0,0,10,0"
+                    Background="{StaticResource WarningBrush}"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    Click="OpenTerminal_Click"/>
+
+            <!-- Run Script Button -->
+            <Button Content="▶️ Run Script"
+                    Grid.Column="3"
+                    Height="40"
+                    Width="100"
+                    Background="{StaticResource SuccessBrush}"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    Click="RunScript_Click"/>
+
+            <!-- Env Terminal ComboBox and Button -->
+            <ComboBox x:Name="EnvTerminalComboBox"
+                      Grid.Column="4"
+                      Width="120"
+                      Margin="0,0,10,0"
+                      SelectedIndex="0">
+                <ComboBoxItem Content="python"/>
+                <ComboBoxItem Content="node"/>
+                <ComboBoxItem Content="java"/>
+                <ComboBoxItem Content="cpp"/>
+                <ComboBoxItem Content="rust"/>
+                <ComboBoxItem Content="go"/>
+            </ComboBox>
+            <Button Content="🖥️ Open Env Terminal"
+                    Grid.Column="5"
+                    Height="40"
+                    Width="150"
+                    Background="{StaticResource AccentBrush}"
+                    Foreground="White"
+                    FontWeight="Bold"
+                    Click="OpenEnvTerminal_Click"/>
+        </Grid>
+    </Grid>
+</Window>
