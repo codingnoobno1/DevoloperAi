@@ -1688,3 +1688,1245 @@ AstProjectMap returned to UI / CLI
 | **Total .cs files** | **43** |
 | Razor pages | 4 |
 | **Grand total** | **47** |
+
+---
+
+# Extension: Project Analyser — Full Implementation Plan
+
+## What It Is
+
+A new **sub-tab under Projects** called **Project Analyser**.
+The user pastes any Git URL. Syncro clones it, runs the full AST engine,
+then stores everything in a **file-system vector store (Hindsight)**.
+That vectorized knowledge is the permanent "hindsight" for that project —
+it can be queried at any time by AI, used to generate docs, render a Swagger UI,
+explain functions, or build a cross-project knowledge graph.
+
+```
+Projects (nav item)
+├── My Projects          /myprojects
+└── Project Analyser     /projectanalyser      ← NEW
+      ├── Tab: Clone & Analyse
+      ├── Tab: Knowledge Base
+      ├── Tab: API Explorer
+      ├── Tab: Swagger UI
+      ├── Tab: Doc Generator
+      └── Tab: Graphs
+```
+
+---
+
+## New NuGet Packages
+
+```xml
+<!-- LibGit2Sharp already pulled in via LibGit2SharpService — no new dep needed for clone -->
+
+<!-- Static HTML templating for Swagger UI page generation -->
+<PackageReference Include="Scriban" Version="5.12.1" />
+
+<!-- Math.NET for cosine similarity in vector store -->
+<PackageReference Include="MathNet.Numerics" Version="5.0.0" />
+
+<!-- Simple in-process full-text + vector search -->
+<!-- No external server needed — pure file-system store -->
+```
+
+---
+
+## New File Map (29 C# + 7 Razor = 36 more files)
+
+```
+Services/AST/
+│
+├── Ingestion/
+│   ├── GitCloneService.cs               [45]  Clone any git URL to temp/workspace folder
+│   ├── ProjectIngestionPipeline.cs      [46]  Orchestrate: clone → AST → vectorize → store
+│   ├── IngestionSession.cs              [47]  Live session model (progress, status, results)
+│   └── IngestionStatus.cs              [48]  Enum + event args for progress reporting
+│
+├── Hindsight/
+│   ├── HindsightEngine.cs               [49]  Main hindsight coordinator (query, summarize)
+│   ├── VectorStore.cs                   [50]  File-system vector store (CRUD + search)
+│   ├── VectorDocument.cs                [51]  Stored doc (id, content, vector, metadata)
+│   ├── VectorIndex.cs                   [52]  In-memory index (loaded from disk)
+│   ├── VectorQuery.cs                   [53]  Cosine similarity search engine
+│   ├── DocumentChunker.cs               [54]  Chunk AstProjectMap → VectorDocuments
+│   ├── EmbeddingService.cs              [55]  TF-IDF or AI-based embedding generation
+│   └── TfIdfVectorizer.cs               [56]  Pure C# TF-IDF implementation
+│
+├── DocGen/
+│   ├── IDocGenerator.cs                 [57]  Generator contract
+│   ├── ApiDocGenerator.cs               [58]  Generate API docs (all endpoints + params)
+│   ├── FunctionDocGenerator.cs          [59]  Generate per-function documentation via LLM
+│   ├── ReadmeGenerator.cs               [60]  Generate project README from analysis
+│   └── SwaggerUiGenerator.cs            [61]  Generate interactive Swagger HTML page
+│
+└── Knowledge/
+    ├── KnowledgeBase.cs                 [62]  Manage all knowledge for a project
+    ├── KnowledgeEntry.cs                [63]  Single knowledge item model
+    ├── KnowledgeQuery.cs                [64]  Natural-language query → hindsight retrieval
+    ├── KnowledgeSummaryService.cs       [65]  AI-summarize entire project knowledge
+    └── KnowledgeExportService.cs        [66]  Export knowledge as MD/JSON/PDF
+
+Components/Pages/Projects/
+├── ProjectAnalyser.razor                [67]  Shell page: MudTabs + routing
+├── Tabs/CloneAndAnalyse.razor           [68]  Git URL input, clone progress, scan results
+├── Tabs/KnowledgeBaseTab.razor          [69]  Search vectorized knowledge, browse entries
+├── Tabs/ApiExplorerTab.razor            [70]  Endpoint table, filter, detail panel
+├── Tabs/SwaggerUiTab.razor              [71]  Render generated Swagger HTML in WebView
+├── Tabs/DocGenTab.razor                 [72]  AI doc generation controls + output
+└── Tabs/GraphsTab.razor                 [73]  Graph visualizations (tree, DAG, dep graph)
+
+Services/SyncroCLI/Commands/
+└── (AstCommand.cs extended — no new file)
+```
+
+---
+
+## File-by-File Specification (Extension)
+
+---
+
+### [45] `Services/AST/Ingestion/GitCloneService.cs`
+
+**Purpose:** Clone any public or private git repo to the Syncro workspace folder.
+Uses `LibGit2Sharp` (already pulled in via `LibGit2SharpService`).
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Ingestion;
+
+public class GitCloneService
+{
+    private readonly string _workspaceRoot;
+    // Default: %LOCALAPPDATA%\SyncroDesktop\analysed\
+
+    public GitCloneService()
+    {
+        _workspaceRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "SyncroDesktop", "analysed");
+        Directory.CreateDirectory(_workspaceRoot);
+    }
+
+    // Clone repo, report progress via IProgress<CloneProgress>
+    public Task<string> CloneAsync(
+        string gitUrl,
+        IProgress<CloneProgressInfo>? progress = null,
+        string? branch = null,
+        CancellationToken ct = default);
+
+    // Derive local folder name from git URL
+    // "https://github.com/user/my-repo.git" → "my-repo_20250605_143022"
+    private string DeriveLocalName(string gitUrl);
+
+    // Check if already cloned (by URL hash in manifest)
+    public Task<string?> FindExistingCloneAsync(string gitUrl);
+
+    // Delete cloned folder
+    public Task DeleteCloneAsync(string localPath);
+
+    // List all cloned repos
+    public Task<List<ClonedRepoInfo>> ListClonesAsync();
+}
+
+public record CloneProgressInfo(string Stage, int PercentComplete, string? Detail);
+public record ClonedRepoInfo(string GitUrl, string LocalPath, DateTime ClonedAt, long SizeBytes);
+```
+
+---
+
+### [46] `Services/AST/Ingestion/ProjectIngestionPipeline.cs`
+
+**Purpose:** Full end-to-end pipeline. Wires together all subsystems for a single
+"analyse this git repo" operation. Each step fires a progress event the UI subscribes to.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Ingestion;
+
+public class ProjectIngestionPipeline
+{
+    // Injected: GitCloneService, AstEngine, HindsightEngine,
+    //           EmbeddingService, DocumentChunker, VectorStore,
+    //           ApiDocGenerator, KnowledgeSummaryService
+
+    public event Action<IngestionStatus>? StatusChanged;
+
+    // Full pipeline: returns completed IngestionSession
+    public async Task<IngestionSession> RunAsync(string gitUrl, IngestionOptions options, CancellationToken ct = default)
+    {
+        var session = new IngestionSession { GitUrl = gitUrl, StartedAt = DateTime.UtcNow };
+
+        // Step 1: Clone (20%)
+        Report(IngestionStatus.Cloning, 5);
+        session.LocalPath = await _cloneService.CloneAsync(gitUrl, progress: ..., ct: ct);
+
+        // Step 2: AST Scan (40%)
+        Report(IngestionStatus.Scanning, 25);
+        session.ProjectMap = await _engine.RunAsync(session.LocalPath, ctx, ct);
+
+        // Step 3: Chunk + vectorize (20%)
+        Report(IngestionStatus.Vectorizing, 65);
+        var chunks = _chunker.Chunk(session.ProjectMap);
+        var docs = await _embedding.EmbedAsync(chunks, ct);
+        await _vectorStore.UpsertBatchAsync(session.LocalPath, docs, ct);
+
+        // Step 4: Generate AI summary + docs (15%)
+        Report(IngestionStatus.GeneratingDocs, 85);
+        if (options.GenerateDocs)
+        {
+            session.GeneratedDocs = await _docGen.GenerateApiDocsAsync(
+                session.ProjectMap.Endpoints, session.ProjectMap.Dtos, ct);
+            session.ProjectSummary = await _summaryService.SummarizeAsync(session.ProjectMap, ct);
+        }
+
+        // Step 5: Build knowledge base entry (5%)
+        Report(IngestionStatus.Storing, 97);
+        await _knowledge.RegisterProjectAsync(session);
+
+        session.CompletedAt = DateTime.UtcNow;
+        Report(IngestionStatus.Done, 100);
+        return session;
+    }
+}
+
+public class IngestionOptions
+{
+    public bool GenerateDocs { get; set; } = true;
+    public bool ScanPorts { get; set; } = false;   // Off for remote repos
+    public bool GenerateSwagger { get; set; } = true;
+    public bool DeleteCloneAfter { get; set; } = false;
+    public string? Branch { get; set; }
+}
+```
+
+---
+
+### [47] `Services/AST/Ingestion/IngestionSession.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Ingestion;
+
+public class IngestionSession
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string GitUrl { get; set; } = "";
+    public string? LocalPath { get; set; }
+    public DateTime StartedAt { get; set; }
+    public DateTime? CompletedAt { get; set; }
+    public IngestionStatus CurrentStatus { get; set; }
+    public int ProgressPercent { get; set; }
+    public AstProjectMap? ProjectMap { get; set; }
+    public string? ProjectSummary { get; set; }        // AI-generated summary
+    public string? GeneratedDocs { get; set; }         // Markdown API docs
+    public string? SwaggerHtmlPath { get; set; }       // Path to generated swagger.html
+    public List<string> Errors { get; set; } = new();
+    public TimeSpan? Duration => CompletedAt.HasValue
+        ? CompletedAt.Value - StartedAt : null;
+}
+```
+
+---
+
+### [48] `Services/AST/Ingestion/IngestionStatus.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Ingestion;
+
+public enum IngestionStatus
+{
+    Idle,
+    Cloning,        // git clone running
+    Scanning,       // AST engine parsing files
+    Vectorizing,    // Chunking + embedding
+    GeneratingDocs, // LLM doc generation
+    Storing,        // Writing to knowledge base
+    Done,
+    Failed
+}
+```
+
+---
+
+### [49] `Services/AST/Hindsight/HindsightEngine.cs`
+
+**Purpose:** The central "memory" for all analysed projects.
+Provides the main API used by the UI and AI assistant.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Hindsight;
+
+public class HindsightEngine
+{
+    private readonly VectorStore _store;
+    private readonly VectorQuery _query;
+    private readonly KnowledgeBase _knowledge;
+    private readonly AIClient _ai;
+
+    // Ask a natural language question about a project
+    // Returns AI answer enriched with hindsight context
+    public Task<string> AskAsync(string projectPath, string question, CancellationToken ct = default);
+
+    // Get hindsight context string for injection into any AI prompt
+    // (used by AstRagQuery and DocGen services)
+    public Task<string> GetContextAsync(string projectPath, string query, int topK = 8);
+
+    // List all projects with vectorized hindsight
+    public Task<List<KnowledgeEntry>> ListProjectsAsync();
+
+    // Cross-project query: search across ALL vectorized projects
+    public Task<List<VectorSearchResult>> SearchAllProjectsAsync(string query, int topK = 10);
+
+    // Get full summary for a project (cached or re-generate)
+    public Task<string> GetProjectSummaryAsync(string projectPath);
+
+    // Forget a project (delete all its vector docs)
+    public Task ForgetProjectAsync(string projectPath);
+}
+```
+
+---
+
+### [50] `Services/AST/Hindsight/VectorStore.cs`
+
+**Purpose:** File-system vector store. No external database.
+Each project gets a folder: `%LOCALAPPDATA%\SyncroDesktop\knowledge\{projectHash}\`.
+Stores: `index.json` (metadata) + one `{chunkId}.vec.json` per vector document.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Hindsight;
+
+public class VectorStore
+{
+    private readonly string _storeRoot;
+    private readonly Dictionary<string, VectorIndex> _cache = new();
+
+    public VectorStore()
+    {
+        _storeRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "SyncroDesktop", "knowledge");
+        Directory.CreateDirectory(_storeRoot);
+    }
+
+    // Upsert a batch of documents for a project
+    public Task UpsertBatchAsync(string projectPath, IEnumerable<VectorDocument> docs, CancellationToken ct = default);
+
+    // Load index for a project (from disk or cache)
+    public Task<VectorIndex> LoadIndexAsync(string projectPath);
+
+    // Delete all docs for a project
+    public Task DeleteProjectAsync(string projectPath);
+
+    // List all projects in the store
+    public Task<List<string>> ListProjectPathsAsync();
+
+    // Get raw document by id
+    public Task<VectorDocument?> GetDocAsync(string projectPath, string docId);
+
+    // Project-specific storage path (SHA256 of projectPath)
+    private string GetProjectStorePath(string projectPath);
+}
+```
+
+---
+
+### [51] `Services/AST/Hindsight/VectorDocument.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Hindsight;
+
+public class VectorDocument
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string ProjectPath { get; set; } = "";
+    public string Content { get; set; } = "";        // Human-readable chunk text
+    public double[] Vector { get; set; } = [];       // TF-IDF or embedding vector
+    public AstNodeType NodeType { get; set; }
+    public string? SourceFile { get; set; }
+    public string? EntityName { get; set; }          // Class/method/endpoint name
+    public DateTime IndexedAt { get; set; } = DateTime.UtcNow;
+    public Dictionary<string, string> Metadata { get; set; } = new();
+    // Metadata keys: "route", "httpMethod", "language", "framework", "dtoName"
+}
+
+public record VectorSearchResult(VectorDocument Document, double Score);
+```
+
+---
+
+### [52] `Services/AST/Hindsight/VectorIndex.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Hindsight;
+
+public class VectorIndex
+{
+    public string ProjectPath { get; set; } = "";
+    public string ProjectName { get; set; } = "";
+    public string Language { get; set; } = "";
+    public string Framework { get; set; } = "";
+    public string? GitUrl { get; set; }
+    public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
+    public int DocumentCount { get; set; }
+    public string? ProjectSummary { get; set; }   // AI-generated summary
+
+    // Loaded into memory — not serialized (reconstructed from doc files)
+    [JsonIgnore] public List<VectorDocument> Documents { get; set; } = new();
+}
+```
+
+---
+
+### [53] `Services/AST/Hindsight/VectorQuery.cs`
+
+**Purpose:** Cosine similarity search over loaded VectorIndex.
+Uses `MathNet.Numerics` for vector math.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Hindsight;
+
+using MathNet.Numerics.LinearAlgebra;
+
+public class VectorQuery
+{
+    // Search a loaded index by cosine similarity
+    public List<VectorSearchResult> Search(
+        VectorIndex index,
+        double[] queryVector,
+        int topK = 8,
+        double minScore = 0.1,
+        AstNodeType? filterType = null);
+
+    // Cosine similarity between two dense vectors
+    private double CosineSimilarity(double[] a, double[] b);
+
+    // Search across multiple indexes
+    public List<VectorSearchResult> SearchAll(
+        IEnumerable<VectorIndex> indexes,
+        double[] queryVector,
+        int topK = 10);
+}
+```
+
+---
+
+### [54] `Services/AST/Hindsight/DocumentChunker.cs`
+
+**Purpose:** Converts an `AstProjectMap` into a list of text chunks
+ready for vectorization. Each chunk is self-contained and human-readable.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Hindsight;
+
+public class DocumentChunker
+{
+    // Chunk strategies (all applied):
+    public List<VectorDocument> Chunk(AstProjectMap map)
+    {
+        var docs = new List<VectorDocument>();
+
+        docs.AddRange(ChunkEndpoints(map));      // One doc per API endpoint
+        docs.AddRange(ChunkDtos(map));           // One doc per DTO
+        docs.AddRange(ChunkClasses(map));        // One doc per class
+        docs.AddRange(ChunkMethods(map));        // One doc per method/function
+        docs.AddRange(ChunkDependencies(map));   // One doc for dep summary
+        docs.AddRange(ChunkPorts(map));          // One doc for port summary
+        docs.Add(ChunkProjectSummary(map));      // One doc for overall summary
+
+        return docs;
+    }
+
+    // Example endpoint chunk text:
+    // "POST /api/users/{id} — handler: UserController.UpdateUser
+    //  Parameters: id (path, int, required), body: UpdateUserDto
+    //  Response: UserResponse | Requires auth: true | File: UserController.cs:42"
+    private List<VectorDocument> ChunkEndpoints(AstProjectMap map);
+
+    // Example method chunk text:
+    // "Method: AuthService.GenerateToken(userId: string, role: string) → string
+    //  Complexity: 4 | File: Services/AuthService.cs:78
+    //  Dependencies called: JwtSecurityTokenHandler, DateTime.UtcNow"
+    private List<VectorDocument> ChunkMethods(AstProjectMap map);
+
+    // Max tokens per chunk (for LLM context window safety)
+    private string TruncateToTokenBudget(string text, int maxChars = 600);
+}
+```
+
+---
+
+### [55] `Services/AST/Hindsight/EmbeddingService.cs`
+
+**Purpose:** Converts text chunks into numeric vectors.
+Primary: TF-IDF (no API, pure local).
+Optional: call `AIClient` to get real embeddings if available.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Hindsight;
+
+public class EmbeddingService
+{
+    private readonly TfIdfVectorizer _tfidf;
+    private readonly AIClient? _ai;
+
+    // Embed a batch of VectorDocuments (sets .Vector on each)
+    public Task<List<VectorDocument>> EmbedAsync(List<VectorDocument> docs, CancellationToken ct = default);
+
+    // Embed a single query string for search
+    public Task<double[]> EmbedQueryAsync(string query);
+
+    // Use TF-IDF by default; switch to AI if ai != null and options say so
+    private EmbeddingMode _mode = EmbeddingMode.TfIdf;
+
+    public enum EmbeddingMode { TfIdf, AiApi }
+}
+```
+
+---
+
+### [56] `Services/AST/Hindsight/TfIdfVectorizer.cs`
+
+**Purpose:** Full TF-IDF implementation in C#. Builds a shared vocabulary
+from all project documents, then converts each doc to a sparse/dense vector.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Hindsight;
+
+public class TfIdfVectorizer
+{
+    private Dictionary<string, int> _vocabulary = new();
+    private Dictionary<string, double> _idfScores = new();
+    private int _docCount;
+
+    // Build vocabulary + IDF from all documents in a project
+    public void Fit(IEnumerable<string> documents);
+
+    // Vectorize a document using fitted vocabulary
+    public double[] Transform(string document);
+
+    // Fit + transform in one step
+    public double[][] FitTransform(IEnumerable<string> documents);
+
+    // Vectorize a query (uses fitted vocabulary, no IDF update)
+    public double[] TransformQuery(string query);
+
+    // Tokenize: lowercase, split on non-alphanumeric, remove stop words
+    private List<string> Tokenize(string text);
+
+    // Save/load vocabulary to disk (so re-fits aren't needed after restart)
+    public Task SaveAsync(string path);
+    public Task LoadAsync(string path);
+
+    private static readonly HashSet<string> StopWords =
+    [
+        "the", "a", "an", "is", "are", "was", "and", "or", "in", "to",
+        "of", "for", "this", "that", "it", "with", "as", "by", "at"
+    ];
+}
+```
+
+---
+
+### [57] `Services/AST/DocGen/IDocGenerator.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.DocGen;
+
+public interface IDocGenerator
+{
+    string DocType { get; }  // "api" | "function" | "readme" | "swagger-ui"
+    Task<string> GenerateAsync(AstProjectMap map, CancellationToken ct = default);
+}
+```
+
+---
+
+### [58] `Services/AST/DocGen/ApiDocGenerator.cs`
+
+**Purpose:** Uses AIClient + hindsight context to generate full Markdown API docs
+for every endpoint in the project.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.DocGen;
+
+public class ApiDocGenerator : IDocGenerator
+{
+    public string DocType => "api";
+
+    // Per endpoint: method, route, params, request body, response, examples
+    // Batches endpoints to stay within LLM token limits
+    public Task<string> GenerateAsync(AstProjectMap map, CancellationToken ct = default);
+
+    // Build structured prompt for one endpoint
+    private string BuildEndpointPrompt(AstEndpoint ep, List<AstDtoModel> dtos);
+
+    // Merge all individual endpoint docs into one Markdown doc
+    private string AssembleFinalDoc(
+        AstProjectMap map,
+        List<(AstEndpoint Ep, string Doc)> epDocs);
+
+    // Output format:
+    // # API Documentation — {projectName}
+    // ## POST /api/users
+    // **Handler:** UserController.CreateUser
+    // **Auth:** Required (Bearer)
+    // ### Request Body
+    // | Field | Type | Required |
+    // ### Response 200
+    // | Field | Type |
+    // ### Example
+    // ```json { ... } ```
+}
+```
+
+---
+
+### [59] `Services/AST/DocGen/FunctionDocGenerator.cs`
+
+**Purpose:** Generates docstring-style documentation for individual functions/methods
+using the LLM with code context. Especially useful for undocumented code.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.DocGen;
+
+public class FunctionDocGenerator : IDocGenerator
+{
+    public string DocType => "function";
+
+    // Generate docs for all methods in map that lack summary
+    public Task<string> GenerateAsync(AstProjectMap map, CancellationToken ct = default);
+
+    // Generate doc for a single method node
+    public Task<string> GenerateForMethodAsync(AstNode method, string? sourceSnippet = null, CancellationToken ct = default);
+
+    // Read source snippet (N lines around method) for context
+    private Task<string> ReadSourceSnippetAsync(AstNode method, int contextLines = 10);
+
+    // Prompt structure:
+    // "Given this {language} function signature and body snippet,
+    //  write a clear, concise docstring explaining what it does,
+    //  its parameters, return value, and any important side effects."
+}
+```
+
+---
+
+### [60] `Services/AST/DocGen/ReadmeGenerator.cs`
+
+**Purpose:** Generate a professional README.md for any project based on the
+full AST analysis + AI summarization.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.DocGen;
+
+public class ReadmeGenerator : IDocGenerator
+{
+    public string DocType => "readme";
+
+    public Task<string> GenerateAsync(AstProjectMap map, CancellationToken ct = default);
+
+    // README sections:
+    // # {Project Name}
+    // > {AI one-liner}
+    //
+    // ## Tech Stack
+    // Language: {lang} | Framework: {framework} | Deps: {count}
+    //
+    // ## Project Structure
+    // (file tree from AstNodes, max depth 3)
+    //
+    // ## API Endpoints
+    // Quick table of all routes
+    //
+    // ## Setup & Run
+    // (inferred from config files + package manager)
+    //
+    // ## Dependencies
+    // (top-level NuGet/npm/pip packages)
+
+    private string BuildFileTree(AstProjectMap map, int maxDepth = 3);
+    private string BuildEndpointTable(List<AstEndpoint> endpoints);
+    private string BuildSetupInstructions(AstProjectMap map);
+}
+```
+
+---
+
+### [61] `Services/AST/DocGen/SwaggerUiGenerator.cs`
+
+**Purpose:** Generates a self-contained `swagger.html` file that bundles
+Swagger UI (via CDN links) with the generated OpenAPI YAML inline.
+Can be opened in a browser or rendered in a MAUI WebView.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.DocGen;
+
+public class SwaggerUiGenerator : IDocGenerator
+{
+    private readonly ApiEndpointScanner _scanner;
+    private readonly SwaggerScanner _swaggerScanner;
+
+    public string DocType => "swagger-ui";
+
+    // Returns path to generated swagger.html
+    public Task<string> GenerateAsync(AstProjectMap map, CancellationToken ct = default);
+
+    // Build OpenAPI 3.0 YAML from AstProjectMap endpoints + DTOs
+    public string BuildOpenApiYaml(AstProjectMap map);
+
+    // Render HTML template with inline YAML using Scriban
+    // Template uses Swagger UI CDN: unpkg.com/swagger-ui-dist
+    private string RenderHtmlTemplate(string openApiYaml, string projectName);
+
+    // Save swagger.html to .projectmeta/swagger.html
+    private Task<string> SaveHtmlAsync(AstProjectMap map, string html);
+
+    // Output: self-contained HTML with:
+    //   - Swagger UI JS/CSS from CDN
+    //   - Inline spec as JS variable (no server needed)
+    //   - Dark theme matching Syncro's UI
+}
+```
+
+---
+
+### [62] `Services/AST/Knowledge/KnowledgeBase.cs`
+
+**Purpose:** Top-level knowledge management. Maintains a registry of all
+projects that have been ingested and their hindsight status.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Knowledge;
+
+public class KnowledgeBase
+{
+    private readonly VectorStore _store;
+    private readonly AstStorageService _astStorage;
+    private readonly string _registryPath;
+    // Registry: %LOCALAPPDATA%\SyncroDesktop\knowledge\registry.json
+
+    // Register a completed ingestion session
+    public Task RegisterProjectAsync(IngestionSession session);
+
+    // Load knowledge entry for a project
+    public Task<KnowledgeEntry?> GetAsync(string projectPath);
+
+    // All projects with knowledge
+    public Task<List<KnowledgeEntry>> ListAllAsync();
+
+    // Update summary for a project
+    public Task UpdateSummaryAsync(string projectPath, string summary);
+
+    // Check if a project has been indexed
+    public Task<bool> IsIndexedAsync(string projectPath);
+
+    // Remove project from knowledge base
+    public Task ForgetAsync(string projectPath);
+}
+```
+
+---
+
+### [63] `Services/AST/Knowledge/KnowledgeEntry.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Knowledge;
+
+public class KnowledgeEntry
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string ProjectPath { get; set; } = "";
+    public string ProjectName { get; set; } = "";
+    public string? GitUrl { get; set; }
+    public string Language { get; set; } = "";
+    public string Framework { get; set; } = "";
+    public string? Version { get; set; }
+    public DateTime IngestedAt { get; set; }
+    public DateTime? LastUpdatedAt { get; set; }
+    public string? Summary { get; set; }           // AI one-paragraph summary
+    public int VectorDocCount { get; set; }
+    public int EndpointCount { get; set; }
+    public int DtoCount { get; set; }
+    public int FileCount { get; set; }
+    public bool HasSwaggerHtml { get; set; }
+    public bool HasGeneratedDocs { get; set; }
+    public string? SwaggerHtmlPath { get; set; }
+    public string? GeneratedDocsPath { get; set; }
+}
+```
+
+---
+
+### [64] `Services/AST/Knowledge/KnowledgeQuery.cs`
+
+**Purpose:** Natural-language query → retrieve from hindsight → feed to AI → return answer.
+This is the "ask your codebase" interface.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Knowledge;
+
+public class KnowledgeQuery
+{
+    private readonly HindsightEngine _hindsight;
+    private readonly AIClient _ai;
+
+    // Ask a question about a specific project
+    public Task<KnowledgeQueryResult> AskProjectAsync(
+        string projectPath, string question, CancellationToken ct = default);
+
+    // Ask across all indexed projects ("which project uses Redis?")
+    public Task<KnowledgeQueryResult> AskAllProjectsAsync(
+        string question, CancellationToken ct = default);
+
+    // Compare two projects
+    public Task<string> CompareProjectsAsync(
+        string pathA, string pathB, string aspect, CancellationToken ct = default);
+
+    // Get code examples from hindsight for a pattern
+    public Task<List<VectorSearchResult>> FindExamplesAsync(
+        string pattern, string? projectPath = null, int topK = 5);
+}
+
+public class KnowledgeQueryResult
+{
+    public string Answer { get; set; } = "";
+    public List<VectorSearchResult> Sources { get; set; } = new();  // Supporting chunks
+    public string[] ProjectsSearched { get; set; } = [];
+    public TimeSpan Duration { get; set; }
+}
+```
+
+---
+
+### [65] `Services/AST/Knowledge/KnowledgeSummaryService.cs`
+
+**Purpose:** AI-powered summarization of a project's knowledge base.
+Produces: executive summary, notable patterns, warnings, recommendations.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Knowledge;
+
+public class KnowledgeSummaryService
+{
+    private readonly AIClient _ai;
+    private readonly HindsightEngine _hindsight;
+
+    // Generate full project summary using AI
+    public Task<string> SummarizeAsync(AstProjectMap map, CancellationToken ct = default);
+
+    // Generate bullet-point notes about a project
+    public Task<List<string>> GenerateNotesAsync(string projectPath, CancellationToken ct = default);
+
+    // Detect patterns: "this is a CRUD API", "uses repository pattern", etc.
+    public Task<List<string>> DetectPatternsAsync(AstProjectMap map, CancellationToken ct = default);
+
+    // Recommendations: "add pagination to GET /items", "missing error handling in AuthService"
+    public Task<List<string>> GenerateRecommendationsAsync(AstProjectMap map, CancellationToken ct = default);
+
+    // Summary prompt structure:
+    // "You are a senior architect analysing a {language} {framework} project.
+    //  Here is the project structure: {context from hindsight top-20 chunks}
+    //  Summarize: purpose, architecture, key APIs, data models, notable patterns.
+    //  Keep it under 300 words."
+}
+```
+
+---
+
+### [66] `Services/AST/Knowledge/KnowledgeExportService.cs`
+
+**Purpose:** Export all knowledge for a project as shareable files.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Knowledge;
+
+public class KnowledgeExportService
+{
+    private readonly KnowledgeBase _knowledge;
+    private readonly PdfReporter _pdfReporter;
+    private readonly JsonReporter _jsonReporter;
+
+    // Export as Markdown bundle (summary + API docs + DTO reference)
+    public Task<string> ExportMarkdownAsync(string projectPath, string outputDir);
+
+    // Export as PDF (uses existing PdfReporter)
+    public Task<string> ExportPdfAsync(string projectPath, string outputDir);
+
+    // Export as JSON (all vector docs + project map)
+    public Task<string> ExportJsonAsync(string projectPath, string outputDir);
+
+    // Export Swagger HTML
+    public Task<string> ExportSwaggerAsync(string projectPath, string outputDir);
+
+    // Export everything as a ZIP archive
+    public Task<string> ExportZipAsync(string projectPath, string outputDir);
+}
+```
+
+---
+
+## Razor Pages Specification
+
+---
+
+### [67] `Components/Pages/Projects/ProjectAnalyser.razor`
+
+```razor
+@page "/projectanalyser"
+@inject ProjectIngestionPipeline Pipeline
+@inject HindsightEngine Hindsight
+@inject KnowledgeBase Knowledge
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <div class="d-flex align-center justify-space-between mb-4">
+        <MudText Typo="Typo.h5" Class="font-weight-bold">PROJECT ANALYSER</MudText>
+        <MudChip Color="Color.Success" Size="Size.Small">
+            @_indexedCount projects in hindsight
+        </MudChip>
+    </div>
+
+    <MudTabs Elevation="0" Rounded="false" ApplyEffectsToContainer="true"
+             @bind-ActivePanelIndex="_activeTab" Class="analyser-tabs">
+
+        <MudTabPanel Text="Clone & Analyse" Icon="@Icons.Material.Filled.CloudDownload">
+            <CloneAndAnalyse OnIngestionComplete="OnIngestionComplete" />
+        </MudTabPanel>
+
+        <MudTabPanel Text="Knowledge Base" Icon="@Icons.Material.Filled.Psychology">
+            <KnowledgeBaseTab />
+        </MudTabPanel>
+
+        <MudTabPanel Text="API Explorer" Icon="@Icons.Material.Filled.Api"
+                     Disabled="_selectedProject == null">
+            <ApiExplorerTab ProjectMap="_selectedProject" />
+        </MudTabPanel>
+
+        <MudTabPanel Text="Swagger UI" Icon="@Icons.Material.Filled.Web"
+                     Disabled="_selectedProject == null">
+            <SwaggerUiTab ProjectPath="_selectedProject?.ProjectPath" />
+        </MudTabPanel>
+
+        <MudTabPanel Text="Doc Generator" Icon="@Icons.Material.Filled.AutoAwesome"
+                     Disabled="_selectedProject == null">
+            <DocGenTab ProjectMap="_selectedProject" />
+        </MudTabPanel>
+
+        <MudTabPanel Text="Graphs" Icon="@Icons.Material.Filled.AccountTree"
+                     Disabled="_selectedProject == null">
+            <GraphsTab ProjectMap="_selectedProject" />
+        </MudTabPanel>
+    </MudTabs>
+</MudContainer>
+```
+
+---
+
+### [68] `Components/Pages/Projects/Tabs/CloneAndAnalyse.razor`
+
+**UI behaviour:**
+
+1. **Input section:** Git URL text field + optional branch input + Options checkboxes (Generate Docs, Generate Swagger)
+2. **"Analyse" button** → triggers `ProjectIngestionPipeline.RunAsync()`
+3. **Progress stepper** (MudStepper or MudProgressLinear):
+   - Cloning → Scanning → Vectorizing → Generating Docs → Storing → Done
+4. **Live log** panel: streams status events from pipeline
+5. **Results card** after completion:
+   - Project name, language, framework badge
+   - Stats: Files, Endpoints, DTOs, Vector docs
+   - Buttons: "Open API Explorer", "View Swagger", "Open in Explorer"
+6. **Recent analyses list**: last 5 ingested projects (from KnowledgeBase.ListAllAsync())
+
+```csharp
+// Key state:
+private string _gitUrl = "";
+private string? _branch;
+private bool _isRunning;
+private IngestionSession? _session;
+private IngestionOptions _options = new();
+private List<string> _log = new();
+private List<KnowledgeEntry> _recent = new();
+
+// Subscribe to Pipeline.StatusChanged event to stream progress
+```
+
+---
+
+### [69] `Components/Pages/Projects/Tabs/KnowledgeBaseTab.razor`
+
+**UI behaviour:**
+
+1. **Search bar** at top: natural language query → calls `KnowledgeQuery.AskAllProjectsAsync()`
+2. **Project cards grid**: each indexed project shown as a card with:
+   - Project name, language badge, framework badge
+   - Stats: endpoints, DTOs, files, vector docs
+   - Git URL link
+   - Actions: Ask, Export PDF, Export ZIP, Forget
+3. **Ask panel** (slides in from right or modal):
+   - Input: question text
+   - Output: AI answer + source chunks listed below
+4. **Search results** overlay: vector similarity results with score badges
+
+```csharp
+private string _query = "";
+private List<KnowledgeEntry> _projects = new();
+private KnowledgeQueryResult? _queryResult;
+private bool _showAskPanel;
+private KnowledgeEntry? _selectedForAsk;
+```
+
+---
+
+### [70] `Components/Pages/Projects/Tabs/ApiExplorerTab.razor`
+
+**UI behaviour:**
+
+1. **Toolbar**: filter by HTTP method (chip group: ALL / GET / POST / PUT / DELETE / PATCH),
+   filter by framework, search by route text
+2. **MudDataGrid** of endpoints:
+   - Columns: Method (color chip), Route, Handler, Auth (lock icon), DTO, File
+   - Click row → expands detail panel below grid
+3. **Detail panel**:
+   - Full route, all parameters (table: name, type, source, required)
+   - Request body DTO with properties
+   - Response type
+   - "Ask AI" button → pre-fills KnowledgeQuery with "Explain the {route} endpoint"
+   - Copy as cURL button
+4. **Summary bar**: total endpoints by method
+
+---
+
+### [71] `Components/Pages/Projects/Tabs/SwaggerUiTab.razor`
+
+**UI behaviour:**
+
+1. **Check for existing** `swagger.html` in `.projectmeta/` or `Hindsight` store
+2. If found → render in `BlazorWebView` or open in system browser
+3. If not found → "Generate Swagger" button → calls `SwaggerUiGenerator.GenerateAsync()`
+4. **Regenerate** button to refresh after project changes
+5. **Download** button for `swagger.html` (self-contained, shareable)
+6. **Copy OpenAPI YAML** button
+
+```csharp
+// MAUI BlazorWebView can render local HTML files via custom URL scheme
+// Alternative: open file in system default browser via Launcher.OpenAsync(fileUri)
+private string? _swaggerHtmlPath;
+private bool _isGenerating;
+
+private async Task OpenInBrowser()
+    => await Launcher.OpenAsync(new Uri($"file:///{_swaggerHtmlPath}"));
+```
+
+---
+
+### [72] `Components/Pages/Projects/Tabs/DocGenTab.razor`
+
+**UI behaviour:**
+
+1. **Doc type selector**: radio buttons — API Docs | Function Docs | README | All
+2. **Generate button** → streams output chunks from LLM
+3. **Output panel**: rendered Markdown (MudMarkdown or pre-formatted)
+4. **Actions**: Copy Markdown, Save to `.projectmeta/docs/`, Export as PDF
+5. **Function selector**: when "Function Docs" chosen, shows a searchable list of
+   all methods; user picks one → "Generate for this function"
+6. **Progress**: streaming token output (shows text appearing live via `IAsyncEnumerable`)
+7. **Notes panel**: bullet-point notes from `KnowledgeSummaryService.GenerateNotesAsync()`
+
+---
+
+### [73] `Components/Pages/Projects/Tabs/GraphsTab.razor`
+
+**UI behaviour:**
+
+1. **Graph type selector**: tab strip — Dependency Graph | Call Graph | DAG | Complexity
+2. **Dependency graph**:
+   - Rendered as `MudTreeView` (nested, collapsible)
+   - Circular dependency warnings in red
+3. **Call graph hotspots**:
+   - MudDataGrid: method name, caller count, file, complexity
+4. **DAG layers**:
+   - `MudTimeline` horizontal: each layer = one column, nodes = chips
+5. **Complexity chart**:
+   - OxyPlot bar chart rendered to PNG, embedded as `<img>` via base64 data URI
+6. **Export**: "Download as DOT", "Download as JSON", "Include in PDF"
+
+```csharp
+private string _activeGraph = "dependency";
+private AstProjectMap? _map;
+
+// OxyPlot PNG rendered server-side via OxyPlot.SkiaSharp
+private string? _complexityChartBase64;
+
+protected override async Task OnParametersSetAsync()
+{
+    if (ProjectMap != null)
+        _complexityChartBase64 = await RenderComplexityChartAsync(ProjectMap);
+}
+```
+
+---
+
+## NavMenu Change
+
+Add one entry after "My Projects":
+
+```razor
+<div class="nav-item">
+    <NavLink class="nav-link" href="projectanalyser">
+        <span class="nav-icon"><i class="bi bi-diagram-3-fill"></i></span>
+        <span class="nav-text">Project Analyser</span>
+    </NavLink>
+</div>
+```
+
+---
+
+## Extended DI Registration (additions to MauiProgram.cs)
+
+```csharp
+// Ingestion
+builder.Services.AddSingleton<GitCloneService>();
+builder.Services.AddSingleton<ProjectIngestionPipeline>();
+
+// Hindsight / Vector Store
+builder.Services.AddSingleton<TfIdfVectorizer>();
+builder.Services.AddSingleton<EmbeddingService>();
+builder.Services.AddSingleton<VectorStore>();
+builder.Services.AddSingleton<VectorQuery>();
+builder.Services.AddSingleton<DocumentChunker>();
+builder.Services.AddSingleton<HindsightEngine>();
+
+// Doc Gen
+builder.Services.AddSingleton<IDocGenerator, ApiDocGenerator>();
+builder.Services.AddSingleton<IDocGenerator, FunctionDocGenerator>();
+builder.Services.AddSingleton<IDocGenerator, ReadmeGenerator>();
+builder.Services.AddSingleton<IDocGenerator, SwaggerUiGenerator>();
+
+// Knowledge
+builder.Services.AddSingleton<KnowledgeBase>();
+builder.Services.AddSingleton<KnowledgeQuery>();
+builder.Services.AddSingleton<KnowledgeSummaryService>();
+builder.Services.AddSingleton<KnowledgeExportService>();
+```
+
+---
+
+## Full Data Flow: Clone URL → Hindsight Ready
+
+```
+User pastes: https://github.com/user/some-api.git
+                  │
+                  ▼
+     GitCloneService.CloneAsync(url)
+     → %LOCALAPPDATA%\SyncroDesktop\analysed\some-api_20250605\
+                  │
+                  ▼
+     AstEngine.RunAsync(clonedPath, ctx)
+     → AstProjectMap { Endpoints[24], Dtos[18], Files[143], ... }
+                  │
+                  ▼
+     DocumentChunker.Chunk(map)
+     → 200–400 VectorDocuments (endpoints, classes, methods, dtos, ports)
+                  │
+                  ▼
+     TfIdfVectorizer.FitTransform(chunks)
+     → each doc gets double[] vector (vocabulary-sized)
+                  │
+                  ▼
+     VectorStore.UpsertBatchAsync(path, docs)
+     → %LOCALAPPDATA%\SyncroDesktop\knowledge\{hash}\
+          index.json          (VectorIndex metadata)
+          {chunkId}.vec.json  (one file per VectorDocument)
+          vocab.json          (TF-IDF vocabulary)
+                  │
+                  ▼
+     ApiDocGenerator.GenerateAsync(map)
+     + KnowledgeSummaryService.SummarizeAsync(map)
+     → via AIClient → http://localhost:3020/gemini
+     → Markdown API docs + project summary
+                  │
+                  ▼
+     SwaggerUiGenerator.GenerateAsync(map)
+     → .projectmeta/swagger.html (self-contained Swagger UI)
+                  │
+                  ▼
+     KnowledgeBase.RegisterProjectAsync(session)
+     → registry.json updated
+
+══════════════════════════════════
+  HINDSIGHT NOW ACTIVE
+══════════════════════════════════
+
+  User asks: "How does authentication work in this project?"
+                  │
+                  ▼
+     KnowledgeQuery.AskProjectAsync(path, question)
+                  │
+                  ▼
+     EmbeddingService.EmbedQueryAsync(question)
+     → double[] queryVector
+                  │
+                  ▼
+     VectorQuery.Search(index, queryVector, topK=8)
+     → 8 most similar VectorDocuments (cosine similarity)
+                  │
+                  ▼
+     HindsightEngine.BuildContextPrompt(question, chunks)
+     → "Context from codebase:\n[chunk1]\n[chunk2]...\nQuestion: ..."
+                  │
+                  ▼
+     AIClient.SendAsync(contextPrompt)
+     → "Authentication uses JWT. The AuthService.GenerateToken method
+        (Services/Auth/AuthService.cs:78) takes userId and role,
+        creates a JwtSecurityToken with 24h expiry..."
+                  │
+                  ▼
+     KnowledgeQueryResult { Answer, Sources[8], Duration }
+     → displayed in KnowledgeBaseTab
+```
+
+---
+
+## Hindsight File-System Layout
+
+```
+%LOCALAPPDATA%\SyncroDesktop\
+├── analysed\                          ← Cloned repos
+│   ├── some-api_20250605_143022\      ← Full git clone
+│   └── another-project_20250605\
+│
+└── knowledge\                         ← Vector store
+    ├── registry.json                  ← List of all KnowledgeEntry
+    ├── a1b2c3d4\                      ← SHA256(projectPath) as folder
+    │   ├── index.json                 ← VectorIndex metadata
+    │   ├── vocab.json                 ← TF-IDF vocabulary
+    │   ├── {uuid}.vec.json            ← VectorDocument (one per chunk)
+    │   ├── {uuid}.vec.json
+    │   └── ...
+    └── e5f6a7b8\
+        ├── index.json
+        └── ...
+```
+
+---
+
+## Updated File Count
+
+| Area | Original | Extension | Total |
+|---|---|---|---|
+| Core | 6 | — | 6 |
+| Parsers | 5 | — | 5 |
+| Graph | 6 | — | 6 |
+| Scanners | 5 | — | 5 |
+| Analyzers | 5 | — | 5 |
+| Models | 8 | — | 8 |
+| RAG (basic) | 2 | — | 2 |
+| Reporters | 3 | — | 3 |
+| Storage | 2 | — | 2 |
+| CLI Command | 1 | — | 1 |
+| **Ingestion** | — | 4 | 4 |
+| **Hindsight / Vector** | — | 8 | 8 |
+| **Doc Gen** | — | 5 | 5 |
+| **Knowledge** | — | 5 | 5 |
+| **Total .cs files** | **43** | **22** | **65** |
+| **Razor pages** | 4 | 7 | 11 |
+| **Grand total** | **47** | **29** | **76** |
