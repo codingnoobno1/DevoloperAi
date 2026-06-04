@@ -1,0 +1,146 @@
+@using MudBlazor
+@using Syncro.Desktop.Services
+@using DeveloperAI.BusinessLogic
+@inject FlutterService FlutterSvc
+@inject EnvironmentManager EnvManager
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.PlayCircleFilled" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Run Mobile Project</MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-4 text-muted">Select an execution mode based on your system performance and hardware availability.</MudText>
+        
+        <MudGrid Spacing="3">
+            <!-- ADB Mode -->
+            <MudItem xs="12">
+                <MudPaper Elevation="0" Class="@GetCardClass("adb")" @onclick='() => SelectMode("adb")'>
+                    <div class="d-flex align-center gap-4">
+                        <MudIcon Icon="@Icons.Material.Filled.Usb" Size="Size.Large" Color="@(SelectedMode == "adb" ? Color.Primary : Color.Default)" />
+                        <div class="flex-grow-1">
+                            <div class="d-flex align-center gap-2">
+                                <MudText Typo="Typo.subtitle1" Class="font-weight-bold">ADB (Physical Device)</MudText>
+                                <MudChip T="string" Color="Color.Info" Size="Size.Small" Variant="Variant.Text">30+ GB REQ</MudChip>
+                            </div>
+                            <MudText Typo="Typo.caption" Class="text-muted">Direct USB debugging on your phone. Requires adb drivers.</MudText>
+                        </div>
+                        @if (Resources.AvailableDiskGB < 30)
+                        {
+                            <MudTooltip Text="Low Storage for Build Tools">
+                                <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning" Size="Size.Small" />
+                            </MudTooltip>
+                        }
+                    </div>
+                </MudPaper>
+            </MudItem>
+
+            <!-- Emulator Mode -->
+            <MudItem xs="12">
+                <MudPaper Elevation="0" Class="@GetCardClass("emulator")" @onclick='() => SelectMode("emulator")'>
+                    <div class="d-flex align-center gap-4">
+                        <MudIcon Icon="@Icons.Material.Filled.Computer" Size="Size.Large" Color="@(SelectedMode == "emulator" ? Color.Primary : Color.Default)" />
+                        <div class="flex-grow-1">
+                            <div class="d-flex align-center gap-2">
+                                <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Native Emulator</MudText>
+                                <MudChip T="string" Color="Color.Warning" Size="Size.Small" Variant="Variant.Text">HEAVY USAGE</MudChip>
+                            </div>
+                            <MudText Typo="Typo.caption" Class="text-muted">Req: 6GB RAM | 50GB Storage | 6-Core CPU</MudText>
+                        </div>
+                        @if (!_canRunEmulator)
+                        {
+                            <MudTooltip Text="Hardware does not meet minimum specs">
+                                <MudIcon Icon="@Icons.Material.Filled.Error" Color="Color.Error" Size="Size.Small" />
+                            </MudTooltip>
+                        }
+                    </div>
+                </MudPaper>
+            </MudItem>
+
+            <!-- Web Mode -->
+            <MudItem xs="12">
+                <MudPaper Elevation="0" Class="@GetCardClass("web")" @onclick='() => SelectMode("web")'>
+                    <div class="d-flex align-center gap-4">
+                        <MudIcon Icon="@Icons.Material.Filled.Language" Size="Size.Large" Color="@(SelectedMode == "web" ? Color.Primary : Color.Default)" />
+                        <div class="flex-grow-1">
+                            <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Syncro Quick (Web View)</MudText>
+                            <MudText Typo="Typo.caption" Class="text-muted">Lightweight preview. No device required. Builds to local web server.</MudText>
+                        </div>
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Text">RECOMMENDED</MudChip>
+                    </div>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel" Variant="Variant.Text">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Run" Disabled='string.IsNullOrEmpty(SelectedMode) || (SelectedMode == "emulator" && !_canRunEmulator)'>
+            Launch Project
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .mode-card {
+        padding: 20px;
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+    }
+    .mode-card:hover {
+        border-color: var(--accent-primary);
+        background: #f8fafc;
+    }
+    .mode-card.selected {
+        border-color: var(--accent-primary);
+        background: rgba(99, 102, 241, 0.05);
+        border-width: 2px;
+    }
+</style>
+
+@code {
+    [CascadingParameter] MudBlazor.IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string ProjectPath { get; set; } = "";
+
+    [Inject] IDialogService DialogService { get; set; } = default!;
+
+    private string SelectedMode = "web";
+    private SystemResources Resources = new();
+    private bool _canRunEmulator = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Resources = await EnvManager.GetSystemResources();
+        _canRunEmulator = Resources.TotalRamGB >= 6 && Resources.CpuCores >= 4 && Resources.AvailableDiskGB >= 50;
+    }
+
+    private string GetCardClass(string mode) => $"mode-card {(SelectedMode == mode ? "selected" : "")}";
+
+    private void SelectMode(string mode) => SelectedMode = mode;
+
+    private void Cancel() => MudDialog.Cancel();
+
+    private async Task Run()
+    {
+        var url = await FlutterSvc.RunProject(ProjectPath, SelectedMode);
+        
+        if (SelectedMode == "web" && !string.IsNullOrEmpty(url))
+        {
+            MudDialog.Close(DialogResult.Ok(true));
+            var parameters = new DialogParameters 
+            { 
+                ["PreviewUrl"] = url,
+                ["ProjectPath"] = ProjectPath
+            };
+            var options = new DialogOptions { FullScreen = true, CloseButton = true };
+            await DialogService.ShowAsync<MobilePreview>("Mobile Preview", parameters, options);
+        }
+        else
+        {
+            MudDialog.Close(DialogResult.Ok(true));
+        }
+    }
+}

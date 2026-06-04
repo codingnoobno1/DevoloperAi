@@ -1,0 +1,132 @@
+@using Syncro.Desktop.Services.SyncroCLI
+@inject SyncroCLIService CliService
+@implements IDisposable
+
+<div class="syncro-terminal-container">
+    <div class="terminal-header">
+        <span class="terminal-title">Syncro Terminal</span>
+        <div class="terminal-controls">
+            <button class="btn-clear" @onclick="ClearLogs">Clear</button>
+        </div>
+    </div>
+    <div class="terminal-body" id="terminal-body">
+        @foreach (var log in Logs)
+        {
+            <div class="log-entry">@log}</div>
+        }
+    </div>
+    <div class="terminal-footer">
+        <span class="prompt">syncro></span>
+        <input type="text" @bind="CurrentCommand" @onkeyup="HandleKeyUp" class="terminal-input" placeholder="Enter command..." />
+    </div>
+</div>
+
+<style>
+    .syncro-terminal-container {
+        background-color: #1e1e1e;
+        color: #d4d4d4;
+        font-family: 'Cascadia Code', 'Courier New', Courier, monospace;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        border-top: 1px solid #333;
+    }
+
+    .terminal-header {
+        background-color: #2d2d2d;
+        padding: 5px 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        font-size: 0.8rem;
+    }
+
+    .terminal-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 10px;
+        font-size: 0.9rem;
+        line-height: 1.4;
+    }
+
+    .log-entry {
+        margin-bottom: 2px;
+        white-space: pre-wrap;
+    }
+
+    .terminal-footer {
+        display: flex;
+        align-items: center;
+        background-color: #1e1e1e;
+        padding: 5px 10px;
+        border-top: 1px solid #333;
+    }
+
+    .prompt {
+        color: #569cd6;
+        margin-right: 8px;
+    }
+
+    .terminal-input {
+        background: transparent;
+        border: none;
+        color: white;
+        flex: 1;
+        outline: none;
+    }
+
+    .btn-clear {
+        background: transparent;
+        border: 1px solid #555;
+        color: #aaa;
+        font-size: 0.7rem;
+        padding: 2px 8px;
+        border-radius: 3px;
+    }
+
+    .btn-clear:hover {
+        background-color: #444;
+        color: white;
+    }
+</style>
+
+@code {
+    private List<string> Logs { get; set; } = new List<string>();
+    private string CurrentCommand { get; set; } = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        CliService.OnLog += HandleLog;
+        CliService.Log("Terminal ready.");
+        await CliService.InitializeCLI();
+    }
+
+    private void HandleLog(string message)
+    {
+        InvokeAsync(() =>
+        {
+            Logs.Add(message);
+            StateHasChanged();
+        });
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !string.IsNullOrWhiteSpace(CurrentCommand))
+        {
+            var cmd = CurrentCommand;
+            CurrentCommand = "";
+            await CliService.ExecuteCommand(cmd);
+        }
+    }
+
+    private void ClearLogs()
+    {
+        Logs.Clear();
+    }
+
+    public void Dispose()
+    {
+        CliService.OnLog -= HandleLog;
+    }
+}

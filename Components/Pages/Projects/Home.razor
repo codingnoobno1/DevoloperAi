@@ -1,0 +1,36 @@
+@page "/"
+@using Syncro.Desktop.Components.Dashboard
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <MudText Typo="Typo.h5" Class="mb-6 font-weight-bold">DASHBOARD</MudText>
+
+    <DashboardStats />
+
+    <div class="mb-6">
+        <EnvironmentPanel />
+    </div>
+
+    <MudGrid Spacing="3">
+        <MudItem xs="12" lg="8">
+            <MudPaper Elevation="0" Class="panel">
+                <div class="pa-4 border-b border-subtle d-flex justify-space-between align-center">
+                    <MudText Typo="Typo.h6">Active Deployments</MudText>
+                    <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small" />
+                </div>
+                <DeploymentsTable />
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" lg="4">
+            <ActivityLog />
+        </MudItem>
+
+        <MudItem xs="12">
+            <AiAgentPanel />
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+<style>
+    .border-b { border-bottom: 1px solid var(--border-subtle); }
+</style>

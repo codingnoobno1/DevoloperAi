@@ -1,0 +1,30 @@
+{
+  "light": {
+    "colors": {
+      "primary": "{primary}",
+      "background": "#F4FDFC",
+      "card": "#E0F2F1",
+      "onPrimary": "#FFFFFF",
+      "surface": "#E0F2F1"
+    },
+    "tokens": {
+      "spacing": {
+        "page": 16.0,
+        "md": 16.0
+      },
+      "radius": {
+        "lg": 20.0,
+        "md": 12.0
+      }
+    }
+  },
+  "dark": {
+    "colors": {
+      "primary": "{primary}",
+      "background": "#0F1F1D",
+      "card": "#1B2F2C",
+      "onPrimary": "#FFFFFF",
+      "surface": "#1B2F2C"
+    }
+  }
+}

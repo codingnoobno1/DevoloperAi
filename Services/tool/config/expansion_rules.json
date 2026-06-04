@@ -1,0 +1,229 @@
+{
+  "_comment": "v2.0 updated",
+  "widgets": {
+    "map": {
+      "subScreen": {
+        "layout": "sub",
+        "children": ["detail_card", "action_button"]
+      },
+      "dynamic": true,
+      "ast": {
+        "type": "ContainerNode",
+        "props": { "height": 300.0 },
+        "child": {
+          "type": "CenterNode",
+          "child": {
+            "type": "ColumnNode",
+            "props": { "mainAxisAlignment": "MainAxisAlignment.center" },
+            "children": [
+              { "type": "IconNode", "props": { "icon": "Icons.map_outlined", "size": 48.0, "color": { "kind": "material", "value": "grey" } } },
+              { "type": "SizedBoxNode", "props": { "height": 12.0 } },
+              { "type": "TextNode", "props": { "text": "{{bind:title}}", "style": { "fontSize": 16.0, "fontWeight": "w600", "color": { "kind": "material", "value": "grey" } } } },
+              { "type": "SizedBoxNode", "props": { "height": 4.0 } },
+              { "type": "TextNode", "props": { "text": "Tap to open interactive map", "style": { "fontSize": 12.0, "color": { "kind": "material", "value": "grey" } } } }
+            ]
+          }
+        }
+      }
+    },
+    "card": {
+      "subScreen": {
+        "layout": "sub",
+        "children": ["detail_card", "action_button"]
+      },
+      "ast": {
+        "type": "CardNode",
+        "child": {
+          "type": "PaddingNode",
+          "props": { "padding": { "kind": "all", "value": 16.0 } },
+          "child": {
+            "type": "ColumnNode",
+            "props": { "crossAxisAlignment": "CrossAxisAlignment.start" },
+            "children": [
+              { "type": "TextNode", "props": { "text": "{{bind:title}}", "style": { "themeStyle": "titleMedium", "fontWeight": "w600" } } },
+              { "type": "SizedBoxNode", "props": { "height": 8.0 } },
+              { "type": "TextNode", "props": { "text": "{{bind:subtitle}}", "style": { "themeStyle": "bodySmall", "color": { "kind": "material", "value": "grey" } } } }
+            ]
+          }
+        }
+      }
+    },
+    "list": {
+      "subScreen": {
+        "layout": "sub",
+        "children": ["detail_card", "action_button"]
+      },
+      "ast": {
+        "type": "ListViewNode",
+        "props": { "shrinkWrap": true, "padding": { "kind": "all", "value": 8.0 } },
+        "children": [
+          {
+            "type": "CardNode",
+            "repeat": 3,
+            "child": {
+              "type": "PaddingNode",
+              "props": { "padding": { "kind": "all", "value": 12.0 } },
+              "child": {
+                "type": "RowNode",
+                "props": { "mainAxisAlignment": "MainAxisAlignment.spaceBetween" },
+                "children": [
+                  { "type": "TextNode", "props": { "text": "{{bind:title}} Item", "style": { "fontWeight": "w500" } } },
+                  { "type": "IconNode", "props": { "icon": "Icons.chevron_right", "color": { "kind": "material", "value": "grey" } } }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "menu": {
+      "ast": {
+        "type": "ColumnNode",
+        "children": [
+          {
+            "type": "CardNode",
+            "child": {
+              "type": "ColumnNode",
+              "children": [
+                { "type": "ListTileNode", "props": { "title": "Account Settings", "icon": "Icons.person_outline" } },
+                { "type": "DividerNode" },
+                { "type": "ListTileNode", "props": { "title": "Notifications", "icon": "Icons.notifications_outlined" } },
+                { "type": "DividerNode" },
+                { "type": "ListTileNode", "props": { "title": "Privacy", "icon": "Icons.lock_outline" } }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "stats": {
+      "ast": {
+        "type": "RowNode",
+        "props": { "mainAxisAlignment": "MainAxisAlignment.spaceEvenly" },
+        "children": [
+          {
+            "type": "ColumnNode",
+            "props": { "mainAxisAlignment": "MainAxisAlignment.center" },
+            "children": [
+              { "type": "TextNode", "props": { "text": "128", "style": { "fontSize": 28.0, "fontWeight": "bold" } } },
+              { "type": "TextNode", "props": { "text": "Rides", "style": { "fontSize": 12.0, "color": { "kind": "material", "value": "grey" } } } }
+            ]
+          },
+          {
+            "type": "ColumnNode",
+            "props": { "mainAxisAlignment": "MainAxisAlignment.center" },
+            "children": [
+              { "type": "TextNode", "props": { "text": "4.9", "style": { "fontSize": 28.0, "fontWeight": "bold" } } },
+              { "type": "TextNode", "props": { "text": "Rating", "style": { "fontSize": 12.0, "color": { "kind": "material", "value": "grey" } } } }
+            ]
+          }
+        ]
+      }
+    },
+    "button": {
+      "ast": {
+        "type": "ButtonNode",
+        "props": { "text": "{{bind:text}}", "variant": "primary", "fullWidth": true }
+      }
+    },
+    "input": {
+      "ast": {
+        "type": "TextFieldNode",
+        "props": { "label": "{{bind:label}}" }
+      }
+    }
+  },
+
+  "layouts": {
+    "tab": {
+      "ast": {
+        "type": "SingleChildScrollViewNode",
+        "child": {
+          "type": "PaddingNode",
+          "props": { "padding": { "kind": "token", "token": "page" } },
+          "child": {
+            "type": "ColumnNode",
+            "props": { "crossAxisAlignment": "CrossAxisAlignment.start", "spacing": 16.0 },
+            "slot": "children"
+          }
+        }
+      }
+    },
+    "home": {
+      "ast": {
+        "type": "ScaffoldNode",
+        "appBar": {
+          "type": "AppBarNode",
+          "props": { "title": "Home", "centerTitle": false, "actions": [
+            { "type": "IconNode", "props": { "icon": "Icons.notifications_outlined" } },
+            { "type": "SizedBoxNode", "props": { "width": 16.0 } }
+          ]}
+        },
+        "body": {
+          "type": "SingleChildScrollViewNode",
+          "child": {
+            "type": "ColumnNode",
+            "props": { "crossAxisAlignment": "CrossAxisAlignment.start" },
+            "children": [
+              {
+                "type": "PaddingNode",
+                "props": { "padding": { "kind": "all", "value": 16.0 } },
+                "child": {
+                  "type": "TextNode",
+                  "props": { "text": "Welcome Back!", "style": { "fontSize": 24.0, "fontWeight": "bold" } }
+                }
+              }
+            ],
+            "slot": "children"
+          }
+        }
+      }
+    },
+    "sub": {
+      "ast": {
+        "type": "SingleChildScrollViewNode",
+        "child": {
+          "type": "PaddingNode",
+          "props": { "padding": { "kind": "token", "token": "page" } },
+          "child": {
+            "type": "ColumnNode",
+            "props": { "crossAxisAlignment": "CrossAxisAlignment.start", "spacing": 12.0 },
+            "slot": "children"
+          }
+        }
+      }
+    },
+    "main": "TabView"
+  },
+
+  "navigation": {
+    "notes": "Patterns moved to navigation_rules.json"
+  },
+
+  "global_widgets": {
+    "detail_card": {
+      "ast": {
+        "type": "CardNode",
+        "child": {
+          "type": "PaddingNode",
+          "props": { "padding": { "kind": "all", "value": 16.0 } },
+          "child": {
+            "type": "ColumnNode",
+            "props": { "crossAxisAlignment": "CrossAxisAlignment.start" },
+            "children": [
+              { "type": "TextNode", "props": { "text": "Detail View", "style": { "themeStyle": "titleLarge", "fontWeight": "bold" } } },
+              { "type": "SizedBoxNode", "props": { "height": 8.0 } },
+              { "type": "TextNode", "props": { "text": "Details about your selection", "style": { "themeStyle": "bodyMedium", "color": { "kind": "material", "value": "grey" } } } }
+            ]
+          }
+        }
+      }
+    },
+    "action_button": {
+      "ast": {
+        "type": "ButtonNode",
+        "props": { "text": "Continue", "variant": "primary", "fullWidth": true }
+      }
+    }
+  }
+}

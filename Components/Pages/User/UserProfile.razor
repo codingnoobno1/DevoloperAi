@@ -1,0 +1,183 @@
+@page "/profile"
+@using Syncro.Desktop.Services
+@inject PixelService PixelSvc
+@inject NetlifyService NetlifySvc
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <div class="d-flex align-center justify-space-between mb-6">
+        <MudText Typo="Typo.h5" Class="font-weight-bold">DEVELOPER PROFILE</MudText>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Edit">Edit Profile</MudButton>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="d-flex justify-center pa-12">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+        </div>
+    }
+    else if (_profile == null)
+    {
+        <MudAlert Severity="Severity.Error">Could not load profile. Please ensure you are logged in.</MudAlert>
+    }
+    else
+    {
+        <MudGrid>
+            <MudItem xs="12" md="4">
+                <MudPaper Elevation="0" Class="pa-0 panel overflow-hidden">
+                    <div class="profile-header-gradient pa-8 d-flex flex-column align-center">
+                        <MudAvatar Style="height:140px; width:140px; font-size:4rem;" Color="Color.Primary" Variant="Variant.Filled" Class="mb-4 profile-avatar">
+                            @_profile?.Name?.Substring(0, 1).ToUpper()
+                        </MudAvatar>
+                        <MudText Typo="Typo.h5" Class="font-weight-bold text-white">@_profile?.Name</MudText>
+                        <MudText Typo="Typo.body2" Class="text-white-50">@_profile?.Role?.ToUpper()</MudText>
+                    </div>
+                    <div class="pa-6">
+                        <div class="d-flex align-center gap-3 mb-4">
+                            <MudIcon Icon="@Icons.Material.Filled.School" Size="Size.Small" Color="Color.Primary" />
+                            <MudText Typo="Typo.body2">@(_profile.UniversityName ?? "Not specified")</MudText>
+                        </div>
+                        <div class="d-flex align-center gap-3">
+                            <MudIcon Icon="@Icons.Material.Filled.Email" Size="Size.Small" Color="Color.Primary" />
+                            <MudText Typo="Typo.body2">@_profile.Email</MudText>
+                        </div>
+                    </div>
+                </MudPaper>
+
+                @if (_netlifySite != null)
+                {
+                    <MudPaper Elevation="0" Class="pa-6 panel mt-6 netlify-card">
+                        <div class="d-flex align-center gap-2 mb-4">
+                            <MudIcon Icon="@Icons.Material.Filled.CloudDone" Color="Color.Success" />
+                            <MudText Typo="Typo.subtitle2" Class="font-weight-bold">NETLIFY STATUS</MudText>
+                        </div>
+                        <div class="metric-row mb-3">
+                            <MudText Typo="Typo.caption" Class="text-muted d-block">SITE URL</MudText>
+                            <MudLink href="@_netlifySite.Url" Target="_blank" Typo="Typo.body2" Class="truncate">@_netlifySite.Url</MudLink>
+                        </div>
+                        <div class="metric-row">
+                            <MudText Typo="Typo.caption" Class="text-muted d-block">LAST DEPLOY STATE</MudText>
+                            <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Text">@_netlifySite.PublishedDeploy?.State.ToUpper()</MudChip>
+                        </div>
+                    </MudPaper>
+                }
+            </MudItem>
+
+            <MudItem xs="12" md="8">
+                <MudPaper Elevation="0" Class="pa-6 panel mb-6">
+                    <MudText Typo="Typo.h6" Class="mb-4">Contribution Metrics</MudText>
+                    <MudGrid>
+                        <MudItem xs="6" sm="3">
+                            <div class="stat-card">
+                                <MudText Typo="Typo.h4" Class="font-weight-bold color-primary">@_proposalsCount</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted">PROPOSALS</MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <div class="stat-card">
+                                <MudText Typo="Typo.h4" Class="font-weight-bold color-success">12</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted">CONTRIBUTIONS</MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <div class="stat-card">
+                                <MudText Typo="Typo.h4" Class="font-weight-bold color-warning">84%</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted">RANKING</MudText>
+                            </div>
+                        </MudItem>
+                        <MudItem xs="6" sm="3">
+                            <div class="stat-card">
+                                <MudText Typo="Typo.h4" Class="font-weight-bold color-info">2.4k</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted">REPUTATION</MudText>
+                            </div>
+                        </MudItem>
+                    </MudGrid>
+                </MudPaper>
+
+                <MudPaper Elevation="0" Class="pa-6 panel">
+                    <MudText Typo="Typo.h6" Class="mb-4">Core Competencies</MudText>
+                    <div class="d-flex flex-wrap gap-2">
+                        @foreach (var skill in _profile.Skills)
+                        {
+                            <div class="skill-tag">@skill</div>
+                        }
+                        @if (!_profile.Skills.Any())
+                        {
+                            <MudText Typo="Typo.body2" Class="text-muted italic">No competencies listed yet.</MudText>
+                        }
+                    </div>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+<style>
+    .profile-header-gradient {
+        background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);
+    }
+
+    .profile-avatar {
+        border: 4px solid rgba(255, 255, 255, 0.2);
+        box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+    }
+
+    .text-white-50 { color: rgba(255, 255, 255, 0.7); }
+
+    .netlify-card {
+        border-top: 4px solid #10B981;
+    }
+
+    .stat-card {
+        text-align: center;
+        padding: 12px;
+        background: #F8FAFC;
+        border-radius: 8px;
+    }
+
+    .color-primary { color: #6366f1; }
+    .color-success { color: #10B981; }
+    .color-warning { color: #F59E0B; }
+    .color-info { color: #0EA5E9; }
+
+    .skill-tag {
+        background: #FFFFFF;
+        border: 1px solid var(--border-subtle);
+        padding: 6px 16px;
+        border-radius: 20px;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        transition: all 0.2s;
+    }
+
+    .skill-tag:hover {
+        border-color: var(--accent-primary);
+        color: var(--accent-primary);
+        background: rgba(99, 102, 241, 0.05);
+    }
+
+    .truncate {
+        display: block;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+</style>
+
+@code {
+    private UserProfileModel? _profile;
+    private NetlifySite? _netlifySite;
+    private int _proposalsCount = 0;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _profile = await PixelSvc.GetProfile();
+        _netlifySite = await NetlifySvc.GetSiteStatus("project-syncroo");
+        
+        var proposals = await PixelSvc.GetUserProposals();
+        _proposalsCount = proposals.Count;
+
+        _loading = false;
+    }
+}

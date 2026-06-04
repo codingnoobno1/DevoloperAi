@@ -1,0 +1,208 @@
+/* ===========================================================
+   🌈 SYNCRO.DESKTOP GLOBAL LAYOUT & THEME
+   Clean gradient UI | Light & soft-glass design | MAUI Blazor
+   =========================================================== */
+
+/* Root variables for consistent design control */
+:root {
+    --syncro-bg-light1: #f9fafb;
+    --syncro-bg-light2: #eef2f7;
+    --syncro-accent1: #3b82f6;
+    --syncro-accent2: #14b8a6;
+    --syncro-accent3: #2e026d;
+    --syncro-text: #1e293b;
+    --syncro-muted: #475569;
+    --syncro-shadow: rgba(0, 0, 0, 0.08);
+}
+
+/* ===========================================================
+   PAGE LAYOUT
+   =========================================================== */
+.page {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    position: relative;
+    background: linear-gradient(180deg, var(--syncro-bg-light1) 0%, var(--syncro-bg-light2) 100%);
+    color: var(--syncro-text);
+    font-family: "Segoe UI", Roboto, sans-serif;
+    transition: background 0.4s ease;
+}
+
+/* Main content area */
+main {
+    flex: 1;
+    padding: 1.5rem;
+    overflow-y: auto;
+    background: linear-gradient(180deg, #ffffff 0%, #f1f5f9 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+    border-top: 1px solid rgba(0,0,0,0.05);
+}
+
+/* ===========================================================
+   SIDEBAR
+   =========================================================== */
+.sidebar {
+    background: linear-gradient(180deg,
+        var(--syncro-accent3) 0%,
+        var(--syncro-accent1) 50%,
+        var(--syncro-accent2) 100%);
+    color: #f9fafb;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+    transition: width 0.3s ease, transform 0.3s ease, background 0.6s ease;
+    backdrop-filter: blur(6px);
+}
+
+/* Sidebar links */
+.sidebar a {
+    display: block;
+    padding: 0.85rem 1.25rem;
+    color: rgba(255, 255, 255, 0.85);
+    text-decoration: none;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    transition: background 0.3s ease, color 0.3s ease, transform 0.2s ease;
+    border-left: 3px solid transparent;
+    border-radius: 4px;
+}
+
+/* Hover & active states */
+.sidebar a:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    border-left: 3px solid #a5f3fc;
+    transform: translateX(3px);
+}
+
+.sidebar a.active {
+    background: rgba(255, 255, 255, 0.18);
+    border-left: 3px solid #38bdf8;
+    color: #fff;
+    box-shadow: inset 0 0 10px rgba(255,255,255,0.15);
+}
+
+/* ===========================================================
+   TOP NAVIGATION BAR
+   =========================================================== */
+.top-row {
+    background: linear-gradient(90deg, #ffffff 0%, #f1f5f9 100%);
+    border-bottom: 1px solid #e2e8f0;
+    height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 1.5rem;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    box-shadow: 0 1px 4px var(--syncro-shadow);
+    backdrop-filter: blur(6px);
+    transition: all 0.3s ease;
+}
+
+/* Top-row links (nav + buttons) */
+.top-row ::deep a,
+.top-row ::deep .btn-link {
+    white-space: nowrap;
+    margin-left: 1.5rem;
+    text-decoration: none;
+    color: var(--syncro-text);
+    font-weight: 500;
+    transition: color 0.2s ease, text-shadow 0.2s ease;
+}
+
+.top-row ::deep a:hover,
+.top-row ::deep .btn-link:hover {
+    text-decoration: underline;
+    color: var(--syncro-accent1);
+    text-shadow: 0 0 6px rgba(59, 130, 246, 0.3);
+}
+
+/* ===========================================================
+   RESPONSIVE DESIGN
+   =========================================================== */
+@media (max-width: 768px) {
+    .page {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100vh;
+        width: 220px;
+        transform: translateX(-100%);
+        z-index: 100;
+        backdrop-filter: blur(8px);
+        box-shadow: 4px 0 10px rgba(0,0,0,0.25);
+    }
+
+    .sidebar.active {
+        transform: translateX(0);
+    }
+
+    .top-row {
+        justify-content: space-between;
+        background: linear-gradient(90deg, #f8fafc 0%, #e2e8f0 100%);
+        box-shadow: 0 1px 6px rgba(0,0,0,0.08);
+    }
+
+    .menu-toggle {
+        cursor: pointer;
+        font-size: 1.6rem;
+        margin-right: 1rem;
+        color: var(--syncro-text);
+        transition: color 0.2s ease;
+    }
+
+    .menu-toggle:hover {
+        color: var(--syncro-accent1);
+    }
+
+    main {
+        padding: 1rem;
+    }
+}
+
+/* ===========================================================
+   DESKTOP LAYOUT
+   =========================================================== */
+@media (min-width: 769px) {
+    .page {
+        flex-direction: row;
+    }
+
+    .sidebar {
+        width: 250px;
+        height: 100vh;
+        position: sticky;
+        top: 0;
+    }
+
+    .top-row.auth ::deep a:first-child {
+        flex: 1;
+        text-align: right;
+        width: 0;
+    }
+
+    .top-row, article {
+        padding-left: 2rem !important;
+        padding-right: 1.5rem !important;
+    }
+}
+
+/* ===========================================================
+   OPTIONAL ANIMATIONS & SMOOTHNESS
+   =========================================================== */
+.sidebar, .top-row, main {
+    transition: all 0.3s ease-in-out;
+}
+
+.sidebar a, .top-row a {
+    transition: all 0.2s ease;
+}
+
+.page {
+    scroll-behavior: smooth;
+}

@@ -1,0 +1,108 @@
+@page "/gitmanager"
+@using Syncro.Desktop.Services.Git
+@using DeveloperAI.BusinessLogic
+@using Syncro.Desktop.Services.ProgramLogic
+@inject FetchProject GitService
+@inject EnvironmentManager EnvManager
+@inject GitCommandService GitCommandService
+
+<h1>Git Repository Manager</h1>
+
+<p>Manage your Git repositories and view their status and statistics.</p>
+
+<div class="form-group mt-3">
+    <label for="repoPath">Repository Path:</label>
+    <input type="text" id="repoPath" @bind="RepositoryPath" class="form-control" placeholder="Enter path to a Git repository" />
+    <button @onclick="LoadGitInfo" class="btn btn-primary mt-2">Load Repository Info</button>
+</div>
+
+@if (!string.IsNullOrEmpty(FeedbackMessage))
+{
+    <div class="alert @(IsError ? "alert-danger" : "alert-info") mt-3">@FeedbackMessage</div>
+}
+
+@if (_isRepo)
+{
+    <div class="git-info-display mt-4">
+        <h3>Repository Details</h3>
+        <p><strong>Is Git Repository:</strong> Yes</p>
+        <p><strong>Remote URL:</strong> @_remoteUrl</p>
+        <p><strong>Current Status:</strong> @_gitStatus</p>
+
+        @if (_languagePercentages.Any())
+        {
+            <h4>Language Distribution:</h4>
+            <ul>
+                @foreach (var lang in _languagePercentages)
+                {
+                    <li>@lang.Key: @lang.Value.ToString("F2")%</li>
+                }
+            </ul>
+        }
+        else
+        {
+            <p>No language statistics available (or repository is empty/untracked files).</p>
+        }
+    </div>
+}
+else if (!string.IsNullOrEmpty(RepositoryPath))
+{
+    <p class="mt-4">The provided path is not a Git repository or does not exist.</p>
+}
+
+@code {
+    private string RepositoryPath { get; set; } = "";
+    private string FeedbackMessage { get; set; } = "";
+    private bool IsError { get; set; } = false;
+
+    private bool _isRepo = false;
+    private string _remoteUrl = "N/A";
+    private string _gitStatus = "Unknown";
+    private Dictionary<string, double> _languagePercentages = new Dictionary<string, double>();
+
+    protected override void OnInitialized()
+    {
+        // You could try to set a default repository path here if desired
+        // RepositoryPath = Environment.CurrentDirectory; 
+    }
+
+    private async Task LoadGitInfo()
+    {
+        FeedbackMessage = "Loading Git information...";
+        IsError = false;
+        _isRepo = false;
+        _remoteUrl = "N/A";
+        _gitStatus = "Unknown";
+        _languagePercentages.Clear();
+
+        if (string.IsNullOrWhiteSpace(RepositoryPath))
+        {
+            FeedbackMessage = "Please enter a repository path.";
+            IsError = true;
+            return;
+        }
+
+        if (!Directory.Exists(RepositoryPath))
+        {
+            FeedbackMessage = "The specified directory does not exist.";
+            IsError = true;
+            return;
+        }
+
+        var (isRepo, remoteUrl) = await GitCommandService.GetRepositoryInfo(RepositoryPath);
+        _isRepo = isRepo;
+
+        if (_isRepo)
+        {
+            _remoteUrl = remoteUrl;
+            _gitStatus = await GitService.GetGitStatus(RepositoryPath);
+            _languagePercentages = await GitCommandService.GetLanguagePercentages(RepositoryPath);
+            FeedbackMessage = "Repository information loaded successfully.";
+        }
+        else
+        {
+            FeedbackMessage = "The specified path is not a Git repository.";
+            IsError = true;
+        }
+    }
+}

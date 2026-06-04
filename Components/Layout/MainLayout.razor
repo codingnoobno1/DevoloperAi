@@ -1,0 +1,273 @@
+@inherits LayoutComponentBase
+@using Syncro.Desktop.Components.Shared
+@using Syncro.Desktop.Services
+@inject NetlifyService NetlifySvc
+
+<MudThemeProvider Theme="_theme" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<MudLayout>
+    <div class="page">
+        <NavMenu />
+
+        <main>
+            <header class="app-header">
+                <div class="header-left">
+                    <button class="terminal-toggle-btn" @onclick="OpenTerminal">
+                        <i class="bi bi-terminal-fill"></i>
+                        <span>Syncro Terminal</span>
+                    </button>
+                    <div class="divider"></div>
+                    <div class="system-status">
+                        <span class="status-item"><span class="dot success"></span> CLI Ready</span>
+                        <span class="status-item"><span class="dot success"></span> API Online</span>
+                        @if (_netlifySite != null)
+                        {
+                            <span class="status-item">
+                                <span class="dot @(_netlifySite.State == "active" ? "success" : "warning")"></span> 
+                                Netlify: @(_netlifySite.State.ToUpper())
+                            </span>
+                        }
+                    </div>
+                </div>
+                
+                <div class="header-center">
+                    <span class="breadcrumb">Workspace / Dashboard</span>
+                </div>
+
+                <div class="header-right">
+                    <div class="session-info">
+                        <i class="bi bi-shield-lock-fill"></i>
+                        <span>Secure Session</span>
+                    </div>
+                    <div class="divider"></div>
+                    <div class="user-profile">
+                        <span class="user-role">ADMIN</span>
+                        <span class="user-name">dev@syncro.local</span>
+                    </div>
+                </div>
+            </header>
+
+            <article class="content">
+                <MudMainContent Class="content-panel-mud">
+                    @Body
+                </MudMainContent>
+            </article>
+        </main>
+    </div>
+</MudLayout>
+
+
+@code {
+    private MudTheme _theme = new();
+    private NetlifySite? _netlifySite;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _theme = new MudTheme()
+        {
+            PaletteLight = new PaletteLight()
+            {
+                Primary = "#6366f1",
+                Secondary = "#64748b",
+                Background = "#F3F4F6",
+                Surface = "#FFFFFF",
+                AppbarBackground = "#FFFFFF",
+                DrawerBackground = "#FFFFFF",
+                TextPrimary = "#111827",
+                TextSecondary = "#4B5563",
+                LinesDefault = "#E5E7EB",
+                TableLines = "#E5E7EB",
+                Divider = "#E5E7EB",
+                ActionDefault = "#64748b"
+            }
+        };
+
+        // Fetch Netlify Status
+        _netlifySite = await NetlifySvc.GetSiteStatus("project-syncroo");
+    }
+
+    private void OpenTerminal()
+    {
+        MainThread.BeginInvokeOnMainThread(() => {
+            if (Application.Current != null)
+            {
+                var terminalWindow = new Window(new TerminalPage()) 
+                { 
+                    Title = "Syncro Terminal",
+                    Width = 900,
+                    Height = 600
+                };
+                Application.Current.OpenWindow(terminalWindow);
+            }
+        });
+    }
+
+    private void OpenMobileStore()
+    {
+        MainThread.BeginInvokeOnMainThread(() => {
+            if (Application.Current != null)
+            {
+                var storeWindow = new Window(new MobileMarketplacePage()) 
+                { 
+                    Title = "Syncro Mobile Store",
+                    Width = 1100,
+                    Height = 800
+                };
+                Application.Current.OpenWindow(storeWindow);
+            }
+        });
+    }
+}
+
+<style>
+    :root {
+        --header-height: 64px;
+        --border-subtle: #E5E7EB;
+        --bg-panel: #FFFFFF;
+        --bg-main: #F3F4F6;
+        --text-primary: #111827;
+        --text-secondary: #4B5563;
+        --text-muted: #94A3B8;
+        --accent-primary: #6366f1;
+        --status-success: #10B981;
+    }
+
+    .page {
+        display: flex;
+        height: 100vh;
+        background-color: var(--bg-main);
+    }
+
+    main {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .app-header {
+        height: var(--header-height);
+        background: var(--bg-panel);
+        border-bottom: 1px solid var(--border-subtle);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        z-index: 10;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+
+    .header-left, .header-right {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }
+
+    .divider {
+        width: 1px;
+        height: 20px;
+        background: var(--border-subtle);
+    }
+
+    .terminal-toggle-btn {
+        background: #0F172A;
+        border: none;
+        color: #FFFFFF;
+        padding: 8px 16px;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition: all 0.2s;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+
+    .terminal-toggle-btn:hover {
+        background: #1e293b;
+        transform: translateY(-1px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    }
+
+    .system-status {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: var(--text-muted);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+    }
+
+    .status-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+    }
+
+    .dot.success { background: var(--status-success); box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1); }
+
+    .breadcrumb {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-secondary);
+    }
+
+    .session-info {
+        font-size: 12px;
+        color: var(--status-success);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+    }
+
+    .user-profile {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+    }
+
+    .user-role {
+        font-size: 10px;
+        font-weight: 800;
+        color: var(--accent-primary);
+        letter-spacing: 0.05em;
+    }
+
+    .user-name {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-primary);
+    }
+
+    .content {
+        flex: 1;
+        background: var(--bg-main);
+        padding: 24px;
+        overflow: hidden;
+        display: flex;
+    }
+
+    .content-panel-mud {
+        flex: 1;
+        background: var(--bg-panel);
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+        overflow-y: auto;
+        padding: 32px !important;
+        margin-top: 0 !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+</style>

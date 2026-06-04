@@ -1,0 +1,125 @@
+@using Syncro.Desktop.Services
+@using MudBlazor
+@using System.IO
+@inject ProjectService ProjService
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.FileUpload" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Import Existing Project</MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <MudText Typo="Typo.body2" Class="mb-4">
+            Select a folder on your machine. Syncro will automatically detect the project type and add it to your dashboard.
+        </MudText>
+
+        <MudTextField T="string" Label="Project Path" @bind-Value="ProjectPath" 
+                      Required="true" RequiredError="Path is required" 
+                      Variant="Variant.Outlined" Class="mb-4"
+                      Placeholder="C:\Users\...\my_project"
+                      Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Folder" 
+                      OnAdornmentClick="BrowseFolder"
+                      Immediate="true"
+                      OnKeyUp="HandleKeyUp" />
+
+        <MudPaper Elevation="0" Class="pa-4 detection-panel">
+            <div class="d-flex align-center justify-space-between">
+                <MudText Typo="Typo.subtitle2">Detected Stack</MudText>
+                <MudChip T="string" Color="@GetDetectedColor()" Size="Size.Small" Variant="Variant.Filled">
+                    @DetectedType
+                </MudChip>
+            </div>
+            @if (DetectedType != "Unknown" && DetectedType != "Invalid Path")
+            {
+                <MudText Typo="Typo.caption" Class="mt-2 d-block text-success">
+                    Ready to import as @DetectedType.
+                </MudText>
+            }
+        </MudPaper>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="Cancel">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" 
+                   Disabled="@(DetectedType == "Unknown" || DetectedType == "Invalid Path")">
+            Import Project
+        </MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .detection-panel {
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 8px;
+    }
+    .text-success { color: #10b981; }
+</style>
+
+@code {
+    [CascadingParameter] MudBlazor.IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private string _projectPath = "";
+    public string ProjectPath 
+    { 
+        get => _projectPath; 
+        set 
+        { 
+            _projectPath = value;
+            UpdateDetection();
+        } 
+    }
+
+    public string DetectedType { get; set; } = "Unknown";
+
+    private void UpdateDetection()
+    {
+        if (string.IsNullOrWhiteSpace(ProjectPath))
+        {
+            DetectedType = "Unknown";
+            return;
+        }
+
+        if (!Directory.Exists(ProjectPath))
+        {
+            DetectedType = "Invalid Path";
+            return;
+        }
+
+        DetectedType = ProjService.DetectProjectType(ProjectPath);
+    }
+
+    private void HandleKeyUp(KeyboardEventArgs e) => UpdateDetection();
+
+    private Color GetDetectedColor() => DetectedType switch
+    {
+        "Unknown" => Color.Default,
+        "Invalid Path" => Color.Error,
+        _ => Color.Success
+    };
+
+    private void BrowseFolder()
+    {
+        // In a real MAUI app, we would use a folder picker here.
+        // For now, we rely on the user pasting the path.
+        UpdateDetection();
+    }
+
+    private void Submit()
+    {
+        var project = ProjService.ImportProject(ProjectPath);
+        if (project != null)
+        {
+            Snackbar.Add($"Project '{project.Name}' imported successfully!", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(project));
+        }
+        else
+        {
+            Snackbar.Add("Failed to import project. Please check the path.", Severity.Error);
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

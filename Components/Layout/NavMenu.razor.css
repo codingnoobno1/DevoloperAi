@@ -1,0 +1,106 @@
+.sidebar-container {
+    width: var(--sidebar-width);
+    height: 100vh;
+    background: #FFFFFF;
+    border-right: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+}
+
+.sidebar-logo {
+    height: var(--header-height);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 12px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.brand-logo {
+    height: 32px;
+    width: 32px;
+    border-radius: 6px;
+    object-fit: cover;
+}
+
+.brand-text {
+    font-weight: 800;
+    font-size: 15px;
+    color: #111827;
+    letter-spacing: -0.01em;
+}
+
+.nav-item {
+    padding: 4px 12px;
+}
+
+.nav-item:first-of-type {
+    margin-top: 12px;
+}
+
+.nav-item ::deep a {
+    display: flex;
+    align-items: center;
+    height: 40px;
+    padding: 0 12px;
+    color: var(--text-secondary);
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+}
+
+.nav-item ::deep a:hover {
+    background: #F3F4F6;
+    color: var(--text-primary);
+}
+
+.nav-item ::deep a.active {
+    background: #EEF2FF;
+    color: var(--accent-primary);
+}
+
+.nav-icon {
+    min-width: 20px;
+    margin-right: 12px;
+    font-size: 18px;
+    display: flex;
+    justify-content: center;
+    color: inherit;
+}
+
+.marketplace-link ::deep a.active {
+    background: linear-gradient(90deg, #EEF2FF 0%, #F5F3FF 100%);
+    color: #6366F1;
+}
+
+.marketplace-link .nav-icon {
+    color: #6366F1;
+}
+
+.nav-link-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    height: 40px;
+    padding: 0 12px;
+    color: var(--text-secondary);
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.15s;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+}
+
+.nav-link-btn:hover {
+    background: #F3F4F6;
+    color: var(--text-primary);
+}
+
+.mobile-store-link .nav-icon {
+    color: #A855F7;
+}

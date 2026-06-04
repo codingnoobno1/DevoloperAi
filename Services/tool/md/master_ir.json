@@ -1,0 +1,92 @@
+{
+  "info": {
+    "version": "5.1.0",
+    "architecture": "Structured Noob v5",
+    "mode": "MASTER_MANIFEST",
+    "generatedAt": "2026-05-03T11:36:00Z"
+  },
+  "orchestration": {
+    "screens": [
+      {
+        "id": "home",
+        "layout": { "type": "vertical", "template": "header_body", "slots": [{ "id": "map", "position": 1 }, { "id": "offers", "position": 2 }] },
+        "data": { "type": "static" }
+      },
+      {
+        "id": "trips",
+        "layout": { "type": "vertical", "template": "default_stack", "slots": [{ "id": "history", "position": 1 }] },
+        "data": { "type": "static" }
+      }
+    ],
+    "widgets": [
+      {
+        "id": "map",
+        "type": "map",
+        "template": "full_map",
+        "data": { "type": "static", "value": { "lat": 28.6, "lng": 77.2 } }
+      },
+      {
+        "id": "offers",
+        "type": "card",
+        "template": "promo_card",
+        "data": { "type": "api", "endpoint": "/offers", "model": "offerModel" },
+        "action": { "type": "navigate", "target": "trips" }
+      },
+      {
+        "id": "history",
+        "type": "list",
+        "template": "history_list",
+        "data": { "type": "model", "name": "recentTrips" }
+      }
+    ],
+    "navigation": {
+      "entry": "home",
+      "routes": [
+        { "id": "home_nav", "from": "home", "to": "trips" },
+        { "id": "trips_nav", "from": "trips", "to": "home" }
+      ]
+    },
+    "models": [
+      {
+        "id": "offerModel",
+        "fields": { "title": "string", "price": "number", "image": "string" }
+      }
+    ]
+  },
+  "implementation": {
+    "screen_registry": [
+      { "id": "home", "feature": "home", "scaffold": true, "safeArea": true },
+      { "id": "trips", "feature": "trips", "scaffold": true, "safeArea": true }
+    ],
+    "layout_depth": {
+      "header_body": {
+        "type": "vertical",
+        "properties": { "spacing": 16.0, "padding": [16, 16, 16, 16] }
+      },
+      "default_stack": { "type": "stack" }
+    },
+    "widget_registry": [
+      { "id": "global_map", "type": "map", "properties": { "showUserLocation": true, "zoom": 14.0 } }
+    ],
+    "routing_depth": {
+      "entry": "home",
+      "transitions": [
+        { "id": "to_trips", "type": "push", "target": "trips" }
+      ]
+    },
+    "logic_conditions": {
+      "isLoggedIn": { "expression": "user != null", "true": "dashboard", "false": "login" }
+    },
+    "state_management": {
+      "mappings": { "home": "homeCubit", "trips": "tripsCubit" }
+    },
+    "data_sources": {
+      "type": "api",
+      "api": { "baseUrl": "https://api.rideapp.com" }
+    },
+    "theme_tokens": {
+      "light": { "primary": "#009688", "background": "#FFFFFF", "text": "#212121" },
+      "spacing": { "page": 16, "widget": 8 }
+    }
+  }
+}

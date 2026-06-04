@@ -1,0 +1,18 @@
+{
+  "scripts": [
+    {
+      "id": "env_check",
+      "name": "Environment Health Check",
+      "description": "Scans the system for dev dependencies.",
+      "platforms": ["windows", "linux", "mac"],
+      "requiresAdmin": false
+    },
+    {
+      "id": "install_flutter",
+      "name": "Flutter Installer",
+      "description": "Automated Flutter SDK provisioning.",
+      "platforms": ["windows", "linux", "mac"],
+      "requiresAdmin": true
+    }
+  ]
+}

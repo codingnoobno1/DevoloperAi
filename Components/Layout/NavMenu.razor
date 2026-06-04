@@ -1,0 +1,120 @@
+@using Syncro.Desktop.Components.Shared
+@inject IDialogService DialogService
+@inject NavigationManager Nav
+
+<div class="sidebar-container">
+    <div class="sidebar-logo">
+        <img src="images/syncro.jpg" alt="Syncro Logo" class="brand-logo" />
+        <span class="brand-text">SYNCRO</span>
+    </div>
+
+    <div class="px-4 py-4">
+        <MudButton Variant="Variant.Filled" 
+                   Color="Color.Primary" 
+                   FullWidth="true" 
+                   StartIcon="@Icons.Material.Filled.Add" 
+                   OnClick="CreateNewProject"
+                   Style="border-radius: 8px; height: 44px; font-weight: 700; text-transform: none;">
+            New Project
+        </MudButton>
+    </div>
+
+    <nav class="flex-column px-2">
+        <div class="nav-item">
+            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                <span class="nav-icon"><i class="bi bi-grid-fill"></i></span>
+                <span class="nav-text">Dashboard</span>
+            </NavLink>
+        </div>
+
+        <div class="nav-item">
+            <NavLink class="nav-link" href="myprojects">
+                <span class="nav-icon"><i class="bi bi-folder-fill"></i></span>
+                <span class="nav-text">My Projects</span>
+            </NavLink>
+        </div>
+
+        <div class="nav-item">
+            <NavLink class="nav-link" href="gitmanager">
+                <span class="nav-icon"><i class="bi bi-gear-wide-connected"></i></span>
+                <span class="nav-text">Git Manager</span>
+            </NavLink>
+        </div>
+
+        <div class="nav-item">
+            <NavLink class="nav-link" href="meetingsandtarget">
+                <span class="nav-icon"><i class="bi bi-calendar-event-fill"></i></span>
+                <span class="nav-text">Targets</span>
+            </NavLink>
+        </div>
+
+        <div class="px-4 py-2">
+            <MudText Typo="Typo.caption" Style="color: #94A3B8; font-weight: 800; letter-spacing: 0.1em;">SANKALP</MudText>
+        </div>
+
+        <div class="nav-item">
+            <NavLink class="nav-link" href="profile">
+                <span class="nav-icon"><i class="bi bi-person-fill"></i></span>
+                <span class="nav-text">My Profile</span>
+            </NavLink>
+        </div>
+
+        <div class="nav-item">
+            <NavLink class="nav-link" href="myproposals">
+                <span class="nav-icon"><i class="bi bi-file-earmark-text-fill"></i></span>
+                <span class="nav-text">My Proposals</span>
+            </NavLink>
+        </div>
+
+        <div class="nav-item">
+            <NavLink class="nav-link" href="social">
+                <span class="nav-icon"><i class="bi bi-people-fill"></i></span>
+                <span class="nav-text">Social Feed</span>
+            </NavLink>
+        </div>
+
+        <div class="nav-item marketplace-link">
+            <NavLink class="nav-link" href="marketplace">
+                <span class="nav-icon"><i class="bi bi-lightning-charge-fill"></i></span>
+                <span class="nav-text">Marketplace</span>
+            </NavLink>
+        </div>
+
+        <div class="nav-item mobile-store-link">
+            <button class="nav-link-btn" @onclick="OpenMobileStore">
+                <span class="nav-icon"><i class="bi bi-phone-fill"></i></span>
+                <span class="nav-text">Mobile Store</span>
+            </button>
+        </div>
+    </nav>
+</div>
+
+@code {
+    private async Task CreateNewProject()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<CreateProjectDialog>("Create New Project", options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled)
+        {
+            Nav.NavigateTo("myprojects");
+        }
+    }
+
+    private void OpenMobileStore()
+    {
+        MainThread.BeginInvokeOnMainThread(() => {
+            if (Application.Current != null)
+            {
+                var storeWindow = new Window(new MobileMarketplacePage()) 
+                { 
+                    Title = "Syncro Mobile Store",
+                    Width = 1200,
+                    Height = 850
+                };
+                Application.Current.OpenWindow(storeWindow);
+            }
+        });
+    }
+}

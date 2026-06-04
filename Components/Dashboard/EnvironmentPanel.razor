@@ -1,0 +1,139 @@
+@using DeveloperAI.BusinessLogic
+@inject EnvironmentManager EnvManager
+
+<MudPaper Elevation="0" Class="pa-6 panel">
+    <div class="d-flex align-center justify-space-between mb-4">
+        <MudText Typo="Typo.h6">Development Environments</MudText>
+        <MudButton StartIcon="@Icons.Material.Filled.Refresh" 
+                   Size="Size.Small" 
+                   Color="Color.Primary" 
+                   Variant="Variant.Text" 
+                   OnClick="RefreshEnvironments"
+                   Disabled="@_loading">
+            Refresh
+        </MudButton>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="d-flex justify-center pa-10">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+        </div>
+    }
+    else
+    {
+        <MudGrid>
+            @foreach (var env in _environments)
+            {
+                <MudItem xs="12" sm="6" md="4">
+                    <MudPaper Elevation="0" Class="pa-4 border-subtle d-flex align-center gap-3">
+                        <div class="env-icon-wrapper @(env.IsAvailable ? "available" : "unavailable")">
+                            <MudIcon Icon="@GetIconForEnv(env.Name)" Size="Size.Medium" />
+                        </div>
+                        <div class="flex-grow-1 overflow-hidden">
+                            <div class="d-flex align-center justify-space-between">
+                                <MudText Typo="Typo.subtitle2" Class="font-weight-bold">@env.Name</MudText>
+                                <MudChip T="string" Color="@(env.IsAvailable ? Color.Success : Color.Error)" 
+                                         Size="Size.Small" 
+                                         Variant="Variant.Text" 
+                                         Class="ma-0">
+                                    @(env.IsAvailable ? "INSTALLED" : "MISSING")
+                                </MudChip>
+                            </div>
+                            <div class="d-flex align-center justify-space-between mt-2">
+                                <MudText Typo="Typo.caption" Class="text-muted d-block text-truncate flex-grow-1">
+                                    @(env.IsAvailable ? env.Version : "Not found in system path")
+                                </MudText>
+                                <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" 
+                                           OnClick="@(() => RunSetup(env.Name))"
+                                           Class="pa-0" Style="min-width: 40px; height: 20px; font-size: 10px;">
+                                    SETUP
+                                </MudButton>
+                            </div>
+                            @if (env.IsAvailable && !string.IsNullOrEmpty(env.Path))
+                            {
+                                <MudTooltip Text="@env.Path">
+                                    <MudText Typo="Typo.caption" Class="env-path">
+                                        @env.Path
+                                    </MudText>
+                                </MudTooltip>
+                            }
+                        </div>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+</MudPaper>
+
+<style>
+    .env-icon-wrapper {
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    .env-icon-wrapper.available {
+        background: #F0FDF4;
+        color: #16A34A;
+    }
+    .env-icon-wrapper.unavailable {
+        background: #FEF2F2;
+        color: #DC2626;
+    }
+    .env-path {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 10px;
+        color: #94A3B8;
+        display: block;
+        text-truncate: true;
+        margin-top: 2px;
+    }
+</style>
+
+@code {
+    private List<EnvironmentInfo> _environments = new();
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshEnvironments();
+    }
+
+    private async Task RefreshEnvironments()
+    {
+        _loading = true;
+        StateHasChanged();
+        _environments = await EnvManager.CheckAllEnvironments();
+        _loading = false;
+        StateHasChanged();
+    }
+
+    private async Task RunSetup(string envName)
+    {
+        var defaultDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SyncroProjects", envName);
+        if (!Directory.Exists(defaultDir)) Directory.CreateDirectory(defaultDir);
+        
+        var script = EnvManager.GetEnvironmentSetupScript(envName, defaultDir);
+        await EnvManager.ExecuteSetupScript(script, defaultDir);
+    }
+
+    private string GetIconForEnv(string name)
+    {
+        return name.ToLower() switch
+        {
+            "python" => Icons.Custom.Brands.GitHub, // Placeholder, MudBlazor doesn't have lang icons by default
+            "node.js" => Icons.Material.Filled.Javascript,
+            "java" => Icons.Material.Filled.Coffee,
+            "c#/.net" => Icons.Material.Filled.Code,
+            "go" => Icons.Material.Filled.Bolt,
+            "rust" => Icons.Material.Filled.Settings,
+            "kotlin" => Icons.Material.Filled.Android,
+            "dart" => Icons.Material.Filled.FlutterDash,
+            "flutter" => Icons.Material.Filled.FlutterDash,
+            _ => Icons.Material.Filled.Terminal
+        };
+    }
+}

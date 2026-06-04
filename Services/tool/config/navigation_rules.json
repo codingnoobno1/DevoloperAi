@@ -1,0 +1,7 @@
+{
+  "patterns": {
+    "default": "/{feature}",
+    "sub": "/{feature}/{child}",
+    "dynamic": "/{feature}/{child}/:id"
+  }
+}

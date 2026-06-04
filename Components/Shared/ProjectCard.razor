@@ -1,0 +1,16 @@
+@using Syncro.Desktop.Models
+
+@* ProjectCard.razor *@
+<div class="card mb-3">
+    <div class="card-body">
+        <h5 class="card-title">@Project?.Title</h5>
+        <h6 class="card-subtitle mb-2 text-muted">@Project?.Status</h6>
+        <p class="card-text">@Project?.Description</p>
+        <a href="@Project?.Link" class="card-link">View Project</a>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public Project? Project { get; set; }
+}

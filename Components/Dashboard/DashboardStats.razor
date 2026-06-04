@@ -1,0 +1,87 @@
+@using Syncro.Desktop.Services
+@using System.IO
+@inject ProjectService ProjService
+
+<MudGrid Spacing="3" Class="mb-6">
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Elevation="0" Class="pa-4 panel d-flex flex-column gap-1">
+            <MudText Typo="Typo.caption" Class="text-muted font-weight-bold">ACTIVE PROJECTS</MudText>
+            <MudText Typo="Typo.h5" Class="font-weight-bold">@ProjService.GetProjects().Count</MudText>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Elevation="0" Class="pa-4 panel d-flex flex-column gap-1">
+            <MudText Typo="Typo.caption" Class="text-muted font-weight-bold">SYNCROCLI STATUS</MudText>
+            <MudChip T="string" Color="Color.Info" Size="Size.Small" Variant="Variant.Text" Class="ma-0 px-0">INITIALIZED</MudChip>
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Elevation="0" Class="pa-4 panel d-flex flex-column gap-1">
+            <div class="d-flex justify-space-between align-center">
+                <MudText Typo="Typo.caption" Class="text-muted font-weight-bold">DISK STORAGE</MudText>
+                <MudIcon Icon="@Icons.Material.Filled.Storage" Size="Size.Small" Color="Color.Default" />
+            </div>
+            @foreach (var drive in _drives)
+            {
+                <div class="d-flex align-center justify-space-between mt-1">
+                    <MudText Typo="Typo.body2" Class="font-weight-bold">@drive.Name</MudText>
+                    <MudText Typo="Typo.caption" Class="text-muted">
+                        @drive.FreeGB GB / @drive.TotalGB GB
+                    </MudText>
+                </div>
+                <MudProgressLinear Color="@GetDriveColor(drive.Percent)" Value="@drive.Percent" Class="my-1" Style="height: 4px;" />
+            }
+        </MudPaper>
+    </MudItem>
+    <MudItem xs="12" sm="6" md="3">
+        <MudPaper Elevation="0" Class="pa-4 panel d-flex flex-column gap-1">
+            <MudText Typo="Typo.caption" Class="text-muted font-weight-bold">PENDING COMMITS</MudText>
+            <MudText Typo="Typo.h5" Class="font-weight-bold">0</MudText>
+        </MudPaper>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private List<DriveStat> _drives = new();
+
+    protected override void OnInitialized()
+    {
+        RefreshDrives();
+    }
+
+    private void RefreshDrives()
+    {
+        _drives.Clear();
+        var allDrives = DriveInfo.GetDrives();
+        foreach (var d in allDrives.Where(x => x.IsReady && x.DriveType == DriveType.Fixed).Take(2)) // Show top 2 drives to keep it compact
+        {
+            var free = d.TotalFreeSpace / (1024.0 * 1024 * 1024);
+            var total = d.TotalSize / (1024.0 * 1024 * 1024);
+            var percent = ((total - free) / total) * 100;
+            
+            _drives.Add(new DriveStat 
+            { 
+                Name = d.Name, 
+                FreeGB = Math.Round(free, 1), 
+                TotalGB = Math.Round(total, 0),
+                Percent = (int)percent
+            });
+        }
+    }
+
+    private Color GetDriveColor(int percent)
+    {
+        if (percent > 90) return Color.Error;
+        if (percent > 70) return Color.Warning;
+        return Color.Primary;
+    }
+
+    public class DriveStat
+    {
+        public string Name { get; set; } = "";
+        public double FreeGB { get; set; }
+        public double TotalGB { get; set; }
+        public int Percent { get; set; }
+    }
+}
+

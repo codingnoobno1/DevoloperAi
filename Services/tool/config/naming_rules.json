@@ -1,0 +1,8 @@
+{
+  "screen": "{feature}_{widget}",
+  "layout": "{feature}_{widget}_layout",
+  "widget": "{feature}_{widget}_widget",
+  "route": "/{feature}/{widget}",
+  "dynamicRoute": "/{feature}/{widget}/:id",
+  "tabRoute": "/{tab}"
+}

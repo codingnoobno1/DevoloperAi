@@ -1,0 +1,117 @@
+{
+  "version": "1.0.0",
+  "scripts": [
+    {
+      "id": "python_setup",
+      "name": "Python 3 Setup",
+      "description": "Checks and installs Python 3 with PIP and essential dev tools.",
+      "platforms": ["Windows", "Linux", "Mac"],
+      "category": "Languages",
+      "requiresAdmin": true
+    },
+    {
+      "id": "java_setup",
+      "name": "Java (JDK 21) Setup",
+      "description": "Automated installation of OpenJDK 21 and JAVA_HOME configuration.",
+      "platforms": ["Windows", "Linux", "Mac"],
+      "category": "Languages",
+      "requiresAdmin": true
+    },
+    {
+      "id": "rust_setup",
+      "name": "Rust Environment",
+      "description": "Installs rustup, cargo, and the stable toolchain.",
+      "platforms": ["Windows", "Linux", "Mac"],
+      "category": "Languages",
+      "requiresAdmin": false
+    },
+    {
+      "id": "dart_setup",
+      "name": "Dart SDK",
+      "description": "Provisioning the Dart SDK for CLI and Web development.",
+      "platforms": ["Windows", "Linux", "Mac"],
+      "category": "SDKs",
+      "requiresAdmin": true
+    },
+    {
+      "id": "flutter_setup",
+      "name": "Flutter Framework",
+      "description": "Complete Flutter SDK setup including Android toolchain check.",
+      "platforms": ["Windows", "Linux", "Mac"],
+      "category": "Frameworks",
+      "requiresAdmin": true
+    },
+    {
+      "id": "docker_setup",
+      "name": "Docker & Compose",
+      "description": "Installs Docker Engine and Docker Compose with user group setup.",
+      "platforms": ["Linux"],
+      "category": "DevOps",
+      "requiresAdmin": true
+    },
+    {
+      "id": "kubectl_setup",
+      "name": "Kubernetes CLI",
+      "description": "Installs kubectl, the command line tool for Kubernetes.",
+      "platforms": ["Linux", "Mac"],
+      "category": "DevOps",
+      "requiresAdmin": true
+    },
+    {
+      "id": "cmake_setup",
+      "name": "CMake Build Tool",
+      "description": "Installs the latest CMake build system for C/C++ projects.",
+      "platforms": ["Linux", "Windows", "Mac"],
+      "category": "Tools",
+      "requiresAdmin": true
+    },
+    {
+      "id": "clang_setup",
+      "name": "LLVM & Clang",
+      "description": "C++ compiler and LLVM toolchain installation.",
+      "platforms": ["Linux", "Mac"],
+      "category": "Tools",
+      "requiresAdmin": true
+    },
+    {
+      "id": "nodejs_setup",
+      "name": "Node.js (NVM)",
+      "description": "Installs Node Version Manager (NVM) and the latest LTS Node.js.",
+      "platforms": ["Linux", "Mac"],
+      "category": "Languages",
+      "requiresAdmin": false
+    },
+    {
+      "id": "go_setup",
+      "name": "Go Language",
+      "description": "Installs the Go programming language and configures GOPATH.",
+      "platforms": ["Linux", "Windows", "Mac"],
+      "category": "Languages",
+      "requiresAdmin": true
+    },
+    {
+      "id": "redis_setup",
+      "name": "Redis Server",
+      "description": "Installs and starts a local Redis cache server.",
+      "platforms": ["Linux"],
+      "category": "Databases",
+      "requiresAdmin": true
+    },
+    {
+      "id": "postgres_setup",
+      "name": "PostgreSQL",
+      "description": "Installs PostgreSQL server and command line utilities.",
+      "platforms": ["Linux"],
+      "category": "Databases",
+      "requiresAdmin": true
+    },
+    {
+      "id": "mongodb_setup",
+      "name": "MongoDB Community",
+      "description": "Installs MongoDB Community Edition server.",
+      "platforms": ["Linux"],
+      "category": "Databases",
+      "requiresAdmin": true
+    }
+  ]
+}

@@ -1,0 +1,134 @@
+@page "/myprojects"
+@using Syncro.Desktop.Services
+@inject ProjectService ProjService
+@inject IDialogService DialogService
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <div class="d-flex align-center justify-space-between mb-6">
+        <MudText Typo="Typo.h5" Class="font-weight-bold">MY PROJECTS</MudText>
+        <div class="d-flex gap-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.FileUpload" OnClick="OpenImportDialog">
+                Import Existing
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" OnClick="OpenCreateDialog">
+                Create Project
+            </MudButton>
+        </div>
+    </div>
+
+    @if (_projects == null || !_projects.Any())
+    {
+        <MudPaper Elevation="0" Class="pa-12 d-flex flex-column align-center justify-center panel" Style="min-height: 400px;">
+            <MudIcon Icon="@Icons.Material.Filled.FolderOpen" Size="Size.Large" Color="Color.Default" Class="mb-4" Style="font-size: 64px;" />
+            <MudText Typo="Typo.h6" Class="text-muted">No projects found</MudText>
+            <MudText Typo="Typo.body2" Class="text-muted mb-4">Start by creating your first project.</MudText>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" OnClick="OpenCreateDialog">Get Started</MudButton>
+        </MudPaper>
+    }
+    else
+    {
+        <MudGrid Spacing="3">
+            @foreach (var project in _projects)
+            {
+                <MudItem xs="12" sm="6" md="4" lg="3">
+                    <MudPaper Elevation="0" Class="pa-5 panel project-card h-100 d-flex flex-column">
+                        <div class="d-flex align-center justify-space-between mb-3">
+                            <div class="project-type-tag">@project.Type</div>
+                            <MudMenu Icon="@Icons.Material.Filled.MoreVert" Size="Size.Small" AnchorOrigin="Origin.BottomRight">
+                                <MudMenuItem Icon="@Icons.Material.Filled.Edit">Edit</MudMenuItem>
+                                <MudMenuItem Icon="@Icons.Material.Filled.Delete" OnClick="@(() => DeleteProject(project.Id))">Delete</MudMenuItem>
+                            </MudMenu>
+                        </div>
+                        
+                        <MudText Typo="Typo.h6" Class="font-weight-bold mb-1">@project.Name</MudText>
+                        <MudText Typo="Typo.caption" Class="text-muted mb-4 d-flex align-center gap-1">
+                            <MudIcon Icon="@Icons.Material.Filled.Place" Size="Size.Small" />
+                            @project.Path
+                        </MudText>
+                        
+                        <div class="mt-auto d-flex align-center justify-space-between pt-4 border-t border-subtle">
+                            <MudText Typo="Typo.caption" Class="text-muted">
+                                Updated @project.LastModified.ToShortDateString()
+                            </MudText>
+                            <div class="d-flex align-center gap-1">
+                                @if (project.Type == "Mobile App")
+                                {
+                                    <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Success" Size="Size.Small" OnClick="@(() => OpenRunSelector(project))" Title="Run Mobile Project" />
+                                }
+                                <MudIconButton Icon="@Icons.Material.Filled.ArrowForward" Color="Color.Primary" Size="Size.Small" />
+                            </div>
+                        </div>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+    }
+</MudContainer>
+
+<style>
+    .project-card {
+        transition: transform 0.2s, box-shadow 0.2s;
+        border: 1px solid var(--border-subtle);
+    }
+    .project-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+        border-color: var(--accent-primary);
+    }
+    .project-type-tag {
+        font-size: 10px;
+        font-weight: 800;
+        text-transform: uppercase;
+        padding: 2px 8px;
+        background: #F3F4F6;
+        color: #4B5563;
+        border-radius: 4px;
+        letter-spacing: 0.05em;
+    }
+</style>
+
+@code {
+    private List<ProjectModel>? _projects;
+
+    protected override void OnInitialized()
+    {
+        _projects = ProjService.GetProjects();
+    }
+
+    private async Task OpenCreateDialog()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<Syncro.Desktop.Components.Shared.CreateProjectDialog>("Create New Project", options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled)
+        {
+            _projects = ProjService.GetProjects();
+        }
+    }
+
+    private async Task OpenImportDialog()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<Syncro.Desktop.Components.Shared.ImportProjectDialog>("Import Existing Project", options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled)
+        {
+            _projects = ProjService.GetProjects();
+        }
+    }
+
+    private async Task OpenRunSelector(ProjectModel project)
+    {
+        var parameters = new DialogParameters { ["ProjectPath"] = project.Path };
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        await DialogService.ShowAsync<Syncro.Desktop.Components.Shared.MobileRunSelector>("Run Mobile Project", parameters, options);
+    }
+
+    private void DeleteProject(string id)
+    {
+        ProjService.DeleteProject(id);
+        _projects = ProjService.GetProjects();
+    }
+}

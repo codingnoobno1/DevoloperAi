@@ -1,0 +1,337 @@
+@page "/marketplace"
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.SyncroCLI
+@using Syncro.Desktop.Services.SyncroCLI.Providers
+@using Syncro.Desktop.Services.SyncroCLI.Core.Platform
+@inject PixelService PixelSvc
+@inject SyncroCLIService CliSvc
+@inject ISnackbar Snackbar
+
+<div class="marketplace-container">
+    <div class="header-section mb-8">
+        <div class="d-flex align-center justify-space-between">
+            <div>
+                <MudText Typo="Typo.h4" Class="font-weight-bold marketplace-title">Syncro Marketplace</MudText>
+                <MudText Typo="Typo.subtitle1" Class="text-muted">Discover, download, and manage automation scripts.</MudText>
+            </div>
+            <div class="d-flex gap-4 align-center">
+                <MudSelect T="string" Label="Platform" @bind-Value="_selectedPlatform" @bind-Value:after="OnPlatformChanged" Dense="true" Variant="Variant.Outlined" Class="platform-select" AnchorOrigin="Origin.BottomCenter">
+                    <MudSelectItem Value="@("Windows")">Windows</MudSelectItem>
+                    <MudSelectItem Value="@("Linux")">Linux</MudSelectItem>
+                    <MudSelectItem Value="@("Mac")">MacOS</MudSelectItem>
+                </MudSelect>
+                @if (_selectedPlatform == "Linux")
+                {
+                    <MudTextField @bind-Value="_sudoPassword" Label="Sudo Password" InputType="InputType.Password" Variant="Variant.Outlined" Dense="true" Class="password-field" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Lock" />
+                }
+                <MudChip T="string" Color="Color.Primary" Variant="Variant.Filled" Icon="@Icons.Material.Filled.Bolt">CLI ENGINE ACTIVE</MudChip>
+            </div>
+        </div>
+    </div>
+
+    <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6" Class="marketplace-tabs">
+        <MudTabPanel Icon="@Icons.Material.Filled.Public" Text="Discover">
+            <div class="discover-grid">
+                @if (_onlineScripts == null)
+                {
+                    @for (int i = 0; i < 3; i++)
+                    {
+                        <MudCard Elevation="2" Class="script-card skeleton">
+                            <MudSkeleton Width="60%" Height="32px" Class="mb-2" />
+                            <MudSkeleton Width="100%" Height="60px" />
+                        </MudCard>
+                    }
+                }
+                else
+                {
+                    @foreach (var script in _onlineScripts)
+                    {
+                        <MudCard Elevation="2" Class="script-card">
+                            <MudCardHeader>
+                                <CardHeaderContent>
+                                    <MudText Typo="Typo.h6" Class="script-name">@script.Name</MudText>
+                                    <MudText Typo="Typo.caption" Class="author-tag">By @script.Author</MudText>
+                                </CardHeaderContent>
+                                <CardHeaderActions>
+                                    <div class="d-flex align-center gap-1">
+                                        <MudIcon Icon="@Icons.Material.Filled.Star" Color="Color.Warning" Size="Size.Small" />
+                                        <MudText Typo="Typo.caption">@script.Stars.ToString("N0")</MudText>
+                                    </div>
+                                </CardHeaderActions>
+                            </MudCardHeader>
+                            <MudCardContent>
+                                <MudText Typo="Typo.body2" Class="script-desc">@script.Description</MudText>
+                            </MudCardContent>
+                            <MudCardActions>
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" 
+                                           StartIcon="@Icons.Material.Filled.Download" 
+                                           Size="Size.Small"
+                                           OnClick="() => DownloadScript(script)">
+                                    Install
+                                </MudButton>
+                                <MudSpacer />
+                                <MudText Typo="Typo.caption" Class="downloads-count">@script.Downloads.ToString("N0") downloads</MudText>
+                            </MudCardActions>
+                        </MudCard>
+                    }
+                }
+            </div>
+        </MudTabPanel>
+
+        <MudTabPanel Icon="@Icons.Material.Filled.LibraryBooks" Text="Library">
+            <MudTable Items="_localScripts" Hover="true" Elevation="0" Class="library-table">
+                <HeaderContent>
+                    <MudTh>ID</MudTh>
+                    <MudTh>Name</MudTh>
+                    <MudTh>Description</MudTh>
+                    <MudTh>Actions</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="ID"><code>@context.Id</code></MudTd>
+                    <MudTd DataLabel="Name">@context.Name</MudTd>
+                    <MudTd DataLabel="Description">@context.Description</MudTd>
+                    <MudTd>
+                        <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="() => RunScript(context.Id)">Run</MudButton>
+                    </MudTd>
+                </RowTemplate>
+            </MudTable>
+        </MudTabPanel>
+
+        <MudTabPanel Icon="@Icons.Material.Filled.Person" Text="My Scripts">
+            <div class="my-scripts-section">
+                @if (!_userScripts.Any())
+                {
+                    <div class="empty-state">
+                        <MudIcon Icon="@Icons.Material.Filled.CodeOff" Size="Size.Large" Color="Color.Default" />
+                        <MudText Typo="Typo.h6">No Custom Scripts Yet</MudText>
+                        <MudText Typo="Typo.body2">Save your custom scripts here to access them via CLI.</MudText>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" Class="mt-4" OnClick="OpenCreateDialog">Create Script</MudButton>
+                    </div>
+                }
+                else
+                {
+                    <div class="discover-grid">
+                        @foreach (var script in _userScripts)
+                        {
+                            <MudCard Elevation="2" Class="script-card user-script">
+                                <MudCardHeader>
+                                    <CardHeaderContent>
+                                        <MudText Typo="Typo.h6">@script</MudText>
+                                        <MudText Typo="Typo.caption">Local Script</MudText>
+                                    </CardHeaderContent>
+                                </MudCardHeader>
+                                <MudCardActions>
+                                    <MudButton Variant="Variant.Text" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow">Run</MudButton>
+                                    <MudSpacer />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small" />
+                                    <MudIconButton Icon="@Icons.Material.Filled.Delete" Size="Size.Small" Color="Color.Error" />
+                                </MudCardActions>
+                            </MudCard>
+                        }
+                    </div>
+                }
+            </div>
+        </MudTabPanel>
+    </MudTabs>
+</div>
+
+<style>
+    .marketplace-container {
+        padding: 24px;
+    }
+
+    .marketplace-title {
+        background: linear-gradient(90deg, #6366F1 0%, #A855F7 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .marketplace-tabs {
+        background: #FFFFFF;
+        border: 1px solid #E5E7EB;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .discover-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 20px;
+    }
+
+    .script-card {
+        border-radius: 12px;
+        transition: transform 0.2s, box-shadow 0.2s;
+        border: 1px solid #F3F4F6;
+    }
+
+    .script-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    }
+
+    .script-name {
+        color: #111827;
+        font-weight: 700;
+    }
+
+    .author-tag {
+        color: #6366F1;
+        font-weight: 600;
+    }
+
+    .script-desc {
+        color: #4B5563;
+        height: 60px;
+        overflow: hidden;
+    }
+
+    .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px;
+        color: #9CA3AF;
+        text-align: center;
+    }
+
+    .user-script {
+        border-left: 4px solid #10B981;
+    }
+</style>
+
+@code {
+    private List<MarketplaceScriptModel>? _onlineScripts;
+    private List<MarketplaceScript> _localScripts = new();
+    private List<string> _userScripts = new();
+    private string _selectedPlatform = "Windows";
+    private string _sudoPassword = "";
+    
+    private bool _previewVisible;
+    private string _previewContent = "";
+    private string _previewScriptId = "";
+    private DialogOptions _dialogOptions = new() { MaxWidth = MaxWidth.Medium, FullWidth = true };
+
+    protected override async Task OnInitializedAsync()
+    {
+        _selectedPlatform = CliSvc.Platform.Type.ToString();
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        // 1. Fetch Online Scripts
+        var allOnline = await PixelSvc.GetMarketplaceScripts();
+        
+        // 2. Load Local Manifest Scripts
+        var allLocal = CliSvc.Marketplace.GetAllScripts();
+        
+        // 3. Merge for "Discover" tab (showing both online and built-in scripts)
+        _onlineScripts = allOnline.Where(s => s.Platforms.Contains(_selectedPlatform)).ToList();
+        
+        // Add local built-in scripts to discover if not already present
+        foreach (var local in allLocal.Where(s => s.Platforms.Contains(_selectedPlatform)))
+        {
+            if (!_onlineScripts.Any(s => s.Id == local.Id))
+            {
+                _onlineScripts.Add(new MarketplaceScriptModel 
+                { 
+                    Id = local.Id, 
+                    Name = local.Name, 
+                    Description = local.Description,
+                    Author = "Syncro Built-in",
+                    Platforms = local.Platforms
+                });
+            }
+        }
+        
+        // 4. Update Library (currently installed/available locally)
+        _localScripts = allLocal.Where(s => s.Platforms.Contains(_selectedPlatform)).ToList();
+        
+        // 5. Update My Scripts
+        _userScripts = CliSvc.Marketplace.GetUserScripts();
+    }
+
+    private async Task OnPlatformChanged()
+    {
+        await LoadData();
+    }
+
+    private async Task DownloadScript(MarketplaceScriptModel script)
+    {
+        Snackbar.Add($"Downloading {script.Name}...", Severity.Info);
+        
+        // Simulation: Downloading based on platform
+        var extension = CliSvc.Platform.ScriptExtension;
+        var platform = CliSvc.Platform.Type.ToString().ToLower();
+        
+        await CliSvc.Marketplace.DownloadScript(script.Id, $"# {script.Name} content\nWrite-Host 'Downloaded script executed'", platform, extension);
+        
+        await Task.Delay(1000);
+        await LoadData();
+        Snackbar.Add($"{script.Name} installed to Library!", Severity.Success);
+    }
+
+    private async Task RunScript(string id)
+    {
+        var content = await CliSvc.Marketplace.GetScriptContent(id, _selectedPlatform);
+        _previewScriptId = id;
+        _previewContent = content;
+        _previewVisible = true;
+    }
+
+    private async Task ConfirmAndRun()
+    {
+        _previewVisible = false;
+        Snackbar.Add($"Executing {_previewScriptId}...", Severity.Info);
+        await CliSvc.ExecuteCommand($"run {_previewScriptId}", _sudoPassword);
+    }
+
+    private void OpenCreateDialog()
+    {
+        Snackbar.Add("Opening Script Editor...", Severity.Normal);
+    }
+}
+
+<MudDialog @bind-Visible="_previewVisible" Options="_dialogOptions">
+    <TitleContent>
+        <MudText Typo="Typo.h6">
+            <MudIcon Icon="@Icons.Material.Filled.Code" Class="mr-3 mb-n1"/>
+            Preview: @_previewScriptId
+        </MudText>
+    </TitleContent>
+    <DialogContent>
+        <div class="preview-container">
+            <pre><code>@_previewContent</code></pre>
+        </div>
+        @if (_selectedPlatform == "Linux" && string.IsNullOrEmpty(_sudoPassword))
+        {
+            <MudAlert Severity="Severity.Warning" Class="mt-4">
+                This script may require sudo. Please provide your password in the main view if needed.
+            </MudAlert>
+        }
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="() => _previewVisible = false">Cancel</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ConfirmAndRun">Execute Now</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .preview-container {
+        background: #1E1E1E;
+        color: #D4D4D4;
+        padding: 16px;
+        border-radius: 8px;
+        max-height: 400px;
+        overflow-y: auto;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+        font-size: 13px;
+    }
+    
+    .preview-container pre {
+        margin: 0;
+        white-space: pre-wrap;
+    }
+</style>

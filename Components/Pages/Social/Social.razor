@@ -1,0 +1,267 @@
+@page "/social"
+@using Syncro.Desktop.Services
+@inject PixelService PixelSvc
+@inject NetlifyService NetlifySvc
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <div class="d-flex align-center justify-space-between mb-6">
+        <MudText Typo="Typo.h5" Class="font-weight-bold">LIVE STREAM</MudText>
+        <div class="d-flex align-center gap-2">
+            <div class="pulse-dot"></div>
+            <MudText Typo="Typo.caption" Class="font-mono text-muted uppercase tracking-widest">Hydrating Network Layer...</MudText>
+        </div>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="d-flex flex-column align-center justify-center pa-12" style="min-height: 400px;">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Class="mb-4" />
+            <MudText Typo="Typo.body2" Class="font-mono text-muted">SYNCHRONIZING FEED...</MudText>
+        </div>
+    }
+    else
+    {
+        <MudGrid>
+            <MudItem xs="12" md="8">
+                <div class="feed-container">
+                    @foreach (var item in _feedItems)
+                    {
+                        <div class="feed-item-wrapper mb-4">
+                            @if (item.Type == FeedItemType.Proposal)
+                            {
+                                <MudPaper Elevation="0" Class="pa-5 feed-card proposal-card">
+                                    <div class="d-flex align-center gap-3 mb-3">
+                                        <MudAvatar Color="Color.Primary" Size="Size.Small">@item.Proposal?.CreatedBy?.Name.Substring(0,1)</MudAvatar>
+                                        <MudText Typo="Typo.subtitle2" Class="font-weight-bold">@item.Proposal?.CreatedBy?.Name</MudText>
+                                        <span class="type-tag proposal">PROPOSAL</span>
+                                        <MudSpacer />
+                                        <MudText Typo="Typo.caption" Class="text-muted">@item.Timestamp.ToShortTimeString()</MudText>
+                                    </div>
+                                    <MudText Typo="Typo.h6" Class="font-weight-bold mb-2">@item.Proposal?.Title</MudText>
+                                    <MudText Typo="Typo.body2" Class="text-muted mb-4">@item.Proposal?.Description</MudText>
+                                    <div class="d-flex align-center gap-4">
+                                        <MudButton StartIcon="@Icons.Material.Filled.ThumbUp" 
+                                                   Variant="Variant.Text" 
+                                                   Color="@(item.Proposal?.Upvotes > 0 ? Color.Primary : Color.Default)" 
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => HandleUpvote(item.Proposal?.Id))">
+                                            @item.Proposal?.Upvotes Upvotes
+                                        </MudButton>
+                                        <MudButton StartIcon="@Icons.Material.Filled.Comment" 
+                                                   Variant="Variant.Text" 
+                                                   Size="Size.Small"
+                                                   OnClick="@(() => ToggleComments(item.Proposal?.Id))">
+                                            @item.Proposal?.CommentsCount Comments
+                                        </MudButton>
+                                        <MudSpacer />
+                                        <MudButton Variant="Variant.Text" Color="Color.Primary" EndIcon="@Icons.Material.Filled.ArrowForward" Size="Size.Small">View Project</MudButton>
+                                    </div>
+                                    @if (_expandedComments.Contains(item.Proposal?.Id ?? ""))
+                                    {
+                                        <div class="mt-4 pa-3 comment-section">
+                                            <div class="d-flex gap-2 mb-3">
+                                                <MudTextField Value="@(_commentTexts[item.Proposal?.Id ?? ""])" 
+                                                              ValueChanged="@((string s) => _commentTexts[item.Proposal?.Id ?? ""] = s)"
+                                                              Placeholder="Add a comment..." 
+                                                              Variant="Variant.Outlined" 
+                                                              Margin="Margin.Dense" 
+                                                              FullWidth="true" />
+                                                <MudIconButton Icon="@Icons.Material.Filled.Send" 
+                                                               Color="Color.Primary" 
+                                                               OnClick="@(() => HandleAddComment(item.Proposal?.Id))" />
+                                            </div>
+                                        </div>
+                                    }
+                                </MudPaper>
+                            }
+                            else if (item.Type == FeedItemType.Activity)
+                            {
+                                <MudPaper Elevation="0" Class="pa-5 feed-card activity-card">
+                                    <div class="d-flex gap-4">
+                                        <MudAvatar Color="Color.Secondary" Variant="Variant.Outlined" Size="Size.Small">
+                                            @item.Activity?.ActorId?.Name.Substring(0,1)
+                                        </MudAvatar>
+                                        <div class="flex-grow-1">
+                                            <div class="d-flex align-center justify-space-between mb-1">
+                                                <MudText Typo="Typo.subtitle2" Class="font-weight-bold">@item.Activity?.ActorId?.Name</MudText>
+                                                <MudText Typo="Typo.caption" Class="text-muted">@item.Timestamp.ToShortTimeString()</MudText>
+                                            </div>
+                                            <MudText Typo="Typo.body2">
+                                                <span class="action-highlight">@item.Activity?.Action</span> @item.Activity?.Content
+                                            </MudText>
+                                        </div>
+                                    </div>
+                                </MudPaper>
+                            }
+                            else if (item.Type == FeedItemType.NetlifyDeploy)
+                            {
+                                <div class="netlify-event pa-3">
+                                    <div class="d-flex align-center gap-3">
+                                        <MudIcon Icon="@Icons.Material.Filled.CloudDone" Color="Color.Success" Size="Size.Small" />
+                                        <MudText Typo="Typo.caption" Class="font-mono font-weight-bold">NETLIFY DEPLOY: @item.Deploy?.State.ToUpper()</MudText>
+                                        <MudText Typo="Typo.caption" Class="text-muted">@item.Deploy?.Branch (@item.Deploy?.Context)</MudText>
+                                        <MudSpacer />
+                                        <MudText Typo="Typo.caption" Class="text-muted">@item.Timestamp.ToShortTimeString()</MudText>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </MudItem>
+
+            <MudItem xs="12" md="4">
+                <MudPaper Elevation="0" Class="pa-6 panel">
+                    <MudText Typo="Typo.subtitle2" Class="font-weight-bold mb-4 uppercase tracking-widest">System Metrics</MudText>
+                    <div class="metric-row mb-4">
+                        <MudText Typo="Typo.caption" Class="text-muted d-block">ACTIVE PROPOSALS</MudText>
+                        <MudText Typo="Typo.h5" Class="font-weight-bold">@(_feed?.Proposals.Count ?? 0)</MudText>
+                    </div>
+                    <div class="metric-row mb-4">
+                        <MudText Typo="Typo.caption" Class="text-muted d-block">TOTAL ACTIVITIES</MudText>
+                        <MudText Typo="Typo.h5" Class="font-weight-bold">@(_feed?.Activity.Count ?? 0)</MudText>
+                    </div>
+                    <MudDivider Class="my-4" />
+                    <MudText Typo="Typo.caption" Class="text-muted">SYNCRO NODE STATUS: <span class="text-success font-weight-bold">OPERATIONAL</span></MudText>
+                </MudPaper>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+<style>
+    .pulse-dot {
+        width: 8px;
+        height: 8px;
+        background: var(--accent-primary);
+        border-radius: 50%;
+        animation: pulse 2s infinite;
+    }
+
+    @@keyframes pulse {
+        0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.4); }
+        70% { box-shadow: 0 0 0 10px rgba(99, 102, 241, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0); }
+    }
+
+    .feed-card {
+        border: 1px solid var(--border-subtle);
+        border-radius: 12px;
+        transition: all 0.2s;
+        background: #FFFFFF;
+    }
+
+    .feed-card:hover {
+        border-color: var(--accent-primary);
+        transform: translateX(4px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }
+
+    .type-tag {
+        font-size: 9px;
+        font-weight: 900;
+        padding: 2px 8px;
+        border-radius: 4px;
+        letter-spacing: 0.05em;
+    }
+
+    .type-tag.proposal {
+        background: rgba(99, 102, 241, 0.1);
+        color: var(--accent-primary);
+    }
+
+    .action-highlight {
+        font-weight: 800;
+        color: var(--accent-primary);
+        text-transform: uppercase;
+        font-size: 11px;
+    }
+
+    .netlify-event {
+        background: #F8FAFC;
+        border-left: 3px solid #10B981;
+        border-radius: 0 8px 8px 0;
+    }
+
+    .comment-section {
+        background: #F1F5F9;
+        border-radius: 8px;
+    }
+
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+</style>
+
+@code {
+    private FeedResponse? _feed;
+    private List<FeedItem> _feedItems = new();
+    private bool _loading = true;
+    private HashSet<string> _expandedComments = new();
+    private Dictionary<string, string> _commentTexts = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadFeed();
+    }
+
+    private async Task LoadFeed()
+    {
+        _loading = true;
+        _feedItems.Clear();
+        _feed = await PixelSvc.GetFeed();
+        var netlifyDeploys = await NetlifySvc.GetRecentDeploys("project-syncroo");
+
+        if (_feed != null)
+        {
+            foreach (var p in _feed.Proposals) 
+            {
+                _feedItems.Add(new FeedItem { Type = FeedItemType.Proposal, Proposal = p, Timestamp = p.CreatedAt });
+                if (!_commentTexts.ContainsKey(p.Id ?? "")) _commentTexts[p.Id ?? ""] = "";
+            }
+            
+            foreach (var a in _feed.Activity) 
+                _feedItems.Add(new FeedItem { Type = FeedItemType.Activity, Activity = a, Timestamp = a.CreatedAt });
+        }
+
+        foreach (var d in netlifyDeploys.Take(5))
+            _feedItems.Add(new FeedItem { Type = FeedItemType.NetlifyDeploy, Deploy = d, Timestamp = d.CreatedAt });
+
+        _feedItems = _feedItems.OrderByDescending(x => x.Timestamp).ToList();
+        _loading = false;
+    }
+
+    private async Task HandleUpvote(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        var success = await PixelSvc.UpvoteProposal(id);
+        if (success) await LoadFeed();
+    }
+
+    private void ToggleComments(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        if (_expandedComments.Contains(id)) _expandedComments.Remove(id);
+        else _expandedComments.Add(id);
+    }
+
+    private async Task HandleAddComment(string? id)
+    {
+        if (string.IsNullOrEmpty(id) || string.IsNullOrWhiteSpace(_commentTexts[id])) return;
+        
+        var success = await PixelSvc.AddComment(id, _commentTexts[id]);
+        if (success)
+        {
+            _commentTexts[id] = "";
+            await LoadFeed();
+        }
+    }
+
+    public enum FeedItemType { Proposal, Activity, NetlifyDeploy }
+    public class FeedItem
+    {
+        public FeedItemType Type { get; set; }
+        public FeedProposal? Proposal { get; set; }
+        public FeedActivity? Activity { get; set; }
+        public NetlifyDeploy? Deploy { get; set; }
+        public DateTime Timestamp { get; set; }
+    }
+}

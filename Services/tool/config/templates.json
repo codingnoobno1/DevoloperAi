@@ -1,0 +1,58 @@
+{
+  "ride_app": {
+    "dashboard": {
+      "tabs": [
+        {
+          "id": "home",
+          "widgets": [
+            { "id": "map", "type": "map", "next": true, "dynamic": true },
+            { "id": "ride_card", "type": "card", "next": true }
+          ]
+        },
+        {
+          "id": "trips",
+          "widgets": [
+            { "id": "trip_list", "type": "list", "next": true }
+          ]
+        },
+        {
+          "id": "profile",
+          "widgets": [
+            { "id": "menu", "type": "menu" }
+          ]
+        }
+      ]
+    },
+    "theme": {
+      "primary": "#009688"
+    }
+  },
+  "ecommerce": {
+    "dashboard": {
+      "tabs": [
+        {
+          "id": "shop",
+          "widgets": [
+            { "id": "catalog", "type": "list", "next": true },
+            { "id": "featured", "type": "card" }
+          ]
+        },
+        {
+          "id": "orders",
+          "widgets": [
+            { "id": "order_list", "type": "list", "next": true }
+          ]
+        },
+        {
+          "id": "settings",
+          "widgets": [
+            { "id": "account", "type": "menu" }
+          ]
+        }
+      ]
+    },
+    "theme": {
+      "primary": "#E91E63"
+    }
+  }
+}

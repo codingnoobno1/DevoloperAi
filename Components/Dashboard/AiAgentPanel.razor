@@ -1,0 +1,174 @@
+@using DeveloperAI.BusinessLogic
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.ProgramLogic
+@using CommunityToolkit.Maui.Storage
+@inject AIClient AiClient
+@inject IJSRuntime JSRuntime
+@inject QuickStartService QuickStartService
+@inject BatchFileExecutionService BatchFileExecutionService
+@inject FolderCreationService FolderCreationService
+
+<MudPaper Elevation="0" Class="panel pa-6 mt-6">
+    <MudText Typo="Typo.h6" Class="mb-4">Syncro AI Orchestrator</MudText>
+    
+    <MudGrid Spacing="3">
+        <MudItem xs="12">
+             <MudSelect T="string" Label="AI Model" @bind-Value="SelectedModel" Variant="Variant.Outlined" AnchorOrigin="Origin.BottomCenter">
+                <MudSelectItem Value="@("gemini-2.5-flash")">Gemini 2.5 Flash (Default)</MudSelectItem>
+                <MudSelectItem Value="@("gemini-2.5-flash-lite")">Gemini 2.5 Flash Lite (Light)</MudSelectItem>
+                <MudSelectItem Value="@("gemini-1.5-flash")">Gemini 1.5 Flash</MudSelectItem>
+                <MudSelectItem Value="@("gemini-1.5-pro")">Gemini 1.5 Pro (Powerful)</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudSelect T="string" Label="Orchestration Mode" @bind-Value="SelectedAIMode" Variant="Variant.Outlined" AnchorOrigin="Origin.BottomCenter">
+                <MudSelectItem Value="@("GeneralChat")">General Chat</MudSelectItem>
+                <MudSelectItem Value="@("BatchFileGenerator")">Batch File Generator</MudSelectItem>
+                <MudSelectItem Value="@("EnvironmentSetup")">Environment Setup</MudSelectItem>
+                <MudSelectItem Value="@("MERNProject")">MERN Project</MudSelectItem>
+                <MudSelectItem Value="@("SpringBootProject")">Spring Boot Project</MudSelectItem>
+                <MudSelectItem Value="@("FlutterProject")">Flutter Project</MudSelectItem>
+            </MudSelect>
+        </MudItem>
+        
+        <MudItem xs="12" md="6">
+            <MudTextField @bind-Value="TargetWorkspacePath" Label="Target Workspace" Variant="Variant.Outlined" 
+                Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseFolder" />
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudTextField T="string" Label="Enter Prompt" @bind-Value="UserPrompt" Lines="4" Variant="Variant.Outlined" Placeholder="Describe your task..." />
+        </MudItem>
+
+        <MudItem xs="12" Class="d-flex justify-end gap-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ClearAgent" Disabled="@IsLoading">
+                Clear
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="GenerateScript" Loading="@IsLoading" StartIcon="@Icons.Material.Filled.AutoAwesome">
+                Execute Agent
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (!string.IsNullOrEmpty(AgentMessage))
+    {
+        <MudAlert Severity="@(IsError ? Severity.Error : Severity.Info)" Class="mt-4">@AgentMessage</MudAlert>
+    }
+
+    @if (!string.IsNullOrEmpty(GeneratedScript))
+    {
+        <MudExpansionPanels Class="mt-4">
+            <MudExpansionPanel Text="Execution Script Preview" IsExpanded="true">
+                <pre class="script-preview"><code>@GeneratedScript</code></pre>
+                <MudButton StartIcon="@Icons.Material.Filled.ContentCopy" OnClick="CopyScript" Class="mt-2">Copy</MudButton>
+            </MudExpansionPanel>
+        </MudExpansionPanels>
+    }
+</MudPaper>
+
+<style>
+    .script-preview {
+        background: #000;
+        padding: 12px;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        overflow-x: auto;
+    }
+</style>
+
+@code {
+    private string SelectedModel { get; set; } = "gemini-2.5-flash";
+    private string SelectedAIMode { get; set; } = "GeneralChat";
+    private string TargetWorkspacePath { get; set; } = "";
+    private string UserPrompt { get; set; } = "";
+    private string AgentMessage { get; set; } = "";
+    private string GeneratedScript { get; set; } = "";
+    private bool IsError { get; set; } = false;
+    private bool IsLoading { get; set; } = false;
+
+    private async Task BrowseFolder()
+    {
+        var result = await FolderPicker.PickAsync(CancellationToken.None);
+        if (result != null && result.IsSuccessful && result.Folder != null)
+        {
+            TargetWorkspacePath = result.Folder.Path;
+        }
+    }
+
+    private async Task GenerateScript()
+    {
+        if (string.IsNullOrWhiteSpace(TargetWorkspacePath))
+        {
+            AgentMessage = "Please select a target workspace first.";
+            IsError = true;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(UserPrompt))
+        {
+            AgentMessage = "Please enter a prompt.";
+            IsError = true;
+            return;
+        }
+
+        IsLoading = true;
+        AgentMessage = "Contacting AI Orchestrator...";
+        IsError = false;
+        GeneratedScript = "";
+
+        try
+        {
+            // 1. Call LLM to generate script
+            var (script, error) = await AiClient.CallLLM(UserPrompt, SelectedAIMode, TargetWorkspacePath, SelectedModel);
+            
+            if (!string.IsNullOrEmpty(error))
+            {
+                AgentMessage = $"AI Error: {error}";
+                IsError = true;
+                IsLoading = false;
+                return;
+            }
+
+            if (string.IsNullOrEmpty(script))
+            {
+                AgentMessage = "AI returned an empty script.";
+                IsError = true;
+                IsLoading = false;
+                return;
+            }
+
+            GeneratedScript = script;
+            AgentMessage = "Script generated. Starting execution...";
+
+            // 2. Execute the script
+            var (success, resultMessage) = await BatchFileExecutionService.ExecuteBatchFile(GeneratedScript, TargetWorkspacePath);
+            
+            AgentMessage = resultMessage;
+            IsError = !success;
+        }
+        catch (Exception ex)
+        {
+            AgentMessage = $"System Error: {ex.Message}";
+            IsError = true;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void ClearAgent()
+    {
+        UserPrompt = "";
+        AgentMessage = "";
+        GeneratedScript = "";
+        IsError = false;
+    }
+
+    private async Task CopyScript()
+    {
+        await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", GeneratedScript);
+    }
+}

@@ -1,0 +1,273 @@
+@page "/login"
+@using Syncro.Desktop.Services.Auth
+@inject AuthService AuthService
+
+<div class="auth-container">
+    <div class="auth-card">
+        <div class="auth-header">
+            <h2 class="title">Syncro</h2>
+            <p class="subtitle">@(IsRegisterMode ? "Create your account" : "Welcome back")</p>
+        </div>
+
+        <div class="auth-tabs">
+            <button class="tab-btn @(!IsRegisterMode ? "active" : "")" @onclick="() => IsRegisterMode = false">Login</button>
+            <button class="tab-btn @(IsRegisterMode ? "active" : "")" @onclick="() => IsRegisterMode = true">Register</button>
+        </div>
+
+        <div class="auth-body">
+            @if (!IsRegisterMode)
+            {
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" @bind="Email" placeholder="Enter your email" />
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" @bind="Password" placeholder="Enter your password" />
+                </div>
+                <button class="btn-primary" @onclick="PerformLogin" disabled="@IsLoading">
+                    @(IsLoading ? "Signing in..." : "Sign In")
+                </button>
+            }
+            else
+            {
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input type="text" @bind="RegModel.Name" placeholder="Full Name" />
+                    </div>
+                    <div class="form-group">
+                        <label>Email</label>
+                        <input type="email" @bind="RegModel.Email" placeholder="Email Address" />
+                    </div>
+                    <div class="form-group">
+                        <label>University</label>
+                        <input type="text" @bind="RegModel.UniversityName" placeholder="University Name" />
+                    </div>
+                    <div class="form-group">
+                        <label>Enrollment #</label>
+                        <input type="text" @bind="RegModel.EnrollmentNumber" placeholder="Enrollment Number" />
+                    </div>
+                    <div class="form-group">
+                        <label>Tech Preference</label>
+                        <select @bind="RegModel.TechStackPreference" class="form-select">
+                            <option value="">Select Stack</option>
+                            <option value="MERN">MERN</option>
+                            <option value="Python">Python</option>
+                            <option value="Java">Java</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <input type="password" @bind="RegModel.Password" placeholder="Create Password" />
+                    </div>
+                </div>
+                <button class="btn-primary mt-3" @onclick="PerformRegister" disabled="@IsLoading">
+                    @(IsLoading ? "Creating account..." : "Register")
+                </button>
+            }
+
+            @if (!string.IsNullOrEmpty(Message))
+            {
+                <div class="alert @(IsError ? "alert-error" : "alert-success") mt-3">
+                    @Message
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .auth-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+        font-family: 'Inter', sans-serif;
+    }
+
+    .auth-card {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        padding: 40px;
+        width: 100%;
+        max-width: 450px;
+        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+    }
+
+    .auth-header {
+        text-align: center;
+        margin-bottom: 30px;
+    }
+
+    .title {
+        color: white;
+        font-size: 2.5rem;
+        font-weight: 800;
+        margin: 0;
+        letter-spacing: -1px;
+    }
+
+    .subtitle {
+        color: #94a3b8;
+        font-size: 1rem;
+        margin-top: 8px;
+    }
+
+    .auth-tabs {
+        display: flex;
+        background: rgba(0, 0, 0, 0.2);
+        padding: 4px;
+        border-radius: 8px;
+        margin-bottom: 24px;
+    }
+
+    .tab-btn {
+        flex: 1;
+        padding: 8px;
+        border: none;
+        background: transparent;
+        color: #94a3b8;
+        font-weight: 600;
+        cursor: pointer;
+        border-radius: 6px;
+        transition: all 0.2s;
+    }
+
+    .tab-btn.active {
+        background: rgba(255, 255, 255, 0.1);
+        color: white;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .form-group label {
+        color: #cbd5e1;
+        font-size: 0.875rem;
+        margin-bottom: 6px;
+        font-weight: 500;
+    }
+
+    .form-group input, .form-select {
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 8px;
+        padding: 12px;
+        color: white;
+        outline: none;
+        transition: border-color 0.2s;
+    }
+
+    .form-group input:focus {
+        border-color: #6366f1;
+    }
+
+    .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .btn-primary {
+        width: 100%;
+        padding: 12px;
+        background: #6366f1;
+        color: white;
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .btn-primary:hover {
+        background: #4f46e5;
+    }
+
+    .alert {
+        padding: 12px;
+        border-radius: 8px;
+        font-size: 0.875rem;
+        text-align: center;
+    }
+
+    .alert-error {
+        background: rgba(239, 68, 68, 0.1);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    .alert-success {
+        background: rgba(34, 197, 94, 0.1);
+        color: #86efac;
+        border: 1px solid rgba(34, 197, 94, 0.2);
+    }
+</style>
+
+@code {
+    private bool IsRegisterMode { get; set; } = false;
+    private bool IsLoading { get; set; } = false;
+    private string Email { get; set; } = "";
+    private string Password { get; set; } = "";
+    private RegisterModel RegModel { get; set; } = new RegisterModel();
+    private string Message { get; set; } = "";
+    private bool IsError { get; set; } = false;
+
+    private async Task PerformLogin()
+    {
+        IsLoading = true;
+        Message = "";
+        
+        // TEMPORARY: Allow 'dev' bypass for testing
+        if (Email == "dev" && Password == "password")
+        {
+            NavigateToDashboard();
+            return;
+        }
+
+        var (success, msg) = await AuthService.Login(Email, Password);
+        if (success)
+        {
+            NavigateToDashboard();
+        }
+        else
+        {
+            IsError = true;
+            Message = msg;
+        }
+        IsLoading = false;
+    }
+
+    private async Task PerformRegister()
+    {
+        IsLoading = true;
+        Message = "";
+        
+        var (success, msg) = await AuthService.Register(RegModel);
+        IsError = !success;
+        Message = msg;
+        
+        if (success)
+        {
+            IsRegisterMode = false; // Switch to login after success
+        }
+        IsLoading = false;
+    }
+
+    private void NavigateToDashboard()
+    {
+        MainThread.BeginInvokeOnMainThread(() => {
+            if (Application.Current != null && Application.Current.Windows.Count > 0)
+            {
+                Application.Current.Windows[0].Page = new MainPage();
+            }
+        });
+    }
+}

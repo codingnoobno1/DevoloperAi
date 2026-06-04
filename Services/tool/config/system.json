@@ -1,0 +1,13 @@
+{
+  "paths": {
+    "config": "config/",
+    "quick_config": "config/quick_config/",
+    "custom_config": "config/custom_config/",
+    "expanded": "config/custom_config/",
+    "mode_file": "config/mode.json",
+    "output": "lib_gen/"
+  },
+  "mode": {
+    "noobTrigger": ["mainapp.json", "config/mainapp.json", "config/quick_config/mainapp.json"]
+  }
+}

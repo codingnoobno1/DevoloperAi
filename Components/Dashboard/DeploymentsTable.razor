@@ -1,0 +1,39 @@
+<MudTable Items="@Deployments" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="0" Class="panel" HeaderClass="table-header-custom">
+    <HeaderContent>
+        <MudTh>Service Name</MudTh>
+        <MudTh>Stack</MudTh>
+        <MudTh>Status</MudTh>
+        <MudTh>Uptime</MudTh>
+        <MudTh>Port</MudTh>
+        <MudTh>Action</MudTh>
+    </HeaderContent>
+    <RowTemplate>
+        <MudTd DataLabel="Service Name">@context.Name</MudTd>
+        <MudTd DataLabel="Stack">@context.Stack</MudTd>
+        <MudTd DataLabel="Status">
+            <MudChip T="string" Color="@context.StatusColor" Size="Size.Small" Variant="Variant.Text">@context.Status</MudChip>
+        </MudTd>
+        <MudTd DataLabel="Uptime">@context.Uptime</MudTd>
+        <MudTd DataLabel="Port"><code>@context.Port</code></MudTd>
+        <MudTd DataLabel="Action">
+            <MudButton Variant="Variant.Text" Color="Color.Primary" Size="Size.Small">@context.ActionText</MudButton>
+        </MudTd>
+    </RowTemplate>
+</MudTable>
+
+<style>
+    .table-header-custom {
+        background-color: #F9FAFB !important;
+        text-transform: uppercase;
+        font-size: 11px;
+        color: #6B7280 !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.05em;
+    }
+</style>
+
+@code {
+    private List<DeploymentInfo> Deployments = new();
+
+    public record DeploymentInfo(string Name, string Stack, string Status, string Uptime, int Port, string ActionText, Color StatusColor);
+}

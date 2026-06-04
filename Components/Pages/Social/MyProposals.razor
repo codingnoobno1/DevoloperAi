@@ -1,0 +1,193 @@
+@page "/myproposals"
+@using Syncro.Desktop.Services
+@inject PixelService PixelSvc
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <div class="d-flex align-center justify-space-between mb-6">
+        <div>
+            <MudText Typo="Typo.h5" Class="font-weight-bold">PROPOSAL ARCHIVE</MudText>
+            <MudText Typo="Typo.caption" Class="text-muted">MANAGE AND TRACK YOUR SUBMITTED INITIATIVES</MudText>
+        </div>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Add" Size="Size.Large" OnClick="OpenCreateDialog">
+            New Proposal
+        </MudButton>
+    </div>
+
+    @if (_loading)
+    {
+        <div class="d-flex justify-center pa-12">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" />
+        </div>
+    }
+    else if (!_proposals.Any())
+    {
+        <MudPaper Elevation="0" Class="pa-12 d-flex flex-column align-center justify-center panel" Style="min-height: 400px;">
+            <MudIcon Icon="@Icons.Material.Filled.Description" Size="Size.Large" Color="Color.Default" Class="mb-4" Style="font-size: 64px;" />
+            <MudText Typo="Typo.h6" Class="text-muted">No proposals found</MudText>
+            <MudText Typo="Typo.body2" Class="text-muted mb-4">You haven't submitted any proposals yet.</MudText>
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary">Create Your First Proposal</MudButton>
+        </MudPaper>
+    }
+    else
+    {
+        <MudExpansionPanels MultiExpansion="true" Elevation="0">
+            @foreach (var prop in _proposals)
+            {
+                <MudExpansionPanel Class="proposal-panel mb-3">
+                    <TitleContent>
+                        <div class="d-flex align-center justify-space-between w-100 pr-4">
+                            <div class="d-flex align-center gap-4">
+                                <div class="status-indicator @prop.Status.ToLower()"></div>
+                                <div>
+                                    <MudText Typo="Typo.subtitle1" Class="font-weight-bold">@prop.Title</MudText>
+                                    <MudText Typo="Typo.caption" Class="text-muted">@prop.Stage.ToUpper() • @prop.CreatedAt.ToShortDateString()</MudText>
+                                </div>
+                            </div>
+                            <div class="d-flex align-center gap-3">
+                                <MudChip T="string" Size="Size.Small" Color="@GetStatusColor(prop.Status)" Variant="Variant.Text">@prop.Status.ToUpper()</MudChip>
+                                <MudText Typo="Typo.caption" Class="font-weight-bold">@prop.Upvotes UPVOTES</MudText>
+                            </div>
+                        </div>
+                    </TitleContent>
+                    <ChildContent>
+                        <div class="pa-4">
+                            <MudText Typo="Typo.body2" Class="mb-6" Style="line-height: 1.6;">@prop.Description</MudText>
+                            
+                            <MudGrid>
+                                <MudItem xs="12" sm="6">
+                                    <MudText Typo="Typo.caption" Class="text-muted mb-2 d-block">REQUIRED TECH STACK</MudText>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        @foreach (var tech in prop.TechStack)
+                                        {
+                                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info">@tech</MudChip>
+                                        }
+                                        @if (!prop.TechStack.Any())
+                                        {
+                                            <MudText Typo="Typo.caption" Class="italic text-muted">No specific tech stack listed</MudText>
+                                        }
+                                    </div>
+                                </MudItem>
+                                <MudItem xs="12" sm="3">
+                                    <MudText Typo="Typo.caption" Class="text-muted mb-1 d-block">TEAM SIZE</MudText>
+                                    <MudText Typo="Typo.body2" Class="font-weight-bold">@prop.TeamSize Member(s)</MudText>
+                                </MudItem>
+                                <MudItem xs="12" sm="3">
+                                    <MudText Typo="Typo.caption" Class="text-muted mb-1 d-block">ENGAGEMENT</MudText>
+                                    <MudText Typo="Typo.body2" Class="font-weight-bold">@prop.CommentsCount Comments</MudText>
+                                </MudItem>
+                            </MudGrid>
+
+                            <div class="d-flex justify-end gap-2 mt-8">
+                                <MudButton StartIcon="@Icons.Material.Filled.Delete" Variant="Variant.Outlined" Color="Color.Error" Size="Size.Small" OnClick="@(() => HandleDelete(prop.Id))">Delete</MudButton>
+                                <MudButton StartIcon="@Icons.Material.Filled.Edit" Variant="Variant.Outlined" Size="Size.Small">Edit</MudButton>
+                                <MudButton StartIcon="@Icons.Material.Filled.Analytics" Variant="Variant.Filled" Color="Color.Primary" Size="Size.Small">Detailed Analytics</MudButton>
+                            </div>
+                        </div>
+                    </ChildContent>
+                </MudExpansionPanel>
+            }
+        </MudExpansionPanels>
+    }
+</MudContainer>
+
+<MudDialog @bind-IsVisible="_createDialogOpen" Options="new DialogOptions { MaxWidth = MaxWidth.Medium, FullWidth = true }">
+    <TitleContent>
+        <MudText Typo="Typo.h6">Create New Proposal</MudText>
+    </TitleContent>
+    <DialogContent>
+        <MudTextField @bind-Value="_newProposal.Title" Label="Title" Required="true" Margin="Margin.Normal" />
+        <MudTextField @bind-Value="_newProposal.Description" Label="Description" Lines="5" Required="true" Margin="Margin.Normal" />
+        <MudSelect T="string" @bind-Value="_newProposal.Type" Label="Type" Margin="Margin.Normal">
+            <MudSelectItem Value="@("idea")">Idea</MudSelectItem>
+            <MudSelectItem Value="@("research")">Research</MudSelectItem>
+            <MudSelectItem Value="@("implementation")">Implementation</MudSelectItem>
+        </MudSelect>
+    </DialogContent>
+    <DialogActions>
+        <MudButton OnClick="@(() => _createDialogOpen = false)">Cancel</MudButton>
+        <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="SubmitProposal">Submit Proposal</MudButton>
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .proposal-panel {
+        border: 1px solid var(--border-subtle) !important;
+        border-radius: 12px !important;
+        background: #FFFFFF !important;
+        box-shadow: none !important;
+    }
+
+    .proposal-panel::before { display: none; }
+
+    .status-indicator {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #94A3B8;
+    }
+
+    .status-indicator.active { background: #10B981; box-shadow: 0 0 8px rgba(16, 185, 129, 0.4); }
+    .status-indicator.pending { background: #F59E0B; }
+    .status-indicator.proposal { background: #6366F1; }
+
+    .italic { font-style: italic; }
+</style>
+
+@code {
+    private List<ProposalModel> _proposals = new();
+    private bool _loading = true;
+    private bool _createDialogOpen = false;
+    private ProposalModel _newProposal = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProposals();
+    }
+
+    private async Task LoadProposals()
+    {
+        _loading = true;
+        _proposals = await PixelSvc.GetUserProposals();
+        _loading = false;
+    }
+
+    private async Task HandleDelete(string? id)
+    {
+        if (string.IsNullOrEmpty(id)) return;
+        
+        var success = await PixelSvc.DeleteProposal(id);
+        if (success)
+        {
+            await LoadProposals();
+        }
+    }
+
+    private void OpenCreateDialog()
+    {
+        _newProposal = new ProposalModel { Status = "proposal", Stage = "proposal" };
+        _createDialogOpen = true;
+    }
+
+    private async Task SubmitProposal()
+    {
+        var success = await PixelSvc.CreateProposal(_newProposal);
+        if (success)
+        {
+            _createDialogOpen = false;
+            await LoadProposals();
+        }
+    }
+
+    private Color GetStatusColor(string status)
+    {
+        return status.ToLower() switch
+        {
+            "active" => Color.Success,
+            "pending" => Color.Warning,
+            "draft" => Color.Default,
+            "rejected" => Color.Error,
+            "proposal" => Color.Primary,
+            _ => Color.Info
+        };
+    }
+}

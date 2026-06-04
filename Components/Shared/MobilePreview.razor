@@ -1,0 +1,641 @@
+@using MudBlazor
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.ProgramLogic
+@using DeveloperAI.BusinessLogic
+@using Newtonsoft.Json
+@using Newtonsoft.Json.Linq
+@using System.IO
+@inject AIClient AiClient
+@inject ISnackbar Snackbar
+@inject FlutterService FlutterSvc
+@implements IDisposable
+
+<MudDialog Class="mobile-preview-dialog">
+    <TitleContent>
+        <div class="d-flex align-center justify-space-between w-100 pr-4">
+            <div class="d-flex align-center gap-2">
+                <MudIcon Icon="@Icons.Material.Filled.Smartphone" Color="Color.Primary" />
+                <MudText Typo="Typo.h6">Syncro Quick Preview</MudText>
+                @if (!_isReady)
+                {
+                    <MudChip T="string" Color="Color.Warning" Size="Size.Small" Variant="Variant.Text">BUILDING...</MudChip>
+                }
+                else
+                {
+                    <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Text">LIVE</MudChip>
+                }
+            </div>
+            <div class="d-flex align-center gap-2">
+                <MudIconButton Icon="@Icons.Material.Filled.Bolt" Color="Color.Warning" Title="Hot Reload (r)" OnClick="TriggerHotReload" />
+                <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Primary" Title="Hot Restart (R)" OnClick="TriggerHotRestart" />
+
+                <MudToggleIconButton @bind-Toggled="_showAiAssistant"
+                                    Icon="@Icons.Material.Filled.AutoAwesome"
+                                    ToggledIcon="@Icons.Material.Filled.AutoAwesome"
+                                    Color="Color.Default"
+                                    ToggledColor="Color.Primary"
+                                    Title="AI Assistant" />
+
+                <MudToggleIconButton @bind-Toggled="_showTerminal"
+                                    Icon="@Icons.Material.Filled.Terminal"
+                                    ToggledIcon="@Icons.Material.Filled.Terminal"
+                                    Color="Color.Default"
+                                    ToggledColor="Color.Primary"
+                                    Title="Show Terminal" />
+                
+                <MudButtonGroup Color="Color.Primary" Variant="Variant.Outlined" Size="Size.Small">
+                    <MudButton OnClick='() => SetDevice("iphone")' Class="@(SelectedDevice == "iphone" ? "active" : "")">iPhone</MudButton>
+                    <MudButton OnClick='() => SetDevice("pixel")' Class="@(SelectedDevice == "pixel" ? "active" : "")">Pixel</MudButton>
+                    <MudButton OnClick='() => SetDevice("tablet")' Class="@(SelectedDevice == "tablet" ? "active" : "")">Tablet</MudButton>
+                </MudButtonGroup>
+                <MudToggleIconButton @bind-Toggled="_isLandscape"
+                                    Icon="@Icons.Material.Filled.StayCurrentPortrait"
+                                    ToggledIcon="@Icons.Material.Filled.StayCurrentLandscape"
+                                    Color="Color.Default"
+                                    ToggledColor="Color.Primary"
+                                    Title="Portrait"
+                                    ToggledTitle="Landscape" />
+            </div>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        <div class="preview-layout">
+            <div class="device-container">
+                <div class="@GetDeviceClass()" style="@GetDeviceStyle()">
+                    <!-- Notch / Camera Area -->
+                    <div class="device-header">
+                        <div class="speaker"></div>
+                        <div class="camera"></div>
+                    </div>
+
+                    <!-- Status Bar -->
+                    <div class="status-bar">
+                        <span class="time">@DateTime.Now.ToString("HH:mm")</span>
+                        <div class="icons">
+                            <MudIcon Icon="@Icons.Material.Filled.NetworkCell" Size="Size.Small" />
+                            <MudIcon Icon="@Icons.Material.Filled.Wifi" Size="Size.Small" />
+                            <MudIcon Icon="@Icons.Material.Filled.BatteryFull" Size="Size.Small" />
+                        </div>
+                    </div>
+
+                    <!-- Web Content (IFrame) -->
+                    <div class="screen-content">
+                        @if (_hasError)
+                        {
+                            <div class="d-flex flex-column align-center justify-center h-100 pa-6 text-center">
+                                <MudIcon Icon="@Icons.Material.Filled.Error" Color="Color.Error" Size="Size.Large" Class="mb-2" />
+                                <MudText Typo="Typo.subtitle1" Color="Color.Error" Class="font-weight-bold">Build Error</MudText>
+                                <MudText Typo="Typo.caption" Class="mb-4">@_errorMessage</MudText>
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Build" OnClick="RepairAndRetry">
+                                    Repair & Retry
+                                </MudButton>
+                            </div>
+                        }
+                        else if (!_isReady)
+                        {
+                            <div class="d-flex flex-column align-center justify-center h-100 pa-8 text-center">
+                                <div class="terminal-animation mb-6">
+                                    <div class="terminal-header">
+                                        <div class="dot red"></div>
+                                        <div class="dot yellow"></div>
+                                        <div class="dot green"></div>
+                                        <span class="ml-2">flutter run -d web-server</span>
+                                    </div>
+                                    <div class="terminal-body" style="font-size: 10px;">
+                                        @foreach (var log in _logs.TakeLast(5))
+                                        {
+                                            <code>@log</code>
+                                        }
+                                        <code class="cursor">_</code>
+                                    </div>
+                                </div>
+                                <MudProgressCircular Color="Color.Primary" Indeterminate="true" Class="mb-4" />
+                                <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Compiling Flutter Web...</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted">This usually takes 20-40 seconds for the first build.</MudText>
+                            </div>
+                        }
+                        else
+                        {
+                            <iframe src="@PreviewUrl" class="mobile-iframe"></iframe>
+                        }
+                    </div>
+
+                    <!-- Navigation Bar -->
+                    <div class="nav-bar">
+                        <MudIcon Icon="@Icons.Material.Filled.ArrowBackIosNew" Size="Size.Small" />
+                        <MudIcon Icon="@Icons.Material.Filled.Circle" Size="Size.Small" />
+                        <MudIcon Icon="@Icons.Material.Filled.Square" Size="Size.Small" />
+                    </div>
+                </div>
+            </div>
+
+            @if (_showAiAssistant)
+            {
+                <div class="ai-sidebar">
+                    <div class="ai-sidebar-header">
+                        <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Size="Size.Small" Class="mr-2" />
+                        <MudText Typo="Typo.button">AI Assistant</MudText>
+                    </div>
+                    <div class="ai-sidebar-body">
+                        <MudTextField @bind-Value="_aiPrompt" Label="What should I build?"
+                                    Variant="Variant.Outlined" Lines="4"
+                                    Placeholder="e.g. Add a dark theme toggle..." />
+                        
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                                   FullWidth="true" Class="mt-4"
+                                   OnClick="ProcessAiRequest"
+                                   Loading="_isAiLoading"
+                                   StartIcon="@Icons.Material.Filled.AutoAwesome">
+                            Generate & Apply
+                        </MudButton>
+
+                        @if (!string.IsNullOrEmpty(_aiStatus))
+                        {
+                            <MudAlert Severity="@(_aiError ? Severity.Error : Severity.Info)" Class="mt-4" Dense="true">
+                                @_aiStatus
+                            </MudAlert>
+                        }
+
+                        @if (_aiFilesGenerated > 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="mt-2 d-block">
+                                ✅ Modified @_aiFilesGenerated files. Reloading...
+                            </MudText>
+                        }
+                    </div>
+                </div>
+            }
+
+            @if (_showTerminal)
+            {
+                <div class="terminal-sidebar">
+                    <div class="terminal-sidebar-header">
+                        <MudText Typo="Typo.button">Build Output</MudText>
+                        <MudIconButton Icon="@Icons.Material.Filled.ClearAll" Size="Size.Small" OnClick="() => _logs.Clear()" />
+                    </div>
+                    <div class="terminal-sidebar-body" id="terminal-body">
+                        @foreach (var log in _logs)
+                        {
+                            <div class="log-entry @GetLogClass(log)">@log</div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </DialogContent>
+</MudDialog>
+
+<style>
+    .ai-sidebar {
+        width: 320px;
+        background: #111827; /* Darker Slate */
+        border-left: 1px solid #1f2937;
+        display: flex;
+        flex-direction: column;
+        color: #f3f4f6;
+    }
+
+    .ai-sidebar-header {
+        padding: 12px 16px;
+        background: #1f2937;
+        color: #818cf8; /* Vibrant Indigo */
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid #374151;
+        font-weight: 600;
+    }
+
+    .ai-sidebar-body {
+        padding: 20px;
+        flex: 1;
+        overflow-y: auto;
+    }
+
+    /* Improved MudTextField styling for dark theme */
+    .ai-sidebar-body .mud-input-root {
+        color: #f3f4f6 !important;
+        background: #1f2937 !important;
+    }
+    .ai-sidebar-body .mud-input-label {
+        color: #9ca3af !important;
+    }
+
+    .terminal-sidebar {
+        width: 380px;
+        background: #000000; /* Pure Black for terminal */
+        border-left: 1px solid #1f2937;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .terminal-sidebar-header {
+        padding: 10px 16px;
+        background: #111827;
+        color: #10b981; /* Emerald Green */
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #1f2937;
+        font-family: 'Cascadia Code', monospace;
+        font-size: 12px;
+    }
+
+    .terminal-sidebar-body {
+        flex: 1;
+        padding: 12px 16px;
+        font-family: 'Cascadia Code', 'Fira Code', Consolas, monospace;
+        font-size: 12px;
+        color: #ffffff;
+        overflow-y: auto;
+        line-height: 1.5;
+    }
+
+    .log-entry { 
+        margin-bottom: 4px; 
+        white-space: pre-wrap; 
+        border-left: 2px solid transparent;
+        padding-left: 8px;
+    }
+    
+    .log-entry.error { color: #f87171; border-left-color: #ef4444; } /* Red for errors */
+    .log-entry.reload { color: #fbbf24; } /* Amber for reload */
+    .log-entry.restart { color: #60a5fa; } /* Blue for restart */
+    .log-entry.success { color: #34d399; } /* Green for success */
+    .log-entry.special { color: #818cf8; font-weight: bold; }
+
+    .mobile-preview-dialog {
+        max-width: none !important;
+    }
+
+    .preview-layout {
+        display: flex;
+        height: calc(100vh - 200px);
+        overflow: hidden;
+    }
+
+    .device-container {
+        flex: 1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 40px;
+        background: #f1f5f9;
+        overflow: auto;
+    }
+
+    .device-frame {
+        background: #0f172a;
+        border-radius: 48px;
+        padding: 14px;
+        box-shadow: 0 50px 100px -20px rgba(0, 0, 0, 0.5), 0 30px 60px -30px rgba(0, 0, 0, 0.6);
+        display: flex;
+        flex-direction: column;
+        position: relative;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 8px solid #334155;
+    }
+
+    .device-header {
+        height: 30px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 10px;
+    }
+    .speaker { width: 40px; height: 4px; background: #334155; border-radius: 2px; }
+    .camera { width: 8px; height: 8px; background: #334155; border-radius: 50%; }
+
+    .status-bar {
+        height: 24px;
+        color: white;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0 20px;
+        font-size: 11px;
+        font-weight: 500;
+    }
+    .status-bar .icons { display: flex; gap: 4px; }
+
+    .screen-content {
+        flex: 1;
+        background: white;
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .mobile-iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+    }
+
+    .nav-bar {
+        height: 44px;
+        display: flex;
+        justify-content: space-around;
+        align-items: center;
+        color: #94a3b8;
+        padding-bottom: 4px;
+    }
+
+    /* Terminal animation styles from before */
+    .terminal-animation {
+        width: 100%;
+        background: #0f172a;
+        border-radius: 8px;
+        overflow: hidden;
+        text-align: left;
+    }
+    .terminal-header { background: #1e293b; padding: 6px 10px; display: flex; align-items: center; color: #94a3b8; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
+    .red { background: #ef4444; }
+    .yellow { background: #f59e0b; }
+    .green { background: #10b981; }
+    .terminal-body { padding: 12px; color: #e2e8f0; font-family: monospace; }
+    .cursor { display: inline-block; width: 6px; height: 12px; background: #6366f1; animation: blink 1s infinite; }
+    @@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+    .active {
+        background-color: var(--mud-palette-primary) !important;
+        color: white !important;
+    }
+</style>
+
+@code {
+    [CascadingParameter] MudBlazor.IMudDialogInstance MudDialog { get; set; } = default!;
+    [Parameter] public string PreviewUrl { get; set; } = "";
+    [Parameter] public string ProjectPath { get; set; } = "";
+
+    private string SelectedDevice = "iphone";
+    private bool _isLandscape = false;
+    private bool _showTerminal = true;
+    private bool _showAiAssistant = true;
+    private bool _isReady = false;
+    private bool _hasError = false;
+    private string _errorMessage = "";
+    private List<string> _logs = new();
+    private System.Threading.Timer? _checkTimer;
+
+    // AI Variables
+    private string _aiPrompt = "";
+    private string _aiStatus = "";
+    private bool _isAiLoading = false;
+    private bool _aiError = false;
+    private int _aiFilesGenerated = 0;
+
+    protected override void OnInitialized()
+    {
+        FlutterSvc.OnOutput += HandleOutput;
+        
+        // Start polling for URL readiness
+        _checkTimer = new System.Threading.Timer(async _ => await CheckUrl(), null, 2000, 2000);
+    }
+
+    private async Task ProcessAiRequest()
+    {
+        if (string.IsNullOrWhiteSpace(_aiPrompt)) return;
+
+        _isAiLoading = true;
+        _aiStatus = "AI is thinking...";
+        _aiError = false;
+        _aiFilesGenerated = 0;
+        StateHasChanged();
+
+        try
+        {
+            var (response, error) = await AiClient.CallLLM(_aiPrompt, "FlutterSandbox", ProjectPath);
+            
+            if (!string.IsNullOrEmpty(error))
+            {
+                _aiStatus = $"Error: {error}";
+                _aiError = true;
+                return;
+            }
+
+            if (string.IsNullOrEmpty(response))
+            {
+                _aiStatus = "AI returned empty response.";
+                _aiError = true;
+                return;
+            }
+
+            // Clean the response (extract JSON from markdown or extra text)
+            string cleanedResponse = response.Trim();
+            
+            // Find the first '{' and last '}'
+            int firstBrace = cleanedResponse.IndexOf('{');
+            int lastBrace = cleanedResponse.LastIndexOf('}');
+            
+            if (firstBrace >= 0 && lastBrace > firstBrace)
+            {
+                cleanedResponse = cleanedResponse.Substring(firstBrace, (lastBrace - firstBrace) + 1);
+            }
+            else 
+            {
+                // Fallback to existing cleaning if braces not found or malformed
+                if (cleanedResponse.StartsWith("```json"))
+                {
+                    cleanedResponse = cleanedResponse.Substring(7);
+                    if (cleanedResponse.EndsWith("```")) cleanedResponse = cleanedResponse.Substring(0, cleanedResponse.Length - 3);
+                }
+                else if (cleanedResponse.StartsWith("```"))
+                {
+                    cleanedResponse = cleanedResponse.Substring(3);
+                    if (cleanedResponse.EndsWith("```")) cleanedResponse = cleanedResponse.Substring(0, cleanedResponse.Length - 3);
+                }
+            }
+            cleanedResponse = cleanedResponse.Trim();
+
+            // 1. Parse and Validate JSON
+            JObject json;
+            try 
+            {
+                json = JObject.Parse(cleanedResponse);
+                if (!ValidateAiResponse(json))
+                {
+                    _aiStatus = "AI returned an invalid JSON structure.";
+                    _aiError = true;
+                    _logs.Add("ERR: Invalid JSON structure from AI.");
+                    _logs.Add($"DEBUG: {cleanedResponse}");
+                    return;
+                }
+            }
+            catch (JsonException ex)
+            {
+                _aiStatus = $"JSON Parse Error: {ex.Message}";
+                _aiError = true;
+                _logs.Add($"ERR: JSON Parsing failed. {ex.Message}");
+                _logs.Add($"DEBUG: {cleanedResponse}");
+                return;
+            }
+
+            var changes = json["changes"] as JArray;
+            var changedFiles = new List<string>();
+
+            if (changes != null)
+            {
+                // 2. Transactional Write (all or nothing - simulated by writing to disk)
+                foreach (var change in changes)
+                {
+                    var type = change["type"]?.ToString();
+                    var path = change["path"]?.ToString();
+                    var content = change["content"]?.ToString();
+
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        var fullPath = Path.Combine(ProjectPath, path);
+                        
+                        if (type == "delete")
+                        {
+                            if (File.Exists(fullPath)) File.Delete(fullPath);
+                        }
+                        else if (content != null)
+                        {
+                            var directory = Path.GetDirectoryName(fullPath);
+                            if (!Directory.Exists(directory)) Directory.CreateDirectory(directory!);
+                            await File.WriteAllTextAsync(fullPath, content);
+                        }
+
+                        changedFiles.Add(path);
+                        _aiFilesGenerated++;
+                    }
+                }
+
+                _aiStatus = json["explanation"]?.ToString() ?? "Applied changes successfully.";
+                
+                // 3. Smart Reload
+                await FlutterSvc.SmartReload(changedFiles);
+            }
+        }
+        catch (Exception ex)
+        {
+            _aiStatus = $"System Error: {ex.Message}";
+            _aiError = true;
+        }
+        finally
+        {
+            _isAiLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private bool ValidateAiResponse(JObject json)
+    {
+        // Check core structure
+        if (json["changes"] == null || json["changes"] is not JArray) return false;
+        
+        var changes = json["changes"] as JArray;
+        foreach (var change in changes!)
+        {
+            // Validate each change item
+            var type = change["type"]?.ToString();
+            var path = change["path"]?.ToString();
+            
+            if (string.IsNullOrEmpty(type) || string.IsNullOrEmpty(path)) return false;
+            
+            // For modify/create, content is required
+            if (type != "delete" && change["content"] == null) return false;
+        }
+
+        return true;
+    }
+
+    private async Task TriggerHotReload() => await FlutterSvc.HotReload();
+    private async Task TriggerHotRestart() => await FlutterSvc.HotRestart();
+
+    private string GetLogClass(string log)
+    {
+        if (log.Contains("ERR:", StringComparison.OrdinalIgnoreCase)) return "error";
+        if (log.Contains("Reload", StringComparison.OrdinalIgnoreCase)) return "reload";
+        if (log.Contains("Restart", StringComparison.OrdinalIgnoreCase)) return "restart";
+        if (log.Contains("✅") || log.Contains("success", StringComparison.OrdinalIgnoreCase)) return "success";
+        if (log.Contains("🔥") || log.Contains("🔄")) return "special";
+        return "";
+    }
+
+    private void HandleOutput(string message)
+    {
+        InvokeAsync(async () =>
+        {
+            _logs.Add(message);
+            if (_logs.Count > 100) _logs.RemoveAt(0);
+            
+            if (message.Contains("localhost:5000") || message.Contains("is now available"))
+            {
+                _isReady = true;
+            }
+
+            if (message.Contains("failed to delete a directory") || message.Contains("cannot access the file"))
+            {
+                _hasError = true;
+                _errorMessage = "Build folder is locked. Click Repair to fix.";
+            }
+
+            StateHasChanged();
+        });
+    }
+
+    private async Task RepairAndRetry()
+    {
+        _hasError = false;
+        _logs.Clear();
+        _logs.Add("Attempting repair...");
+        
+        await FlutterSvc.CleanProject(ProjectPath);
+        await FlutterSvc.RunProject(ProjectPath, "web");
+        
+        StateHasChanged();
+    }
+
+    private async Task CheckUrl()
+    {
+        if (_isReady) return;
+
+        try
+        {
+            using var client = new System.Net.Http.HttpClient();
+            client.Timeout = TimeSpan.FromSeconds(1);
+            var response = await client.GetAsync(PreviewUrl);
+            if (response.IsSuccessStatusCode)
+            {
+                _isReady = true;
+                await InvokeAsync(StateHasChanged);
+                _checkTimer?.Dispose();
+            }
+        }
+        catch { /* Not ready yet */ }
+    }
+
+    private void SetDevice(string device) => SelectedDevice = device;
+
+    private string GetDeviceClass() => $"device-frame";
+
+    private string GetDeviceStyle()
+    {
+        int w = 375, h = 812;
+        
+        switch (SelectedDevice)
+        {
+            case "iphone": w = 375; h = 812; break;
+            case "pixel": w = 412; h = 915; break;
+            case "tablet": w = 768; h = 1024; break;
+        }
+
+        if (_isLandscape)
+        {
+            var temp = w;
+            w = h;
+            h = temp;
+        }
+
+        return $"width: {w}px; height: {h}px;";
+    }
+
+    public void Dispose()
+    {
+        FlutterSvc.OnOutput -= HandleOutput;
+        _checkTimer?.Dispose();
+    }
+}

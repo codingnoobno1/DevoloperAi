@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gemini Express Test</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Arial, sans-serif;
+      background-color: #f8fafc;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      min-height: 100vh;
+      padding: 2rem;
+      color: #111827;
+    }
+    h1 {
+      margin-bottom: 1rem;
+      color: #2563eb;
+    }
+    textarea {
+      width: 90%;
+      max-width: 600px;
+      height: 120px;
+      padding: 10px;
+      border: 2px solid #93c5fd;
+      border-radius: 8px;
+      font-size: 1rem;
+      outline: none;
+      resize: vertical;
+    }
+    button {
+      margin-top: 1rem;
+      padding: 10px 20px;
+      background-color: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 1rem;
+    }
+    button:hover {
+      background-color: #1e40af;
+    }
+    pre {
+      background-color: #f1f5f9;
+      padding: 1rem;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 600px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      margin-top: 1.5rem;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>Gemini Express Test Client</h1>
+  <p>Type your prompt below to test the Express → Gemini API:</p>
+  <textarea id="prompt" placeholder="e.g., Write a short poem about AI and nature..."></textarea>
+  <button onclick="sendPrompt()">Send to Gemini</button>
+  <pre id="response"></pre>
+
+  <script>
+    async function sendPrompt() {
+      const prompt = document.getElementById("prompt").value.trim();
+      const responseBox = document.getElementById("response");
+
+      if (!prompt) {
+        responseBox.textContent = "⚠️ Please enter a prompt.";
+        return;
+      }
+
+      responseBox.textContent = "⏳ Sending request to Express + Gemini...";
+
+      try {
+        const res = await fetch("http://localhost:3020/gemini", {
+          method: "POST",
+          mode: "cors",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prompt }),
+        });
+
+        // Handle non-JSON or non-OK responses gracefully
+        if (!res.ok) {
+          let text;
+          try {
+            text = await res.text();
+          } catch (e) {
+            text = `HTTP ${res.status} ${res.statusText}`;
+          }
+          responseBox.textContent = `❌ Server responded with ${res.status}: ${text}`;
+          return;
+        }
+
+        let data;
+        try {
+          data = await res.json();
+        } catch (e) {
+          // Not JSON — return raw text
+          const txt = await res.text();
+          responseBox.textContent = "✅ Gemini Response (raw):\n\n" + txt;
+          return;
+        }
+
+        // Try to extract the Gemini text
+        let output = "❌ No output received.";
+        try {
+          output =
+            data?.result?.candidates?.[0]?.content?.parts?.[0]?.text ||
+            JSON.stringify(data, null, 2);
+        } catch (e) {}
+
+        responseBox.textContent = "✅ Gemini Response:\n\n" + output;
+      } catch (err) {
+        responseBox.textContent = "❌ Error: " + err.message;
+      }
+    }
+  </script>
+</body>
+</html>

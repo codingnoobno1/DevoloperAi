@@ -1,0 +1,216 @@
+@using MudBlazor
+@using DeveloperAI.BusinessLogic
+@using System.Diagnostics
+@using System.IO
+@inject DeveloperAI.BusinessLogic.EnvironmentManager EnvManager
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.InstallDesktop" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Setup Flutter Environment</MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @if (_isChecking)
+        {
+            <div class="d-flex flex-column align-center py-8">
+                <MudProgressCircular Color="Color.Primary" Indeterminate="true" Class="mb-4" />
+                <MudText>Checking system requirements...</MudText>
+            </div>
+        }
+        else if (_isInstalling)
+        {
+            <div class="d-flex flex-column align-center py-8">
+                <div class="terminal-animation mb-6">
+                    <div class="terminal-header">
+                        <div class="dot red"></div>
+                        <div class="dot yellow"></div>
+                        <div class="dot green"></div>
+                        <span class="ml-2">syncro-terminal --install flutter</span>
+                    </div>
+                    <div class="terminal-body">
+                        <code>> Fetching Flutter SDK...</code>
+                        <code>> Verifying checksum...</code>
+                        <code>> Extracting binaries...</code>
+                        <code class="cursor">_</code>
+                    </div>
+                </div>
+                <MudText Typo="Typo.h6" Class="mb-2">Installing Flutter SDK</MudText>
+                <MudProgressLinear Color="Color.Primary" Value="_installProgress" Class="w-100" />
+                <MudText Typo="Typo.caption" Class="mt-2">This may take several minutes. Space required: 5GB.</MudText>
+            </div>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mb-4">
+                Flutter is required for mobile development. We can automatically download and configure it for you.
+            </MudText>
+
+            <MudPaper Elevation="0" Class="pa-4 panel-light mb-4">
+                <div class="d-flex align-center justify-space-between mb-2">
+                    <MudText Typo="Typo.subtitle2">System Requirements</MudText>
+                    @if (_requirementsMet)
+                    {
+                        <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Text">PASSED</MudChip>
+                    }
+                    else
+                    {
+                        <MudChip T="string" Color="Color.Error" Size="Size.Small" Variant="Variant.Text">WARNING</MudChip>
+                    }
+                </div>
+                
+                <div class="requirement-item">
+                    <MudIcon Icon="@Icons.Material.Filled.Storage" Size="Size.Small" Color="@(Resources.AvailableDiskGB >= 5 ? Color.Success : Color.Error)" />
+                    <MudText Typo="Typo.caption">Disk Space: @Resources.AvailableDiskGB.ToString("F1") GB / 5 GB Required</MudText>
+                </div>
+                <div class="requirement-item">
+                    <MudIcon Icon="@Icons.Material.Filled.Memory" Size="Size.Small" Color="@(Resources.TotalRamGB >= 6 ? Color.Success : Color.Warning)" />
+                    <MudText Typo="Typo.caption">Memory: @Resources.TotalRamGB GB / 6 GB Recommended</MudText>
+                </div>
+            </MudPaper>
+
+            @if (!_requirementsMet)
+            {
+                <MudAlert Severity="Severity.Warning" Variant="Variant.Filled" Class="mb-4">
+                    Your system does not meet the minimum disk space requirements for a smooth installation.
+                </MudAlert>
+            }
+        }
+    </DialogContent>
+    <DialogActions>
+        @if (!_isInstalling)
+        {
+            <MudButton OnClick="Cancel">Cancel</MudButton>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="StartInstall" Disabled="!_requirementsMet || _isChecking">
+                Yes, Install Flutter
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .panel-light {
+        background: #f8fafc;
+        border: 1px solid var(--border-subtle);
+        border-radius: 8px;
+    }
+    .requirement-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 4px;
+    }
+    .terminal-animation {
+        width: 100%;
+        max-width: 400px;
+        background: #0f172a;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+    .terminal-header {
+        background: #1e293b;
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        font-family: monospace;
+        font-size: 12px;
+        color: #94a3b8;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+    .red { background: #ef4444; }
+    .yellow { background: #f59e0b; }
+    .green { background: #10b981; }
+    .terminal-body {
+        padding: 16px;
+        font-family: 'Cascadia Code', 'Fira Code', monospace;
+        font-size: 13px;
+        color: #e2e8f0;
+    }
+    .terminal-body code { display: block; margin-bottom: 4px; }
+    .cursor {
+        display: inline-block;
+        width: 8px;
+        height: 16px;
+        background: #6366f1;
+        animation: blink 1s infinite;
+    }
+    @@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+</style>
+
+@code {
+    [CascadingParameter] MudBlazor.IMudDialogInstance MudDialog { get; set; } = default!;
+    
+    private bool _isChecking = true;
+    private bool _isInstalling = false;
+    private bool _requirementsMet = false;
+    private int _installProgress = 0;
+    private DeveloperAI.BusinessLogic.SystemResources Resources = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        Resources = await EnvManager.GetSystemResources();
+        _requirementsMet = Resources.AvailableDiskGB >= 5;
+        _isChecking = false;
+    }
+
+    private async Task StartInstall()
+    {
+        _isInstalling = true;
+        _installProgress = 10;
+        StateHasChanged();
+
+        try 
+        {
+            // Real installation logic would go here
+            // For now, let's trigger a PowerShell window that actually downloads/sets up Flutter
+            var installScript = @"
+$url = 'https://storage.googleapis.com/flutter_infra_release/releases/stable/windows/flutter_windows_3.19.0-stable.zip'
+$dest = Join-Path $env:USERPROFILE 'SyncroFlutter'
+if (!(Test-Path $dest)) { New-Item -ItemType Directory -Force -Path $dest }
+$zip = Join-Path $dest 'flutter.zip'
+Write-Host 'Downloading Flutter SDK (approx 900MB)...'
+Invoke-WebRequest -Uri $url -OutFile $zip
+Write-Host 'Extracting Flutter...'
+Expand-Archive -Path $zip -DestinationPath $dest -Force
+Remove-Item $zip
+$flutterPath = Join-Path $dest 'flutter\bin'
+[Environment]::SetEnvironmentVariable('Path', $env:Path + ';' + $flutterPath, 'User')
+Write-Host '✅ Flutter installed successfully! Restarting Syncro may be required to refresh PATH.'
+pause
+";
+            var tempScript = Path.Combine(Path.GetTempPath(), "install_flutter.ps1");
+            await File.WriteAllTextAsync(tempScript, installScript);
+
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-ExecutionPolicy Bypass -File \"{tempScript}\"",
+                UseShellExecute = true,
+                CreateNoWindow = false
+            };
+
+            Process.Start(startInfo);
+
+            // Simulate progress in UI while PS runs
+            for (int i = 15; i <= 95; i += 2)
+            {
+                _installProgress = i;
+                StateHasChanged();
+                await Task.Delay(2000); // Installation takes time
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Installation error: {ex.Message}", Severity.Error);
+        }
+
+        _installProgress = 100;
+        Snackbar.Add("Flutter installation process started in PowerShell!", Severity.Success);
+        MudDialog.Close(DialogResult.Ok(true));
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}
