@@ -2930,3 +2930,1218 @@ User pastes: https://github.com/user/some-api.git
 | **Total .cs files** | **43** | **22** | **65** |
 | **Razor pages** | 4 | 7 | 11 |
 | **Grand total** | **47** | **29** | **76** |
+
+---
+
+# Extension II: Intelligence Layer (Priorities 1–7)
+
+## Gap Analysis — what already exists vs. what's new
+
+| Priority | Existing in plan | Status | Action |
+|---|---|---|---|
+| **1. Knowledge Graph** | `DependencyGraph`, `CallGraph` (code-structure only) | ⚠️ Partial | Insert semantic graph layer **between AST and Chunks** |
+| **2. Error Intelligence** | — | ❌ Missing | Add 5 files |
+| **3. Project Memory** | `SearchAllProjectsAsync` (cross-project search) | ⚠️ Partial | Add pattern *learning* (4 files) |
+| **4. Code Gen Feedback** | `DocGen/*` (docs only) | ❌ Missing | Add generate→compile→repair loop (4 files) |
+| **5. Architecture Fingerprint** | `FrameworkDetector`, AI `DetectPatternsAsync` (shallow) | ⚠️ Partial | Add structural pattern detection (4 files) |
+| **6. API Mock Ecosystem** | `SwaggerUiGenerator` (UI only) | ⚠️ Partial | Add mock server + fake data (3 files) |
+| **7. Agent Layer** | raw `AIClient` | ❌ Missing | Add agent orchestration (8 files) |
+
+## THE KEY ARCHITECTURAL CHANGE — Pipeline Reorder
+
+**Before** (text-chunk RAG):
+```
+Project → AST → Chunks → TF-IDF → Search
+```
+
+**After** (graph-grounded RAG):
+```
+Project → AST → Knowledge Graph → Chunks → RAG
+                      │
+                      └── entities + typed relationships
+                          (the chunks now carry graph context)
+```
+
+The `DocumentChunker` ([54]) is **upgraded** to consume the `KnowledgeGraph` instead
+of the flat `AstProjectMap`. Each chunk now embeds its relationships, e.g.:
+
+```
+"TenderController (Controller, TenderController.cs:14)
+   ── uses ──▶ TenderDto
+   ── uses ──▶ TenderService
+   ── writes ─▶ TenderTable (db)
+   ── exposes ▶ POST /api/tenders, GET /api/tenders/{id}"
+```
+
+This is dramatically more powerful for retrieval and AI generation than isolated text.
+
+---
+
+## New File Map (35 C# + 2 Razor = 37 more files)
+
+```
+Services/AST/
+│
+├── KnowledgeGraph/                    ◀── PRIORITY 1
+│   ├── ProjectOntology.cs             [74]  Entity + relationship type schema
+│   ├── GraphEntity.cs                 [75]  Entity node model
+│   ├── GraphRelationship.cs           [76]  Typed edge model
+│   ├── KnowledgeGraph.cs              [77]  Graph container (QuikGraph-backed)
+│   ├── EntityResolver.cs              [78]  AST nodes → canonical entities (dedup/link)
+│   ├── RelationshipIndexer.cs         [79]  Infer edges (uses/writes/calls/exposes)
+│   └── GraphKnowledgeBuilder.cs       [80]  Orchestrator: AstProjectMap → KnowledgeGraph
+│
+├── ErrorIntelligence/                 ◀── PRIORITY 2
+│   ├── ErrorRecord.cs                 [81]  Error event model
+│   ├── ErrorCollector.cs              [82]  Capture build + runtime errors
+│   ├── CompileFailureAnalyzer.cs      [83]  Parse compiler diagnostics (Roslyn/tsc/py)
+│   ├── RuntimeFailureAnalyzer.cs      [84]  Parse stack traces / exceptions
+│   └── RootCauseDatabase.cs           [85]  Store error→cause→fix, learn over time
+│
+├── Memory/                            ◀── PRIORITY 3
+│   ├── CodePattern.cs                 [86]  Reusable pattern model
+│   ├── TemplateExtractor.cs           [87]  Extract templates from entities
+│   ├── PatternMemoryService.cs        [88]  Cross-project pattern learning
+│   └── ArchitectureMemory.cs          [89]  Remember arch decisions across projects
+│
+├── Generation/                        ◀── PRIORITY 4
+│   ├── GenerationAttempt.cs           [90]  History record model
+│   ├── GenerationHistory.cs           [91]  Store/retrieve generation attempts
+│   ├── FixSuggestionEngine.cs         [92]  Suggest fixes from RootCauseDatabase
+│   └── CodeRepairAgent.cs             [93]  generate → compile → error → repair loop
+│
+├── Architecture/                      ◀── PRIORITY 5
+│   ├── ArchitectureProfile.cs         [94]  Fingerprint result model
+│   ├── PatternDetector.cs             [95]  Detect Clean/DDD/CQRS/MVC/Hexagonal
+│   ├── ConventionAnalyzer.cs          [96]  Naming + folder-structure conventions
+│   └── ArchitectureFingerprint.cs     [97]  Orchestrator → ArchitectureProfile
+│
+├── Mock/                              ◀── PRIORITY 6
+│   ├── FakeDataGenerator.cs           [98]  Realistic fake data per DTO type
+│   ├── MockApiGenerator.cs            [99]  Generate runnable mock server
+│   └── SwaggerMockGenerator.cs        [100] Mock server straight from Swagger spec
+│
+└── Agents/                            ◀── PRIORITY 7
+    ├── IAgent.cs                      [101] Agent contract
+    ├── AgentModels.cs                 [102] AgentContext, AgentResult, AgentRole
+    ├── AgentOrchestrator.cs           [103] Coordinate multi-agent workflows
+    ├── ArchitectAgent.cs              [104] Plans structure from requirements
+    ├── GeneratorAgent.cs              [105] Generates code (uses graph + memory)
+    ├── ValidatorAgent.cs              [106] Compiles + validates output
+    ├── RepairAgent.cs                 [107] Fixes errors (uses RootCauseDatabase)
+    └── DocumentationAgent.cs          [108] Generates docs (wraps DocGen)
+
+Components/Pages/Projects/Tabs/
+├── AgentsTab.razor                    [109] Multi-agent workflow runner UI
+└── InsightsTab.razor                  [110] Errors + patterns + arch fingerprint UI
+```
+
+---
+
+# PRIORITY 1 — Knowledge Graph Layer
+
+### [74] `Services/AST/KnowledgeGraph/ProjectOntology.cs`
+
+**Purpose:** Defines the *vocabulary* of the graph — what entity types and relationship
+types exist. This is the schema every project graph conforms to.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.KnowledgeGraph;
+
+public enum EntityType
+{
+    Controller, Service, Repository, Dto, Entity, Model,
+    Endpoint, Table, Interface, Middleware, Component,
+    Page, Hook, Module, Function, Config, ExternalApi, Queue, Cache
+}
+
+public enum RelationType
+{
+    Uses,        // Controller uses Service
+    Calls,       // Method calls Method
+    Implements,  // Class implements Interface
+    Inherits,    // Class inherits BaseClass
+    Exposes,     // Controller exposes Endpoint
+    Reads,       // Service reads Table
+    Writes,      // Service writes Table
+    Returns,     // Endpoint returns Dto
+    Accepts,     // Endpoint accepts Dto
+    DependsOn,   // Module depends on Package
+    Injects,     // Constructor injects Service
+    Publishes,   // Service publishes to Queue
+    Subscribes   // Handler subscribes to Queue
+}
+
+public static class ProjectOntology
+{
+    // Valid (source, relation, target) triples — used to validate inferred edges
+    public static bool IsValidTriple(EntityType from, RelationType rel, EntityType to);
+
+    // Classify an AstNode into an EntityType (by naming convention + structure)
+    // e.g. name ends "Controller" + has routes → Controller
+    //      class with only props in /Dto/ or /Models/ → Dto
+    public static EntityType Classify(AstNode node, string framework);
+
+    // Human-readable label for a relation (for graph rendering + chunk text)
+    public static string Label(RelationType rel);
+}
+```
+
+### [75] `Services/AST/KnowledgeGraph/GraphEntity.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.KnowledgeGraph;
+
+public class GraphEntity
+{
+    public string Id { get; init; } = "";          // Stable: "{type}:{namespace}.{name}"
+    public EntityType Type { get; set; }
+    public string Name { get; set; } = "";
+    public string? Namespace { get; set; }
+    public string SourceFile { get; set; } = "";
+    public int LineNumber { get; set; }
+    public List<string> AstNodeIds { get; set; } = new();   // Backing AST nodes
+    public Dictionary<string, string> Properties { get; set; } = new();
+    // Properties: "httpMethods", "route", "propertyCount", "isAbstract"...
+    public int InboundCount { get; set; }           // How many entities reference this
+    public int OutboundCount { get; set; }
+}
+```
+
+### [76] `Services/AST/KnowledgeGraph/GraphRelationship.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.KnowledgeGraph;
+
+public class GraphRelationship
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string FromEntityId { get; set; } = "";
+    public string ToEntityId { get; set; } = "";
+    public RelationType Type { get; set; }
+    public double Confidence { get; set; } = 1.0;   // 1.0 = certain, <1 = inferred
+    public string? Evidence { get; set; }           // "UserController.cs:42 — new UserService()"
+}
+```
+
+### [77] `Services/AST/KnowledgeGraph/KnowledgeGraph.cs`
+
+**Purpose:** The graph container. Backed by QuikGraph; supports neighbourhood queries,
+subgraph extraction, and serialization. This is what gets stored and queried.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.KnowledgeGraph;
+
+using QuikGraph;
+
+public class KnowledgeGraph
+{
+    public string ProjectPath { get; set; } = "";
+    private readonly Dictionary<string, GraphEntity> _entities = new();
+    private readonly List<GraphRelationship> _relationships = new();
+    private readonly BidirectionalGraph<string, TaggedEdge<string, RelationType>> _graph = new();
+
+    public IReadOnlyCollection<GraphEntity> Entities => _entities.Values;
+    public IReadOnlyList<GraphRelationship> Relationships => _relationships;
+
+    public void AddEntity(GraphEntity entity);
+    public void AddRelationship(GraphRelationship rel);
+
+    // All relationships originating from an entity
+    public IReadOnlyList<GraphRelationship> GetOutbound(string entityId);
+    public IReadOnlyList<GraphRelationship> GetInbound(string entityId);
+
+    // 1-hop or N-hop neighbourhood around an entity (for chunk context + UI focus)
+    public KnowledgeGraph GetSubgraph(string entityId, int hops = 1);
+
+    // Find entities by type (all Controllers, all Dtos…)
+    public IReadOnlyList<GraphEntity> GetByType(EntityType type);
+
+    // "What touches the database?" — entities with Reads/Writes edges
+    public IReadOnlyList<GraphEntity> GetDataAccessors();
+
+    // Orphans: entities with no edges (dead code candidates)
+    public IReadOnlyList<GraphEntity> GetOrphans();
+
+    // Serialization
+    public string ToJson();                          // Full graph → disk
+    public static KnowledgeGraph FromJson(string json);
+    public string ToMermaid(EntityType? focusType = null);   // For PDF/UI
+    public string ToCypher();                        // Optional Neo4j export
+}
+```
+
+### [78] `Services/AST/KnowledgeGraph/EntityResolver.cs`
+
+**Purpose:** Collapses raw AST nodes into canonical entities. Handles dedup
+(partial classes, same name across files) and cross-file linking by name/type.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.KnowledgeGraph;
+
+public class EntityResolver
+{
+    // Convert AstNodes into a deduplicated entity set
+    public List<GraphEntity> Resolve(AstProjectMap map);
+
+    // Build a lookup so RelationshipIndexer can resolve a referenced
+    // type name ("TenderService") to its entity id
+    public Dictionary<string, GraphEntity> BuildNameIndex(IEnumerable<GraphEntity> entities);
+
+    // Merge partial/duplicate declarations into one entity
+    private GraphEntity Merge(GraphEntity a, GraphEntity b);
+
+    // Resolve a referenced symbol to an entity (handles namespaces, usings)
+    public GraphEntity? ResolveReference(string symbolName, string fromContext);
+}
+```
+
+### [79] `Services/AST/KnowledgeGraph/RelationshipIndexer.cs`
+
+**Purpose:** The intelligence — infers typed edges between entities by examining
+AST node metadata (constructor params → Injects, `new X()` → Uses, DbSet/SQL → Reads/Writes,
+route attributes → Exposes, return types → Returns).
+
+```csharp
+namespace Syncro.Desktop.Services.AST.KnowledgeGraph;
+
+public class RelationshipIndexer
+{
+    // Produce all relationships for a resolved entity set
+    public List<GraphRelationship> Index(
+        List<GraphEntity> entities,
+        Dictionary<string, GraphEntity> nameIndex,
+        AstProjectMap map);
+
+    // Constructor injection: ctor params typed as known services → Injects/Uses
+    private IEnumerable<GraphRelationship> InferInjection(GraphEntity entity, ...);
+
+    // Controller [HttpGet]/route attributes → Exposes Endpoint
+    private IEnumerable<GraphRelationship> InferEndpoints(GraphEntity controller, ...);
+
+    // Endpoint return type → Returns Dto ; body param → Accepts Dto
+    private IEnumerable<GraphRelationship> InferDtoFlow(GraphEntity endpoint, ...);
+
+    // EF DbSet<T>, .ToList()/.Add()/.SaveChanges, raw SQL → Reads/Writes Table
+    private IEnumerable<GraphRelationship> InferDataAccess(GraphEntity entity, ...);
+
+    // Method invocations (from CallGraph) → Calls
+    private IEnumerable<GraphRelationship> InferCalls(GraphEntity entity, CallGraph calls);
+
+    // Validate every inferred edge against ProjectOntology.IsValidTriple
+    private bool Validate(GraphRelationship rel, Dictionary<string, GraphEntity> idx);
+}
+```
+
+### [80] `Services/AST/KnowledgeGraph/GraphKnowledgeBuilder.cs`
+
+**Purpose:** Top-level orchestrator. Plugs into the ingestion pipeline right
+after `AstEngine` and before `DocumentChunker`.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.KnowledgeGraph;
+
+public class GraphKnowledgeBuilder
+{
+    private readonly EntityResolver _resolver;
+    private readonly RelationshipIndexer _indexer;
+
+    // AstProjectMap → KnowledgeGraph
+    public KnowledgeGraph Build(AstProjectMap map)
+    {
+        var graph = new KnowledgeGraph { ProjectPath = map.ProjectPath };
+        var entities = _resolver.Resolve(map);
+        var nameIndex = _resolver.BuildNameIndex(entities);
+        foreach (var e in entities) graph.AddEntity(e);
+
+        var rels = _indexer.Index(entities, nameIndex, map);
+        foreach (var r in rels) graph.AddRelationship(r);
+
+        return graph;   // stored to {projectStore}/graph.json
+    }
+}
+```
+
+**`DocumentChunker` ([54]) upgrade** — add method:
+```csharp
+// NEW: chunk from the knowledge graph (preferred over ChunkProjectMap)
+public List<VectorDocument> ChunkFromGraph(KnowledgeGraph graph, AstProjectMap map)
+{
+    // One chunk per entity, INCLUDING its relationships as text context.
+    // Falls back to flat chunking for entities with no edges.
+}
+```
+
+---
+
+# PRIORITY 2 — Error Intelligence
+
+### [81] `Services/AST/ErrorIntelligence/ErrorRecord.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.ErrorIntelligence;
+
+public class ErrorRecord
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string Code { get; set; } = "";          // "CS1061", "TS2339", "ModuleNotFoundError"
+    public string Message { get; set; } = "";
+    public ErrorKind Kind { get; set; }              // Compile | Runtime | Lint
+    public string? File { get; set; }
+    public int? Line { get; set; }
+    public string? Language { get; set; }
+    public string? RootCause { get; set; }           // Filled by analyzer
+    public string? SuggestedFix { get; set; }
+    public bool? FixWorked { get; set; }             // Feedback after retry
+    public string? ProjectPath { get; set; }
+    public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
+    public string? StackTrace { get; set; }
+}
+
+public enum ErrorKind { Compile, Runtime, Lint, Test }
+```
+
+### [82] `Services/AST/ErrorIntelligence/ErrorCollector.cs`
+
+**Purpose:** Captures errors from build/run output. Hooks into existing
+`ProcessRunner`/`CommandRunner` output streams.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.ErrorIntelligence;
+
+public class ErrorCollector
+{
+    private readonly CompileFailureAnalyzer _compile;
+    private readonly RuntimeFailureAnalyzer _runtime;
+    private readonly RootCauseDatabase _db;
+
+    // Parse a build/run output blob into structured errors
+    public List<ErrorRecord> Collect(string output, string language, string projectPath);
+
+    // Hook: subscribe to ProcessRunner output events and auto-collect
+    public void AttachTo(SyncroCLI.Execution.ProcessRunner runner, string projectPath);
+
+    // Persist collected errors to RootCauseDatabase
+    public Task RecordAsync(IEnumerable<ErrorRecord> errors);
+}
+```
+
+### [83] `Services/AST/ErrorIntelligence/CompileFailureAnalyzer.cs`
+
+**Purpose:** Parses compiler diagnostics and assigns probable root cause.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.ErrorIntelligence;
+
+public class CompileFailureAnalyzer
+{
+    // Parse C# (Roslyn / dotnet build), TS (tsc), Python (py_compile) output
+    public List<ErrorRecord> Parse(string buildOutput, string language);
+
+    // Map well-known codes to root causes
+    // CS1061 → "Missing using / extension method not in scope"
+    // CS0246 → "Type or namespace not found — missing reference/using"
+    // TS2339 → "Property does not exist on type"
+    public string InferRootCause(ErrorRecord error);
+
+    // Known-code → cause lookup table (seeds RootCauseDatabase)
+    private static readonly Dictionary<string, string> KnownCauses = new()
+    {
+        ["CS1061"] = "Missing extension method or using directive",
+        ["CS0246"] = "Missing assembly reference or using directive",
+        ["CS0103"] = "Name does not exist in current context",
+        ["TS2339"] = "Property does not exist on type",
+        ["TS2307"] = "Cannot find module — missing npm install / path",
+    };
+}
+```
+
+### [84] `Services/AST/ErrorIntelligence/RuntimeFailureAnalyzer.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.ErrorIntelligence;
+
+public class RuntimeFailureAnalyzer
+{
+    // Parse stack trace → exception type, originating file:line, frames
+    public ErrorRecord Parse(string stackTrace, string language);
+
+    // Map exception types to likely causes
+    // NullReferenceException → "Unchecked null — add null guard / DI not registered"
+    // 404 from HttpClient → "Endpoint path mismatch or service not running"
+    public string InferRootCause(ErrorRecord error);
+
+    // Correlate the failing frame with a KnowledgeGraph entity (which service broke?)
+    public GraphEntity? LocateFailingEntity(ErrorRecord error, KnowledgeGraph graph);
+}
+```
+
+### [85] `Services/AST/ErrorIntelligence/RootCauseDatabase.cs`
+
+**Purpose:** The learning store. Persists `error → rootCause → fix → success`
+to the file system, deduplicates, and surfaces the best-known fix for a given error.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.ErrorIntelligence;
+
+public class RootCauseDatabase
+{
+    private readonly string _dbPath;
+    // %LOCALAPPDATA%\SyncroDesktop\intelligence\rootcauses.json
+
+    // Record a (resolved or unresolved) error
+    public Task RecordAsync(ErrorRecord error);
+
+    // Look up the best-known fix for an error code/message (ranked by success rate)
+    public Task<List<FixCandidate>> LookupAsync(string code, string? message = null);
+
+    // Mark whether a suggested fix worked → updates success statistics
+    public Task ReportOutcomeAsync(string errorId, string fixId, bool worked);
+
+    // Stats: most common errors across all projects
+    public Task<List<(string Code, int Count, double FixSuccessRate)>> GetTopErrorsAsync();
+
+    // JSON record shape:
+    // { "code":"CS1061", "rootCause":"Missing Extension Method",
+    //   "fix":"Added using statement", "success":true, "occurrences":12 }
+}
+
+public record FixCandidate(string FixId, string Description, double SuccessRate, int Samples);
+```
+
+---
+
+# PRIORITY 3 — Project Memory
+
+### [86] `Services/AST/Memory/CodePattern.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Memory;
+
+public class CodePattern
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string Name { get; set; } = "";           // "CRUD Controller", "JWT Auth", "Repository<T>"
+    public PatternCategory Category { get; set; }     // Controller | Dto | Auth | DataAccess | Service
+    public string Language { get; set; } = "";
+    public string Framework { get; set; } = "";
+    public string TemplateBody { get; set; } = "";    // Parameterized code skeleton ({{EntityName}})
+    public List<string> Placeholders { get; set; } = new();
+    public int TimesSeen { get; set; }                // Frequency across projects
+    public List<string> SeenInProjects { get; set; } = new();
+    public double ConfidenceScore { get; set; }       // How "canonical" this pattern is
+}
+
+public enum PatternCategory { Controller, Dto, Auth, DataAccess, Service, Middleware, Config, Test }
+```
+
+### [87] `Services/AST/Memory/TemplateExtractor.cs`
+
+**Purpose:** Turns concrete entities into parameterized, reusable templates.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Memory;
+
+public class TemplateExtractor
+{
+    // Extract a parameterized template from a concrete entity + its source
+    // "UserController" → "{{Entity}}Controller" with {{Entity}}, {{entity}}, {{Dto}} slots
+    public CodePattern Extract(GraphEntity entity, string sourceCode);
+
+    // Generalize names: UserController/TenderController → {{Entity}}Controller
+    private string Parameterize(string source, GraphEntity entity);
+
+    // Detect the placeholders present in a template
+    private List<string> FindPlaceholders(string template);
+
+    // Re-instantiate a template with concrete values (used by GeneratorAgent)
+    public string Instantiate(CodePattern pattern, Dictionary<string, string> values);
+}
+```
+
+### [88] `Services/AST/Memory/PatternMemoryService.cs`
+
+**Purpose:** Cross-project pattern learning. After scanning many projects, identifies
+the *common* shapes (controllers, DTOs, auth) and ranks them by frequency.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Memory;
+
+public class PatternMemoryService
+{
+    private readonly string _memoryPath;
+    // %LOCALAPPDATA%\SyncroDesktop\intelligence\patterns.json
+
+    // Learn patterns from a freshly built knowledge graph
+    public Task LearnFromAsync(KnowledgeGraph graph, AstProjectMap map);
+
+    // Merge a newly seen pattern with memory (increments TimesSeen, updates confidence)
+    private Task ReinforceAsync(CodePattern pattern);
+
+    // Get the canonical pattern for a category (the most-seen, highest-confidence one)
+    public Task<CodePattern?> GetCanonicalAsync(PatternCategory cat, string language, string framework);
+
+    // All learned patterns ranked by frequency
+    public Task<List<CodePattern>> GetAllRankedAsync(PatternCategory? filter = null);
+
+    // "Across your 5 projects, controllers follow this shape 80% of the time"
+    public Task<List<PatternInsight>> GetInsightsAsync();
+}
+
+public record PatternInsight(string Description, PatternCategory Category, double Prevalence, int ProjectCount);
+```
+
+### [89] `Services/AST/Memory/ArchitectureMemory.cs`
+
+**Purpose:** Remembers *architectural* decisions across projects (folder layout,
+layering, naming) so generation matches the user's established style.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Memory;
+
+public class ArchitectureMemory
+{
+    // Record the architecture profile of a scanned project
+    public Task RememberAsync(string projectPath, ArchitectureProfile profile);
+
+    // The user's dominant architecture across all projects
+    public Task<ArchitectureProfile?> GetDominantStyleAsync();
+
+    // Preferred folder convention ("Services/", "Features/{X}/", "src/app/")
+    public Task<Dictionary<string, string>> GetFolderConventionsAsync();
+
+    // Used by ArchitectAgent to plan new code that matches existing style
+    public Task<string> GetStyleGuideAsync();
+}
+```
+
+---
+
+# PRIORITY 4 — Code Generation Feedback
+
+### [90] `Services/AST/Generation/GenerationAttempt.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Generation;
+
+public class GenerationAttempt
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string Prompt { get; set; } = "";
+    public string GeneratedCode { get; set; } = "";
+    public string TargetFile { get; set; } = "";
+    public string Language { get; set; } = "";
+    public int Iteration { get; set; }               // 0 = first try, 1+ = repairs
+    public bool Compiled { get; set; }
+    public List<ErrorRecord> Errors { get; set; } = new();
+    public string? ParentAttemptId { get; set; }     // Links repair → original
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public bool FinalSuccess { get; set; }
+}
+```
+
+### [91] `Services/AST/Generation/GenerationHistory.cs`
+
+**Purpose:** Persists every generation attempt + outcome. Becomes training signal
+for better future generations and feeds the RootCauseDatabase.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Generation;
+
+public class GenerationHistory
+{
+    private readonly string _historyPath;
+    // %LOCALAPPDATA%\SyncroDesktop\intelligence\generations.json
+
+    public Task RecordAsync(GenerationAttempt attempt);
+
+    // Full repair chain for one original generation
+    public Task<List<GenerationAttempt>> GetChainAsync(string rootAttemptId);
+
+    // Success rate by language/category — surfaces what the model is bad at
+    public Task<Dictionary<string, double>> GetSuccessRatesAsync();
+
+    // Prior successful generations similar to a prompt (few-shot examples)
+    public Task<List<GenerationAttempt>> FindSimilarSuccessesAsync(string prompt, int topK = 3);
+}
+```
+
+### [92] `Services/AST/Generation/FixSuggestionEngine.cs`
+
+**Purpose:** Given compile errors, proposes concrete fixes by combining the
+`RootCauseDatabase` + `KnowledgeGraph` (e.g. "DTO not found → here's the real DTO name").
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Generation;
+
+public class FixSuggestionEngine
+{
+    private readonly RootCauseDatabase _rootCause;
+    private readonly KnowledgeGraph? _graph;
+
+    // Produce ranked fix suggestions for a set of errors
+    public Task<List<FixSuggestion>> SuggestAsync(List<ErrorRecord> errors, string projectPath);
+
+    // Resolve "type X not found" against the knowledge graph to find the real name
+    private string? ResolveTypoAgainstGraph(string missingSymbol, KnowledgeGraph graph);
+
+    // Build a repair prompt for the LLM that embeds the suggestion + graph context
+    public string BuildRepairPrompt(GenerationAttempt attempt, List<FixSuggestion> suggestions);
+}
+
+public record FixSuggestion(string ErrorCode, string Description, string? CodeEdit, double Confidence);
+```
+
+### [93] `Services/AST/Generation/CodeRepairAgent.cs`
+
+**Purpose:** The closed loop: generate → compile → collect errors → suggest fix →
+regenerate, up to N iterations. This is the headline capability.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Generation;
+
+public class CodeRepairAgent
+{
+    private readonly AIClient _ai;
+    private readonly ErrorCollector _errors;
+    private readonly FixSuggestionEngine _fixer;
+    private readonly GenerationHistory _history;
+    private readonly SyncroCLI.Execution.ProcessRunner _runner;
+
+    // Generate code, then loop until it compiles or maxIterations reached
+    public async Task<GenerationAttempt> GenerateUntilValidAsync(
+        string prompt, string targetFile, string projectPath,
+        int maxIterations = 4, CancellationToken ct = default)
+    {
+        // 1. Generate via AIClient
+        // 2. Write to temp, run `dotnet build` / `tsc --noEmit` / `python -m py_compile`
+        // 3. ErrorCollector.Collect(output)
+        // 4. If clean → record success, return
+        // 5. FixSuggestionEngine.SuggestAsync(errors)
+        // 6. Build repair prompt, regenerate, increment iteration → goto 2
+        // 7. On give-up, record failure with last errors
+    }
+
+    // Compile-check only (no generation) — reused by ValidatorAgent
+    public Task<List<ErrorRecord>> CompileCheckAsync(string code, string targetFile, string projectPath);
+}
+```
+
+---
+
+# PRIORITY 5 — Architecture Fingerprinting
+
+### [94] `Services/AST/Architecture/ArchitectureProfile.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Architecture;
+
+public class ArchitectureProfile
+{
+    public string ProjectPath { get; set; } = "";
+    public List<DetectedPattern> Patterns { get; set; } = new();
+    public string PrimaryStyle { get; set; } = "";   // "Clean Architecture", "MVC"...
+    public double Confidence { get; set; }
+    public Dictionary<string, string> Conventions { get; set; } = new();
+    // "controllerSuffix":"Controller", "dtoFolder":"Models/Dto", "asyncSuffix":"Async"
+    public List<string> Layers { get; set; } = new(); // ["Domain","Application","Infrastructure","Api"]
+    public List<string> Smells { get; set; } = new(); // "God controller", "Anemic domain model"
+}
+
+public record DetectedPattern(string Name, double Confidence, string Evidence);
+```
+
+### [95] `Services/AST/Architecture/PatternDetector.cs`
+
+**Purpose:** Detects architecture patterns from the **knowledge graph shape** —
+not just folder names. Far more reliable than keyword matching.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Architecture;
+
+public class PatternDetector
+{
+    // Detect all architecture patterns present, with confidence + evidence
+    public List<DetectedPattern> Detect(KnowledgeGraph graph, AstProjectMap map);
+
+    // Clean Architecture: Domain has no outbound deps; deps point inward
+    private DetectedPattern? DetectCleanArchitecture(KnowledgeGraph g);
+
+    // DDD: presence of Aggregates, Entities, Value Objects, Repositories, Domain Services
+    private DetectedPattern? DetectDdd(KnowledgeGraph g);
+
+    // CQRS: separate Command/Query handlers, no shared write+read model
+    private DetectedPattern? DetectCqrs(KnowledgeGraph g);
+
+    // Vertical Slice: feature folders each containing controller+handler+dto
+    private DetectedPattern? DetectVerticalSlice(AstProjectMap map);
+
+    // MVC: Controllers + Views + Models, conventional routing
+    private DetectedPattern? DetectMvc(KnowledgeGraph g);
+
+    // Microservices: multiple service roots / docker-compose services / separate hosts
+    private DetectedPattern? DetectMicroservices(AstProjectMap map);
+
+    // Hexagonal: Ports (interfaces) + Adapters around a domain core
+    private DetectedPattern? DetectHexagonal(KnowledgeGraph g);
+}
+```
+
+### [96] `Services/AST/Architecture/ConventionAnalyzer.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Architecture;
+
+public class ConventionAnalyzer
+{
+    // Infer naming conventions from entity names
+    public Dictionary<string, string> AnalyzeNaming(KnowledgeGraph graph);
+    // → { "controllerSuffix":"Controller", "interfacePrefix":"I",
+    //     "asyncSuffix":"Async", "dtoSuffix":"Dto", "casing":"PascalCase" }
+
+    // Infer folder structure conventions
+    public Dictionary<string, string> AnalyzeFolders(AstProjectMap map);
+    // → { "servicesIn":"Services/", "dtosIn":"Models/Dto/", "testsIn":"Tests/" }
+
+    // Detect inconsistencies (some controllers "*Ctrl", some "*Controller")
+    public List<string> FindInconsistencies(KnowledgeGraph graph);
+}
+```
+
+### [97] `Services/AST/Architecture/ArchitectureFingerprint.cs`
+
+**Purpose:** Orchestrator → produces the final `ArchitectureProfile`,
+stores it via `ArchitectureMemory`, and exposes it to agents + AI generation.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Architecture;
+
+public class ArchitectureFingerprint
+{
+    private readonly PatternDetector _patterns;
+    private readonly ConventionAnalyzer _conventions;
+
+    public ArchitectureProfile Fingerprint(KnowledgeGraph graph, AstProjectMap map)
+    {
+        var profile = new ArchitectureProfile { ProjectPath = map.ProjectPath };
+        profile.Patterns = _patterns.Detect(graph, map);
+        profile.PrimaryStyle = profile.Patterns
+            .OrderByDescending(p => p.Confidence).FirstOrDefault()?.Name ?? "Layered";
+        profile.Conventions = _conventions.AnalyzeNaming(graph);
+        foreach (var kv in _conventions.AnalyzeFolders(map)) profile.Conventions[kv.Key] = kv.Value;
+        return profile;
+    }
+}
+```
+
+---
+
+# PRIORITY 6 — API Mock Ecosystem
+
+### [98] `Services/AST/Mock/FakeDataGenerator.cs`
+
+**Purpose:** Generates realistic fake values for any DTO based on property names/types.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Mock;
+
+public class FakeDataGenerator
+{
+    // Generate one fake instance (as JSON object) for a DTO
+    public Dictionary<string, object?> Generate(AstDtoModel dto);
+
+    // Generate N instances
+    public List<Dictionary<string, object?>> GenerateMany(AstDtoModel dto, int count = 10);
+
+    // Smart value by name + type:
+    //   "email" → "user3@example.com"   "createdAt" → ISO date
+    //   "price"/"amount" → decimal       "id" → guid/int      "name" → person name
+    private object? FakeValue(AstDtoProperty prop);
+
+    // Deterministic seed so repeated runs are stable
+    public int Seed { get; set; } = 1337;
+}
+```
+
+### [99] `Services/AST/Mock/MockApiGenerator.cs`
+
+**Purpose:** Generates a runnable mock backend from the project's endpoints + DTOs.
+Outputs json-server (Node), an Express stub, or a .NET minimal-API stub.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Mock;
+
+public class MockApiGenerator
+{
+    private readonly FakeDataGenerator _faker;
+
+    // Generate a mock server project to outputDir
+    public Task<string> GenerateAsync(AstProjectMap map, MockTarget target, string outputDir);
+
+    // json-server: build db.json from endpoints + fake data
+    private Task<string> GenerateJsonServer(AstProjectMap map, string outDir);
+
+    // Express stub: one route handler per endpoint returning fake DTO
+    private Task<string> GenerateExpressMock(AstProjectMap map, string outDir);
+
+    // .NET minimal API stub
+    private Task<string> GenerateDotNetMock(AstProjectMap map, string outDir);
+
+    // Emit a run script (npm start / dotnet run) + README
+    private Task EmitRunScript(string outDir, MockTarget target);
+}
+
+public enum MockTarget { JsonServer, Express, DotNetMinimal }
+```
+
+### [100] `Services/AST/Mock/SwaggerMockGenerator.cs`
+
+**Purpose:** Generates a mock server straight from a parsed `SwaggerSpec`
+(works even when there's no source code — just an OpenAPI file).
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Mock;
+
+public class SwaggerMockGenerator
+{
+    private readonly FakeDataGenerator _faker;
+
+    // Mock server from a Swagger/OpenAPI spec
+    public Task<string> GenerateAsync(SwaggerSpec spec, MockTarget target, string outputDir);
+
+    // Map spec schemas → fake responses keyed by operation + status code
+    private Dictionary<string, object> BuildResponseMap(SwaggerSpec spec);
+
+    // Honour example values in the spec when present, else fabricate
+    private object BuildExampleFor(SwaggerSchema schema);
+}
+```
+
+**Full chain:** `Project Scan → endpoints+DTOs → MockApiGenerator → working mock backend`,
+launchable via the existing `ProcessRunner`.
+
+---
+
+# PRIORITY 7 — Agent Layer
+
+### [101] `Services/AST/Agents/IAgent.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Agents;
+
+public interface IAgent
+{
+    AgentRole Role { get; }
+    string Name { get; }
+    Task<AgentResult> RunAsync(AgentContext context, CancellationToken ct = default);
+}
+
+public enum AgentRole { Architect, Generator, Validator, Repair, Documentation }
+```
+
+### [102] `Services/AST/Agents/AgentModels.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Agents;
+
+public class AgentContext
+{
+    public string ProjectPath { get; set; } = "";
+    public string Goal { get; set; } = "";              // "Add a TenderController with CRUD"
+    public KnowledgeGraph? Graph { get; set; }           // grounding
+    public ArchitectureProfile? Architecture { get; set; }
+    public HindsightEngine? Hindsight { get; set; }      // RAG access
+    public Dictionary<string, object> Blackboard { get; set; } = new();  // shared agent state
+    public List<AgentResult> History { get; set; } = new();
+}
+
+public class AgentResult
+{
+    public AgentRole Role { get; set; }
+    public bool Success { get; set; }
+    public string Output { get; set; } = "";             // code / plan / docs
+    public List<string> Artifacts { get; set; } = new(); // file paths produced
+    public List<ErrorRecord> Errors { get; set; } = new();
+    public string? NextAction { get; set; }              // suggested next agent
+}
+```
+
+### [103] `Services/AST/Agents/AgentOrchestrator.cs`
+
+**Purpose:** Coordinates the agent pipeline. The default workflow:
+`Architect → Generator → Validator → (Repair loop) → Documentation`.
+Every agent is grounded in AST + KnowledgeGraph + RAG + Memory + Hindsight.
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Agents;
+
+public class AgentOrchestrator
+{
+    private readonly IEnumerable<IAgent> _agents;   // DI-injected, keyed by role
+    private readonly GraphKnowledgeBuilder _graphBuilder;
+    private readonly ArchitectureFingerprint _fingerprint;
+    private readonly HindsightEngine _hindsight;
+
+    // Run the full build workflow for a natural-language goal
+    public async Task<AgentRunReport> RunWorkflowAsync(
+        string projectPath, string goal, CancellationToken ct = default)
+    {
+        // 1. Hydrate context: load KnowledgeGraph, ArchitectureProfile, Hindsight
+        // 2. ArchitectAgent  → plan (which files, which patterns)
+        // 3. GeneratorAgent  → produce code (uses PatternMemory + graph)
+        // 4. ValidatorAgent  → compile-check (CodeRepairAgent.CompileCheckAsync)
+        // 5. if errors → RepairAgent loops (max N) using RootCauseDatabase
+        // 6. DocumentationAgent → docs for the new code
+        // 7. Return AgentRunReport with all artifacts + transcript
+    }
+
+    // Resolve an agent by role
+    private IAgent Get(AgentRole role) => _agents.First(a => a.Role == role);
+}
+
+public class AgentRunReport
+{
+    public string Goal { get; set; } = "";
+    public bool Success { get; set; }
+    public List<AgentResult> Steps { get; set; } = new();
+    public List<string> FilesCreated { get; set; } = new();
+    public int RepairIterations { get; set; }
+}
+```
+
+### [104] `Services/AST/Agents/ArchitectAgent.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Agents;
+
+public class ArchitectAgent : IAgent
+{
+    public AgentRole Role => AgentRole.Architect;
+
+    // Produces a plan: target files, chosen patterns, where they fit the graph.
+    // Grounds the plan in ArchitectureProfile (match existing style) +
+    // PatternMemory (canonical shapes) + Hindsight (how similar things were built).
+    public Task<AgentResult> RunAsync(AgentContext context, CancellationToken ct = default);
+}
+```
+
+### [105] `Services/AST/Agents/GeneratorAgent.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Agents;
+
+public class GeneratorAgent : IAgent
+{
+    private readonly AIClient _ai;
+    private readonly PatternMemoryService _patterns;
+    private readonly TemplateExtractor _templates;
+
+    public AgentRole Role => AgentRole.Generator;
+
+    // Generates code per the architect's plan. Prefers instantiating a learned
+    // CodePattern (TemplateExtractor.Instantiate); falls back to LLM with graph context.
+    public Task<AgentResult> RunAsync(AgentContext context, CancellationToken ct = default);
+}
+```
+
+### [106] `Services/AST/Agents/ValidatorAgent.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Agents;
+
+public class ValidatorAgent : IAgent
+{
+    private readonly CodeRepairAgent _repair;   // reuse CompileCheckAsync
+    private readonly ErrorCollector _errors;
+
+    public AgentRole Role => AgentRole.Validator;
+
+    // Compiles/lints generated artifacts, attaches ErrorRecords to the result.
+    // Sets NextAction = "Repair" if errors found, else "Documentation".
+    public Task<AgentResult> RunAsync(AgentContext context, CancellationToken ct = default);
+}
+```
+
+### [107] `Services/AST/Agents/RepairAgent.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Agents;
+
+public class RepairAgent : IAgent
+{
+    private readonly CodeRepairAgent _repair;
+    private readonly FixSuggestionEngine _fixer;
+    private readonly RootCauseDatabase _rootCause;
+
+    public AgentRole Role => AgentRole.Repair;
+
+    // Takes the validator's errors, applies FixSuggestionEngine + RootCauseDatabase,
+    // regenerates the offending files. Records outcome to RootCauseDatabase so the
+    // system learns which fixes work.
+    public Task<AgentResult> RunAsync(AgentContext context, CancellationToken ct = default);
+}
+```
+
+### [108] `Services/AST/Agents/DocumentationAgent.cs`
+
+```csharp
+namespace Syncro.Desktop.Services.AST.Agents;
+
+public class DocumentationAgent : IAgent
+{
+    private readonly ApiDocGenerator _apiDocs;
+    private readonly FunctionDocGenerator _fnDocs;
+
+    public AgentRole Role => AgentRole.Documentation;
+
+    // Generates docs for the newly created/changed entities (wraps DocGen services).
+    public Task<AgentResult> RunAsync(AgentContext context, CancellationToken ct = default);
+}
+```
+
+---
+
+## New Razor Tabs (added to ProjectAnalyser.razor [67])
+
+### [109] `Components/Pages/Projects/Tabs/AgentsTab.razor`
+- **Goal input** ("Add a CRUD controller for Tender") + **Run Workflow** button
+- Live **agent transcript**: Architect → Generator → Validator → Repair×N → Docs, each as a `MudTimeline` item with status chip
+- **Diff viewer** for files created/changed; **Apply** / **Discard** buttons
+- Repair iterations counter; final success/fail banner
+
+### [110] `Components/Pages/Projects/Tabs/InsightsTab.razor`
+- **Architecture fingerprint** card: primary style, detected patterns (confidence bars), conventions, smells
+- **Error intelligence** panel: top errors (from `RootCauseDatabase`), fix success rates
+- **Pattern memory** panel: canonical patterns learned across projects (`PatternMemoryService.GetInsightsAsync`)
+- **Knowledge graph** mini-map: entity/relationship counts, orphan/dead-code list
+
+---
+
+## Updated Ingestion Pipeline ([46] revised)
+
+```csharp
+// ProjectIngestionPipeline.RunAsync — REVISED step order
+Report(Cloning, 5);          session.LocalPath  = await _clone.CloneAsync(...);
+Report(Scanning, 20);        session.ProjectMap = await _engine.RunAsync(...);
+Report(GraphBuilding, 40);   session.Graph      = _graphBuilder.Build(session.ProjectMap);   // ◀ NEW
+Report(Fingerprinting, 50);  session.Arch       = _fingerprint.Fingerprint(session.Graph, map); // ◀ NEW
+                             await _archMemory.RememberAsync(path, session.Arch);              // ◀ NEW
+                             await _patternMemory.LearnFromAsync(session.Graph, map);          // ◀ NEW
+Report(Vectorizing, 65);     var chunks = _chunker.ChunkFromGraph(session.Graph, map);        // ◀ CHANGED
+                             var docs = await _embedding.EmbedAsync(chunks);
+                             await _vectorStore.UpsertBatchAsync(path, docs);
+                             await _graphStore.SaveAsync(path, session.Graph);                 // ◀ NEW
+Report(GeneratingDocs, 85);  /* docs + summary as before */
+Report(Storing, 97);         await _knowledge.RegisterProjectAsync(session);
+Report(Done, 100);
+```
+
+`IngestionStatus` ([48]) gains: `GraphBuilding`, `Fingerprinting`.
+`IngestionSession` ([47]) gains: `KnowledgeGraph? Graph`, `ArchitectureProfile? Arch`.
+
+---
+
+## Extended DI Registration (additions to MauiProgram.cs)
+
+```csharp
+// Priority 1 — Knowledge Graph
+builder.Services.AddSingleton<EntityResolver>();
+builder.Services.AddSingleton<RelationshipIndexer>();
+builder.Services.AddSingleton<GraphKnowledgeBuilder>();
+
+// Priority 2 — Error Intelligence
+builder.Services.AddSingleton<CompileFailureAnalyzer>();
+builder.Services.AddSingleton<RuntimeFailureAnalyzer>();
+builder.Services.AddSingleton<RootCauseDatabase>();
+builder.Services.AddSingleton<ErrorCollector>();
+
+// Priority 3 — Project Memory
+builder.Services.AddSingleton<TemplateExtractor>();
+builder.Services.AddSingleton<PatternMemoryService>();
+builder.Services.AddSingleton<ArchitectureMemory>();
+
+// Priority 4 — Code Generation Feedback
+builder.Services.AddSingleton<GenerationHistory>();
+builder.Services.AddSingleton<FixSuggestionEngine>();
+builder.Services.AddSingleton<CodeRepairAgent>();
+
+// Priority 5 — Architecture Fingerprinting
+builder.Services.AddSingleton<PatternDetector>();
+builder.Services.AddSingleton<ConventionAnalyzer>();
+builder.Services.AddSingleton<ArchitectureFingerprint>();
+
+// Priority 6 — API Mock Ecosystem
+builder.Services.AddSingleton<FakeDataGenerator>();
+builder.Services.AddSingleton<MockApiGenerator>();
+builder.Services.AddSingleton<SwaggerMockGenerator>();
+
+// Priority 7 — Agent Layer
+builder.Services.AddSingleton<IAgent, ArchitectAgent>();
+builder.Services.AddSingleton<IAgent, GeneratorAgent>();
+builder.Services.AddSingleton<IAgent, ValidatorAgent>();
+builder.Services.AddSingleton<IAgent, RepairAgent>();
+builder.Services.AddSingleton<IAgent, DocumentationAgent>();
+builder.Services.AddSingleton<AgentOrchestrator>();
+```
+
+---
+
+## Updated Hindsight File-System Layout
+
+```
+%LOCALAPPDATA%\SyncroDesktop\
+├── analysed\                          ← Cloned repos
+├── knowledge\                         ← Vector store (per project)
+│   └── {projectHash}\
+│       ├── index.json
+│       ├── vocab.json
+│       ├── graph.json                 ◀ NEW — serialized KnowledgeGraph
+│       └── {uuid}.vec.json
+└── intelligence\                      ◀ NEW — cross-project learning
+    ├── rootcauses.json                ← RootCauseDatabase
+    ├── patterns.json                  ← PatternMemoryService
+    ├── architecture.json              ← ArchitectureMemory
+    └── generations.json               ← GenerationHistory
+```
+
+---
+
+## Final File Count
+
+| Area | Original | Ext I | Ext II | Total |
+|---|---|---|---|---|
+| Core / Parsers / Graph / Scanners / Analyzers / Models / RAG / Reporters / Storage / CLI | 43 | — | — | 43 |
+| Ingestion / Hindsight / DocGen / Knowledge | — | 22 | — | 22 |
+| **Knowledge Graph** (P1) | — | — | 7 | 7 |
+| **Error Intelligence** (P2) | — | — | 5 | 5 |
+| **Project Memory** (P3) | — | — | 4 | 4 |
+| **Code Gen Feedback** (P4) | — | — | 4 | 4 |
+| **Architecture Fingerprint** (P5) | — | — | 4 | 4 |
+| **API Mock** (P6) | — | — | 3 | 3 |
+| **Agent Layer** (P7) | — | — | 8 | 8 |
+| **Total .cs files** | 43 | 22 | 35 | **100** |
+| **Razor pages** | 4 | 7 | 2 | **13** |
+| **Grand total** | 47 | 29 | 37 | **113** |
+
+---
+
+## Phase A — Build Immediately (~15 files)
+
+The user's recommended first wave. These deliver the biggest leverage and unblock the rest:
+
+| # | File | Why first |
+|---|---|---|
+| [80] | `GraphKnowledgeBuilder.cs` | Unlocks graph-grounded RAG — everything downstream improves |
+| [78] | `EntityResolver.cs` | Required by GraphKnowledgeBuilder |
+| [79] | `RelationshipIndexer.cs` | Required by GraphKnowledgeBuilder |
+| [74] | `ProjectOntology.cs` | Schema both above depend on |
+| [75]–[77] | `GraphEntity`, `GraphRelationship`, `KnowledgeGraph` | Graph models |
+| [82] | `ErrorCollector.cs` | Starts capturing the learning signal now |
+| [83] | `CompileFailureAnalyzer.cs` | Required by ErrorCollector |
+| [85] | `RootCauseDatabase.cs` | The store that makes errors valuable |
+| [81] | `ErrorRecord.cs` | Model for above |
+| [88] | `PatternMemoryService.cs` | Begins cross-project learning |
+| [86]–[87] | `CodePattern`, `TemplateExtractor` | Required by PatternMemoryService |
+
+→ **15 files.** After Phase A: graph-grounded retrieval + error learning + pattern memory
+are live. Phase B = Code Gen Feedback (P4) + Agents (P7), which build directly on these.
