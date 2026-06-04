@@ -21,9 +21,6 @@ artifacts/
 # Rider / JetBrains
 .idea/
 
-# Generated scripts
-generated_script.bat
-
 # OS
 Thumbs.db
 Desktop.ini
