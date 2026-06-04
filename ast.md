@@ -4145,3 +4145,774 @@ The user's recommended first wave. These deliver the biggest leverage and unbloc
 
 → **15 files.** After Phase A: graph-grounded retrieval + error learning + pattern memory
 are live. Phase B = Code Gen Feedback (P4) + Agents (P7), which build directly on these.
+
+---
+
+# Extension III: Cognitive Memory, Patching & TaskAgent
+
+## Why this layer
+
+Extensions I–II give Syncro *understanding* (graph, RAG) and *intelligence* (errors, patterns,
+agents). This layer gives it **long-term episodic memory** and a **closed write-loop**:
+it remembers decisions/bugs/risks/preferences, turns plans into reviewable **patches → GitHub PRs**,
+and the **TaskAgent** ties everything together:
+
+```
+Task → Retrieve AST → Retrieve Memory → Plan → Patch → Review → Memory Update
+```
+
+This is what makes the system *improve over time* instead of re-deriving context every run.
+
+## Disambiguation vs. existing modules
+
+| New module | Not to be confused with | Difference |
+|---|---|---|
+| `Cognition/Memory/*` (typed episodic memory) | `Memory/*` (P3 — `PatternMemoryService`) | P3 remembers **code patterns**; this remembers **events/decisions/bugs/risks/prefs** |
+| `Patching/*` | `Generation/*` (P4 — `CodeRepairAgent`) | P4 generates+repairs raw code; Patching wraps changes as **reviewable diffs + PRs** |
+| `Tasks/TaskAgent` | `Agents/*` (P7 — role agents) | P7 are role-agents; `TaskAgent` is the **workflow** that orchestrates them around memory + patches |
+
+## New File Map (30 C# + 4 Razor = 34 more files)
+
+```
+Services/AST/Cognition/Memory/        ◀── typed long-term memory
+├── MemoryKind.cs                     [111] Enum of memory categories
+├── MemoryRecord.cs                   [112] Base record (content, salience, links, vector)
+├── IMemoryStore.cs                   [113] Typed store contract
+├── ProjectMemory.cs                  [114] Goals, constraints, stack facts
+├── BugMemory.cs                      [115] Bugs seen + fixes (links RootCauseDatabase)
+├── DecisionMemory.cs                 [116] ADR-style decisions + rationale
+├── RiskMemory.cs                     [117] Fragile areas, known hazards
+├── PreferenceMemory.cs               [118] User style/library/convention prefs
+├── FollowUpMemory.cs                 [119] Deferred TODOs / follow-ups
+├── MemoryStorageService.cs           [120] File-system persistence (per kind)
+├── MemoryRouter.cs                   [121] Classify an event → route to right store(s)
+├── MemoryQueryService.cs             [122] Unified retrieval across all kinds
+├── MemoryLinker.cs                   [123] Cross-link memories + link to graph entities
+└── MemoryConsolidator.cs             [124] Dedupe / merge / decay by salience+recency
+
+Services/AST/Patching/                ◀── reviewable change pipeline
+├── PatchModel.cs                     [125] Patch (files, diffs, rationale, links)
+├── DiffEngine.cs                     [126] Compute/apply unified diffs (hunks)
+├── PatchGenerator.cs                 [127] Agent/repair output → Patch
+├── PatchReview.cs                    [128] Auto-review (compile, lint, risk check)
+├── PatchApplier.cs                   [129] Apply to working tree (with rollback)
+├── PatchHistory.cs                   [130] Store all patches + outcomes
+├── BranchManager.cs                  [131] Create/switch branches (LibGit2Sharp)
+├── ConflictResolver.cs              [132] Detect/resolve merge conflicts
+└── GitHubPRService.cs                [133] Open PR via gh CLI / GitHub API
+
+Services/AST/Cognition/Tasks/         ◀── TaskAgent workflow
+├── TaskModel.cs                      [134] Task (goal, status, stages, artifacts)
+├── TaskContextBuilder.cs             [135] "Retrieve AST" + "Retrieve Memory" stages
+├── TaskPlanner.cs                    [136] "Plan" stage (graph + memory + architecture)
+├── TaskAgent.cs                      [137] Orchestrates the full 7-stage flow
+├── TaskMemoryWriter.cs               [138] "Memory Update" stage
+├── TaskTranscript.cs                 [139] Full reasoning/step trace
+└── TaskQueue.cs                      [140] Multi-task scheduling + persistence
+
+Components/Pages/Projects/
+├── Tabs/TaskAgentTab.razor           [141] Run TaskAgent, watch 7-stage flow
+├── Tabs/PatchReviewTab.razor         [142] Review/approve patches → open PR
+├── MemoryTimeline.razor              [143] Chronological memory feed (all kinds)
+└── GenericVsMemoryPage.razor         [144] Side-by-side: raw LLM vs memory-grounded
+```
+
+---
+
+## Cognitive Memory (Services/AST/Cognition/Memory/)
+
+### [111] `MemoryKind.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Memory;
+
+public enum MemoryKind { Project, Bug, Decision, Risk, Preference, FollowUp }
+```
+
+### [112] `MemoryRecord.cs`
+**Purpose:** Shared base for every memory. Carries a vector so memories are retrievable
+through the same `VectorQuery` engine as code chunks.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Memory;
+
+public abstract class MemoryRecord
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public MemoryKind Kind { get; init; }
+    public string ProjectPath { get; set; } = "";
+    public string Content { get; set; } = "";           // human-readable statement
+    public double[] Vector { get; set; } = [];           // embedding for retrieval
+    public double Salience { get; set; } = 0.5;          // importance 0..1 (drives decay)
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? LastAccessedAt { get; set; }
+    public int AccessCount { get; set; }
+    public List<string> LinkedMemoryIds { get; set; } = new();
+    public List<string> LinkedEntityIds { get; set; } = new();   // KnowledgeGraph entities
+    public List<string> Tags { get; set; } = new();
+    public string Source { get; set; } = "";             // "task:{id}", "scan", "user"
+}
+```
+
+### [113] `IMemoryStore.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Memory;
+
+public interface IMemoryStore<T> where T : MemoryRecord
+{
+    MemoryKind Kind { get; }
+    Task AddAsync(T record);
+    Task<T?> GetAsync(string id);
+    Task<List<T>> ListAsync(string projectPath);
+    Task<List<T>> SearchAsync(string projectPath, double[] queryVector, int topK = 5);
+    Task UpdateAsync(T record);
+    Task DeleteAsync(string id);
+}
+```
+
+### [114]–[119] The six typed memories
+Each file contains the typed record + its store (both subclass/implement the base above).
+Distinct fields per kind:
+
+```csharp
+// [114] ProjectMemory.cs — long-lived facts about the project
+public class ProjectFact : MemoryRecord { public string Category {get;set;}="";   // goal|constraint|stack|domain
+                                           public bool StillTrue {get;set;}=true; }
+public class ProjectMemory : IMemoryStore<ProjectFact> { /* Kind => Project */ }
+
+// [115] BugMemory.cs — bugs encountered and how they were fixed
+public class BugFact : MemoryRecord { public string? ErrorCode {get;set;}          // links RootCauseDatabase
+                                      public string Symptom {get;set;}="";
+                                      public string? Fix {get;set;}
+                                      public bool Recurring {get;set;} }
+public class BugMemory : IMemoryStore<BugFact> { /* Kind => Bug */
+    // "Have we seen this before?" — match a new error against past bugs
+    public Task<BugFact?> FindSimilarAsync(string projectPath, ErrorRecord error); }
+
+// [116] DecisionMemory.cs — ADR-style: decision + rationale + alternatives
+public class DecisionFact : MemoryRecord { public string Decision {get;set;}="";
+                                           public string Rationale {get;set;}="";
+                                           public List<string> Alternatives {get;set;}=new();
+                                           public string Status {get;set;}="accepted"; } // accepted|superseded
+public class DecisionMemory : IMemoryStore<DecisionFact> { /* Kind => Decision */ }
+
+// [117] RiskMemory.cs — fragile areas / hazards to respect during changes
+public class RiskFact : MemoryRecord { public string Severity {get;set;}="medium";  // low|medium|high
+                                       public List<string> AffectedEntityIds {get;set;}=new();
+                                       public string? Mitigation {get;set;} }
+public class RiskMemory : IMemoryStore<RiskFact> { /* Kind => Risk */
+    // Used by PatchReview to block/warn on risky areas
+    public Task<List<RiskFact>> RisksTouchingAsync(string projectPath, IEnumerable<string> entityIds); }
+
+// [118] PreferenceMemory.cs — user's style/library/convention choices
+public class PreferenceFact : MemoryRecord { public string Scope {get;set;}="";     // global|project|language
+                                             public string Key {get;set;}="";        // "http-client","test-framework"
+                                             public string Value {get;set;}=""; }
+public class PreferenceMemory : IMemoryStore<PreferenceFact> { /* Kind => Preference */
+    public Task<PreferenceFact?> ResolveAsync(string key, string projectPath); }
+
+// [119] FollowUpMemory.cs — deferred work items
+public class FollowUpFact : MemoryRecord { public string Status {get;set;}="open";   // open|done|dismissed
+                                           public string? DueHint {get;set;}
+                                           public string? OriginTaskId {get;set;} }
+public class FollowUpMemory : IMemoryStore<FollowUpFact> { /* Kind => FollowUp */
+    public Task<List<FollowUpFact>> GetOpenAsync(string projectPath); }
+```
+
+### [120] `MemoryStorageService.cs`
+**Purpose:** Shared file-system persistence backing all six stores.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Memory;
+
+public class MemoryStorageService
+{
+    // %LOCALAPPDATA%\SyncroDesktop\intelligence\memory\{projectHash}\{kind}\{id}.json
+    public Task SaveAsync<T>(T record) where T : MemoryRecord;
+    public Task<T?> LoadAsync<T>(MemoryKind kind, string projectPath, string id) where T : MemoryRecord;
+    public Task<List<T>> LoadAllAsync<T>(MemoryKind kind, string projectPath) where T : MemoryRecord;
+    public Task DeleteAsync(MemoryKind kind, string projectPath, string id);
+}
+```
+
+### [121] `MemoryRouter.cs`
+**Purpose:** Given a raw event (task outcome, scan finding, user note), classify it and
+write it to the correct store(s) — one event may produce a Decision + a FollowUp + a Risk.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Memory;
+
+public class MemoryRouter
+{
+    // Inject all six IMemoryStore implementations + EmbeddingService
+    public Task<List<MemoryRecord>> RouteAsync(MemoryEvent evt, string projectPath);
+
+    // Heuristic + optional AIClient classification of free-text into kinds
+    private List<MemoryKind> Classify(MemoryEvent evt);
+
+    // Embed content before storing (reuses EmbeddingService [55])
+    private Task<double[]> EmbedAsync(string content);
+}
+
+public class MemoryEvent
+{
+    public string Text { get; set; } = "";
+    public string Source { get; set; } = "";
+    public List<string> EntityIds { get; set; } = new();
+    public ErrorRecord? Error { get; set; }        // if it came from a failure
+    public double Salience { get; set; } = 0.5;
+}
+```
+
+### [122] `MemoryQueryService.cs`
+**Purpose:** The "Retrieve Memory" stage. Unified semantic search across all six kinds,
+returns a ranked, deduped context bundle for the TaskAgent / AI prompts.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Memory;
+
+public class MemoryQueryService
+{
+    // Search across every memory kind for a project
+    public Task<List<MemoryRecord>> RecallAsync(
+        string projectPath, string query, int topK = 8, MemoryKind[]? kinds = null);
+
+    // Recall scoped to entities a task will touch (graph-aware)
+    public Task<List<MemoryRecord>> RecallForEntitiesAsync(
+        string projectPath, IEnumerable<string> entityIds);
+
+    // Build a compact memory context string for prompt injection
+    public Task<string> BuildContextAsync(string projectPath, string query);
+
+    // Bumps AccessCount/LastAccessedAt + reinforces salience on recall
+    private Task ReinforceAsync(IEnumerable<MemoryRecord> recalled);
+}
+```
+
+### [123] `MemoryLinker.cs`
+**Purpose:** Builds the associative web — links related memories (bug ↔ decision ↔ risk)
+and anchors them to `KnowledgeGraph` entities so recall can follow the graph.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Memory;
+
+public class MemoryLinker
+{
+    public Task LinkAsync(MemoryRecord a, MemoryRecord b);              // bidirectional
+    public Task LinkToEntityAsync(MemoryRecord m, string entityId);
+    public Task<List<MemoryRecord>> GetRelatedAsync(string memoryId, int hops = 1);
+    // Auto-suggest links by vector similarity + shared entities
+    public Task<List<(MemoryRecord, double)>> SuggestLinksAsync(MemoryRecord m, string projectPath);
+}
+```
+
+### [124] `MemoryConsolidator.cs`
+**Purpose:** Housekeeping — merges duplicates, supersedes stale facts, and decays salience
+so the store stays sharp. Mirrors the `consolidate-memory` idea but for project memory.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Memory;
+
+public class MemoryConsolidator
+{
+    // Merge near-duplicate records (cosine > threshold) keeping highest salience
+    public Task<int> DeduplicateAsync(string projectPath, double threshold = 0.92);
+
+    // Mark ProjectFacts/DecisionFacts that contradict newer ones as superseded
+    public Task ResolveContradictionsAsync(string projectPath);
+
+    // Time-decay salience; drop records below floor unless pinned
+    public Task DecayAsync(string projectPath, double halfLifeDays = 30);
+
+    // Run all consolidation passes (scheduled or post-task)
+    public Task ConsolidateAsync(string projectPath);
+}
+```
+
+---
+
+## Patching (Services/AST/Patching/)
+
+### [125] `PatchModel.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class Patch
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string ProjectPath { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Rationale { get; set; } = "";              // why (from DecisionMemory)
+    public List<FileDiff> Files { get; set; } = new();
+    public List<string> LinkedMemoryIds { get; set; } = new();
+    public List<string> LinkedEntityIds { get; set; } = new();
+    public string? OriginTaskId { get; set; }
+    public PatchStatus Status { get; set; } = PatchStatus.Draft;
+    public ReviewResult? Review { get; set; }
+    public string? BranchName { get; set; }
+    public string? PrUrl { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+public class FileDiff { public string Path {get;set;}=""; public string UnifiedDiff {get;set;}="";
+                        public ChangeKind Change {get;set;} }  // Add|Modify|Delete
+public enum ChangeKind { Add, Modify, Delete }
+public enum PatchStatus { Draft, Reviewed, Approved, Applied, PrOpened, Merged, Rejected, RolledBack }
+```
+
+### [126] `DiffEngine.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class DiffEngine
+{
+    public string ComputeUnifiedDiff(string original, string modified, string path);
+    public string ApplyDiff(string original, string unifiedDiff);     // returns patched text
+    public bool CanApplyCleanly(string original, string unifiedDiff);
+    public List<DiffHunk> ParseHunks(string unifiedDiff);
+}
+public record DiffHunk(int OldStart, int OldLines, int NewStart, int NewLines, string Body);
+```
+
+### [127] `PatchGenerator.cs`
+**Purpose:** Turns agent/repair output into a structured, reviewable `Patch`,
+attaching rationale (from DecisionMemory) and the entities/memories it touches.
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class PatchGenerator
+{
+    private readonly DiffEngine _diff;
+
+    // Build a Patch from a set of (path, newContent) edits
+    public Task<Patch> FromEditsAsync(string projectPath, IEnumerable<(string Path, string NewContent)> edits,
+                                      string title, string rationale);
+
+    // Build a Patch from a GenerationAttempt [90] / AgentRunReport [103]
+    public Task<Patch> FromAgentResultAsync(Generation.GenerationAttempt attempt, string projectPath);
+}
+```
+
+### [128] `PatchReview.cs`
+**Purpose:** Automated pre-review before a human sees it. Compiles, lints, and checks the
+patch against `RiskMemory` — blocks/warns when it touches known-fragile entities.
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class PatchReview
+{
+    private readonly Generation.CodeRepairAgent _compiler;   // CompileCheckAsync
+    private readonly Cognition.Memory.RiskMemory _risks;
+    private readonly ErrorIntelligence.ErrorCollector _errors;
+
+    public Task<ReviewResult> ReviewAsync(Patch patch);
+
+    // Checks: compiles? lints? touches RiskMemory entities? matches conventions?
+    //         introduces a previously-seen bug (BugMemory)?
+}
+
+public class ReviewResult
+{
+    public bool Passed { get; set; }
+    public List<string> Blockers { get; set; } = new();
+    public List<string> Warnings { get; set; } = new();
+    public List<ErrorRecord> CompileErrors { get; set; } = new();
+    public double RiskScore { get; set; }       // 0..1 from RiskMemory overlap
+}
+```
+
+### [129] `PatchApplier.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class PatchApplier
+{
+    private readonly DiffEngine _diff;
+    // Apply patch to working tree; snapshot originals for rollback
+    public Task<bool> ApplyAsync(Patch patch);
+    public Task RollbackAsync(Patch patch);          // restore snapshot
+    public Task<bool> DryRunAsync(Patch patch);      // verify clean apply, no writes
+}
+```
+
+### [130] `PatchHistory.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class PatchHistory
+{
+    // %LOCALAPPDATA%\SyncroDesktop\intelligence\patches\{projectHash}\{id}.json
+    public Task RecordAsync(Patch patch);
+    public Task<Patch?> GetAsync(string id);
+    public Task<List<Patch>> ListAsync(string projectPath, PatchStatus? filter = null);
+    public Task UpdateStatusAsync(string id, PatchStatus status);
+    // Feeds GenerationHistory [91]: which patches merged vs rolled back
+    public Task<double> GetApprovalRateAsync(string projectPath);
+}
+```
+
+### [131] `BranchManager.cs`
+**Purpose:** Branch lifecycle via LibGit2Sharp (reuses existing `LibGit2SharpService`).
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class BranchManager
+{
+    public Task<string> CreateForPatchAsync(string repoPath, Patch patch);  // "syncro/patch-{shortId}"
+    public Task SwitchAsync(string repoPath, string branch);
+    public Task CommitAsync(string repoPath, string message);
+    public Task PushAsync(string repoPath, string branch);
+    public Task<bool> IsCleanAsync(string repoPath);
+}
+```
+
+### [132] `ConflictResolver.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class ConflictResolver
+{
+    public Task<bool> HasConflictsAsync(string repoPath);
+    public Task<List<string>> GetConflictedFilesAsync(string repoPath);
+    // Optional AIClient-assisted 3-way merge suggestion
+    public Task<string> SuggestResolutionAsync(string ours, string theirs, string baseText);
+}
+```
+
+### [133] `GitHubPRService.cs`
+**Purpose:** Opens a PR for an approved patch using the `gh` CLI (falls back to GitHub REST).
+Body includes rationale, review summary, linked memories.
+```csharp
+namespace Syncro.Desktop.Services.AST.Patching;
+
+public class GitHubPRService
+{
+    private readonly SyncroCLI.Execution.ProcessRunner _runner;
+
+    // `gh pr create --title ... --body ... --head {branch}` ; returns PR URL
+    public Task<string> CreatePrAsync(string repoPath, Patch patch, string baseBranch = "main");
+
+    // Compose PR body from patch rationale + ReviewResult + linked DecisionMemory
+    private string BuildPrBody(Patch patch);
+
+    public Task<string> GetPrStatusAsync(string repoPath, string prUrl);
+    public Task<bool> IsGhAvailableAsync();          // gracefully degrade if no gh
+}
+```
+
+---
+
+## TaskAgent (Services/AST/Cognition/Tasks/)
+
+### [134] `TaskModel.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Tasks;
+
+public class AgentTask
+{
+    public string Id { get; init; } = Guid.NewGuid().ToString();
+    public string ProjectPath { get; set; } = "";
+    public string Goal { get; set; } = "";
+    public TaskStage Stage { get; set; } = TaskStage.Created;
+    public TaskStatus Status { get; set; } = TaskStatus.Pending;
+    public List<string> RetrievedEntityIds { get; set; } = new();
+    public List<string> RetrievedMemoryIds { get; set; } = new();
+    public string? Plan { get; set; }
+    public string? PatchId { get; set; }
+    public string? TranscriptId { get; set; }
+    public List<string> CreatedFollowUpIds { get; set; } = new();
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+    public DateTime? CompletedAt { get; set; }
+}
+
+public enum TaskStage { Created, RetrievingAst, RetrievingMemory, Planning, Patching, Reviewing, MemoryUpdate, Done }
+public enum TaskStatus { Pending, Running, Succeeded, Failed, NeedsHuman }
+```
+
+### [135] `TaskContextBuilder.cs`
+**Purpose:** Implements **"Retrieve AST"** + **"Retrieve Memory"**. Assembles the grounded
+context the planner needs.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Tasks;
+
+public class TaskContextBuilder
+{
+    private readonly HindsightEngine _hindsight;
+    private readonly KnowledgeGraph.KnowledgeGraph _graph;     // loaded per project
+    private readonly Memory.MemoryQueryService _memory;
+
+    // Retrieve AST: relevant entities + subgraph for the goal
+    public Task<AstContextBundle> RetrieveAstAsync(AgentTask task);
+
+    // Retrieve Memory: relevant facts/decisions/risks/prefs/bugs/follow-ups
+    public Task<List<Memory.MemoryRecord>> RetrieveMemoryAsync(AgentTask task);
+
+    // Combined prompt-ready context (AST + memory + architecture profile)
+    public Task<string> BuildPromptContextAsync(AgentTask task);
+}
+
+public record AstContextBundle(List<KnowledgeGraph.GraphEntity> Entities,
+                               KnowledgeGraph.KnowledgeGraph Subgraph,
+                               Architecture.ArchitectureProfile? Architecture);
+```
+
+### [136] `TaskPlanner.cs`
+**Purpose:** The **"Plan"** stage. Wraps `ArchitectAgent` [104], grounded by the context
+bundle + memory, to produce an actionable plan (files to touch, patterns to use, risks to avoid).
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Tasks;
+
+public class TaskPlanner
+{
+    private readonly Agents.ArchitectAgent _architect;
+    private readonly Memory.RiskMemory _risks;
+    private readonly Memory.PreferenceMemory _prefs;
+
+    public Task<TaskPlan> PlanAsync(AgentTask task, string promptContext);
+}
+
+public class TaskPlan
+{
+    public List<PlannedChange> Changes { get; set; } = new();
+    public List<string> RespectedRiskIds { get; set; } = new();
+    public List<string> AppliedPreferenceIds { get; set; } = new();
+    public string Summary { get; set; } = "";
+}
+public record PlannedChange(string FilePath, ChangeKind Kind, string Intent, string? PatternId);
+```
+
+### [137] `TaskAgent.cs`
+**Purpose:** The capstone orchestrator. Runs the full flow, advancing `AgentTask.Stage`,
+delegating to existing agents + new patch/memory services, and recording a transcript.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Tasks;
+
+public class TaskAgent
+{
+    private readonly TaskContextBuilder _context;
+    private readonly TaskPlanner _planner;
+    private readonly Agents.AgentOrchestrator _agents;     // Generator/Validator/Repair/Docs
+    private readonly Patching.PatchGenerator _patchGen;
+    private readonly Patching.PatchReview _review;
+    private readonly TaskMemoryWriter _memoryWriter;
+    private readonly TaskTranscript _transcript;
+
+    public event Action<AgentTask>? StageChanged;
+
+    // Task → Retrieve AST → Retrieve Memory → Plan → Patch → Review → Memory Update
+    public async Task<AgentTask> RunAsync(string projectPath, string goal, CancellationToken ct = default)
+    {
+        var task = new AgentTask { ProjectPath = projectPath, Goal = goal, Status = TaskStatus.Running };
+
+        Advance(task, TaskStage.RetrievingAst);    var ast = await _context.RetrieveAstAsync(task);
+        Advance(task, TaskStage.RetrievingMemory);  var mem = await _context.RetrieveMemoryAsync(task);
+        Advance(task, TaskStage.Planning);          var plan = await _planner.PlanAsync(task, ctx);
+        Advance(task, TaskStage.Patching);          var patch = await BuildPatchViaAgentsAsync(task, plan);
+        Advance(task, TaskStage.Reviewing);         patch.Review = await _review.ReviewAsync(patch);
+        if (!patch.Review.Passed) task.Status = TaskStatus.NeedsHuman;   // surface to PatchReviewTab
+        Advance(task, TaskStage.MemoryUpdate);      await _memoryWriter.RecordOutcomeAsync(task, plan, patch);
+
+        task.Stage = TaskStage.Done;
+        task.Status = patch.Review.Passed ? TaskStatus.Succeeded : TaskStatus.NeedsHuman;
+        task.CompletedAt = DateTime.UtcNow;
+        return task;
+    }
+}
+```
+
+### [138] `TaskMemoryWriter.cs`
+**Purpose:** The **"Memory Update"** stage. Writes what was learned back into typed memory
+via `MemoryRouter` — the decision made, any bug fixed, new risks introduced, follow-ups.
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Tasks;
+
+public class TaskMemoryWriter
+{
+    private readonly Memory.MemoryRouter _router;
+    private readonly Memory.MemoryLinker _linker;
+
+    public async Task RecordOutcomeAsync(AgentTask task, TaskPlan plan, Patching.Patch patch)
+    {
+        // DecisionMemory: "Chose {plan.Summary} for goal '{task.Goal}' because ..."
+        // BugMemory: if task fixed an error, record symptom+fix (link RootCauseDatabase)
+        // RiskMemory: new fragile areas the patch introduced/flagged
+        // FollowUpMemory: review warnings or TODOs deferred
+        // PreferenceMemory: reinforce prefs that were applied
+        // Then MemoryLinker links them to touched entities + each other.
+    }
+}
+```
+
+### [139] `TaskTranscript.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Tasks;
+
+public class TaskTranscript
+{
+    // Append a step (stage, inputs summary, output summary, duration)
+    public Task AppendAsync(string taskId, TranscriptStep step);
+    public Task<List<TranscriptStep>> GetAsync(string taskId);
+    // %LOCALAPPDATA%\SyncroDesktop\intelligence\tasks\{taskId}.transcript.json
+}
+public record TranscriptStep(TaskStage Stage, string Detail, TimeSpan Duration, DateTime At);
+```
+
+### [140] `TaskQueue.cs`
+```csharp
+namespace Syncro.Desktop.Services.AST.Cognition.Tasks;
+
+public class TaskQueue
+{
+    public Task EnqueueAsync(AgentTask task);
+    public Task<AgentTask?> DequeueAsync();
+    public Task<List<AgentTask>> ListAsync(string projectPath, TaskStatus? filter = null);
+    public Task PersistAsync(AgentTask task);     // survive restarts
+    // Optional: integrate with the harness Task tools / scheduled-tasks MCP
+}
+```
+
+---
+
+## Razor Pages
+
+### [141] `Tabs/TaskAgentTab.razor`
+- **Goal input** + **Run Task** button (calls `TaskAgent.RunAsync`)
+- **7-stage MudStepper**: Retrieve AST → Retrieve Memory → Plan → Patch → Review → Memory Update → Done, each lighting up live via `StageChanged`
+- **Context drawer**: shows which entities + memories were retrieved (with relevance scores)
+- **Plan panel** → **Patch diff** → **Review result** (blockers/warnings/risk score)
+- If `NeedsHuman` → "Open in Patch Review" button
+- **Task queue list** (from `TaskQueue`) with status chips
+
+### [142] `Tabs/PatchReviewTab.razor`
+- **Patch list** (`PatchHistory.ListAsync`) filterable by status
+- **Diff viewer** per file (Monaco-style or `<pre>` with diff highlighting)
+- **Review summary**: compile result, lint, risk overlap (from `RiskMemory`)
+- Buttons: **Approve & Apply** (`PatchApplier`), **Open PR** (`GitHubPRService`), **Rollback**, **Reject**
+- Shows linked memories + entities the patch touches
+
+### [143] `MemoryTimeline.razor`
+- **Chronological feed** of all memory records across the six kinds (`MemoryQueryService`)
+- **Kind filter chips**: Project / Bug / Decision / Risk / Preference / FollowUp
+- Each item: kind icon, content, salience bar, linked entities, source (`task:{id}`)
+- **Search box** → semantic recall; **"Consolidate now"** button (`MemoryConsolidator`)
+- Click item → side panel with related memories (`MemoryLinker.GetRelatedAsync`)
+
+### [144] `GenericVsMemoryPage.razor`
+- **The value demo.** One question box, two columns:
+  - **Generic** — raw `AIClient` answer with no context
+  - **Memory-grounded** — answer built from `MemoryQueryService` + `HindsightEngine` + graph
+- Highlights the **memory/graph sources** that informed the right-hand answer
+- "Was the grounded answer better?" 👍/👎 → writes a `PreferenceFact`/reinforces salience
+- Useful for demos, regression-checking retrieval quality, and onboarding
+
+---
+
+## TaskAgent Flow (grounded)
+
+```
+        ┌──────────────┐
+        │   AgentTask  │  goal: "Add CRUD for Tender"
+        └──────┬───────┘
+               ▼
+   ┌────────────────────────┐   TaskContextBuilder.RetrieveAstAsync
+   │   Retrieve AST         │── KnowledgeGraph subgraph + entities (Tender*)
+   └──────────┬─────────────┘
+               ▼
+   ┌────────────────────────┐   MemoryQueryService.RecallForEntitiesAsync
+   │   Retrieve Memory      │── Decisions, Risks, Prefs, past Bugs on Tender*
+   └──────────┬─────────────┘
+               ▼
+   ┌────────────────────────┐   TaskPlanner (ArchitectAgent + PatternMemory)
+   │   Plan                 │── files to add, patterns, risks to avoid
+   └──────────┬─────────────┘
+               ▼
+   ┌────────────────────────┐   AgentOrchestrator (Generator→Validator→Repair)
+   │   Patch                │── PatchGenerator wraps result as reviewable diff
+   └──────────┬─────────────┘
+               ▼
+   ┌────────────────────────┐   PatchReview (compile + RiskMemory + BugMemory)
+   │   Review               │── pass → auto; fail → NeedsHuman (PatchReviewTab)
+   └──────────┬─────────────┘
+               ▼
+   ┌────────────────────────┐   TaskMemoryWriter via MemoryRouter
+   │   Memory Update        │── Decision + new Risk + FollowUp + reinforce Prefs
+   └──────────┬─────────────┘
+               ▼   (optional) BranchManager → GitHubPRService → PR opened
+            Done
+```
+
+---
+
+## Extended DI Registration (additions to MauiProgram.cs)
+
+```csharp
+// Cognitive Memory
+builder.Services.AddSingleton<MemoryStorageService>();
+builder.Services.AddSingleton<IMemoryStore<ProjectFact>, ProjectMemory>();
+builder.Services.AddSingleton<IMemoryStore<BugFact>, BugMemory>();
+builder.Services.AddSingleton<IMemoryStore<DecisionFact>, DecisionMemory>();
+builder.Services.AddSingleton<IMemoryStore<RiskFact>, RiskMemory>();
+builder.Services.AddSingleton<IMemoryStore<PreferenceFact>, PreferenceMemory>();
+builder.Services.AddSingleton<IMemoryStore<FollowUpFact>, FollowUpMemory>();
+builder.Services.AddSingleton<ProjectMemory>();   builder.Services.AddSingleton<BugMemory>();
+builder.Services.AddSingleton<DecisionMemory>();  builder.Services.AddSingleton<RiskMemory>();
+builder.Services.AddSingleton<PreferenceMemory>(); builder.Services.AddSingleton<FollowUpMemory>();
+builder.Services.AddSingleton<MemoryRouter>();
+builder.Services.AddSingleton<MemoryQueryService>();
+builder.Services.AddSingleton<MemoryLinker>();
+builder.Services.AddSingleton<MemoryConsolidator>();
+
+// Patching
+builder.Services.AddSingleton<DiffEngine>();
+builder.Services.AddSingleton<PatchGenerator>();
+builder.Services.AddSingleton<PatchReview>();
+builder.Services.AddSingleton<PatchApplier>();
+builder.Services.AddSingleton<PatchHistory>();
+builder.Services.AddSingleton<BranchManager>();
+builder.Services.AddSingleton<ConflictResolver>();
+builder.Services.AddSingleton<GitHubPRService>();
+
+// TaskAgent
+builder.Services.AddSingleton<TaskContextBuilder>();
+builder.Services.AddSingleton<TaskPlanner>();
+builder.Services.AddSingleton<TaskMemoryWriter>();
+builder.Services.AddSingleton<TaskTranscript>();
+builder.Services.AddSingleton<TaskQueue>();
+builder.Services.AddSingleton<TaskAgent>();
+```
+
+---
+
+## Updated File-System Layout (intelligence/)
+
+```
+%LOCALAPPDATA%\SyncroDesktop\intelligence\
+├── rootcauses.json                 ← RootCauseDatabase (P2)
+├── patterns.json                   ← PatternMemoryService (P3)
+├── architecture.json               ← ArchitectureMemory (P5)
+├── generations.json                ← GenerationHistory (P4)
+├── memory\{projectHash}\           ◀ NEW — typed cognitive memory
+│   ├── Project\{id}.json
+│   ├── Bug\{id}.json
+│   ├── Decision\{id}.json
+│   ├── Risk\{id}.json
+│   ├── Preference\{id}.json
+│   └── FollowUp\{id}.json
+├── patches\{projectHash}\{id}.json ◀ NEW — PatchHistory
+└── tasks\{taskId}.transcript.json  ◀ NEW — TaskTranscript
+```
+
+---
+
+## Final File Count (with Extension III)
+
+| Area | C# | Razor |
+|---|---|---|
+| Base AST engine (Core…CLI) | 43 | 4 |
+| Ext I — Ingestion / Hindsight / DocGen / Knowledge | 22 | 7 |
+| Ext II — Intelligence Layer (P1–P7) | 35 | 2 |
+| **Ext III — Cognitive Memory** | 14 | — |
+| **Ext III — Patching** | 9 | — |
+| **Ext III — TaskAgent** | 7 | — |
+| **Ext III — UI** | — | 4 |
+| **Total** | **130** | **17** |
+| **Grand total** | | **147** |
+
+## Build order note
+
+Cognitive Memory ([111]–[124]) and Patching ([125]–[133]) are independent and can be built in
+parallel after Phase A. `TaskAgent` ([134]–[140]) is the integration capstone — build it last,
+once Memory, Patching, and the P7 Agents exist, since it orchestrates all three.
