@@ -1,0 +1,1287 @@
+@namespace Syncro.Desktop.Components.Pages.Connector.DevHub
+@using System.Net.Http
+@using System.Net.Http.Headers
+@using System.Text
+@using System.IO
+@using Syncro.Desktop.Services.Connector.Adb
+@using Syncro.Desktop.Services.Connector.DevHub
+@using Syncro.Desktop.Services.Connector.ProjectDomain
+@using Syncro.Desktop.Services.Universe.Runtime
+@inject StackRunManager RunManager
+@inject DevHubState Hub
+@inject ISnackbar Snackbar
+@implements IDisposable
+
+<!-- ═══════════════════════════════════════ DevHub ═══════════════════════ -->
+<style>
+    /* ── Root ── */
+    .dh { display:flex; flex-direction:column; height:100vh;
+          background:var(--mud-palette-background); font-family:Inter,system-ui,sans-serif; }
+
+    /* ── Header bar ── */
+    .dh-topbar {
+        display:flex; align-items:center; gap:12px; padding:10px 20px;
+        background:var(--mud-palette-surface);
+        border-bottom:1px solid var(--mud-palette-divider);
+        flex-shrink:0;
+    }
+    .dh-logo {
+        width:36px; height:36px; border-radius:9px; flex-shrink:0;
+        background:linear-gradient(135deg,#6366f1,#06b6d4);
+        display:flex; align-items:center; justify-content:center;
+        box-shadow:0 3px 10px rgba(99,102,241,.4);
+    }
+    .dh-title { font-weight:800; font-size:16px; letter-spacing:-.02em; }
+    .dh-subtitle { font-size:11px; color:var(--mud-palette-text-secondary); }
+    .dh-health-chip {
+        display:inline-flex; align-items:center; gap:5px; padding:3px 10px;
+        border-radius:20px; font-size:11px; font-weight:700;
+    }
+    .dh-healthy { background:rgba(16,185,129,.14); color:#10b981; }
+    .dh-partial { background:rgba(245,158,11,.14); color:#f59e0b; }
+    .dh-offline { background:rgba(100,116,139,.14); color:#64748b; }
+
+    /* ── Sidebar nav ── */
+    .dh-body { display:flex; flex:1; overflow:hidden; }
+    .dh-sidebar {
+        width:64px; display:flex; flex-direction:column; align-items:center;
+        padding:12px 0; gap:4px; flex-shrink:0;
+        background:var(--mud-palette-surface);
+        border-right:1px solid var(--mud-palette-divider);
+    }
+    .dh-nav-btn {
+        width:48px; height:48px; border-radius:12px; border:none; cursor:pointer;
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
+        gap:2px; transition:all .2s; color:var(--mud-palette-text-secondary);
+        background:transparent; font-size:9px; font-weight:700; letter-spacing:.03em;
+    }
+    .dh-nav-btn:hover { background:var(--mud-palette-action-hover); color:var(--mud-palette-text-primary); }
+    .dh-nav-btn.active {
+        background:rgba(99,102,241,.15); color:#818cf8;
+        box-shadow:inset 2px 0 0 #818cf8;
+    }
+    .dh-nav-sep { width:32px; height:1px; background:var(--mud-palette-divider); margin:4px 0; }
+
+    /* ── Content ── */
+    .dh-content { flex:1; overflow-y:auto; overflow-x:hidden; padding:20px 24px; }
+
+    /* ── Section header ── */
+    .dh-sec-hdr {
+        display:flex; align-items:center; justify-content:space-between;
+        margin-bottom:16px; flex-wrap:wrap; gap:8px;
+    }
+    .dh-sec-title { font-size:18px; font-weight:700; }
+
+    /* ── Project card ── */
+    .dh-proj-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:14px; }
+    .dh-proj-card {
+        border-radius:14px; padding:16px; position:relative; overflow:hidden;
+        background:var(--mud-palette-surface);
+        border:1.5px solid var(--mud-palette-divider);
+        transition:all .2s;
+    }
+    .dh-proj-card:hover { transform:translateY(-2px); border-color:var(--pc); box-shadow:0 6px 20px rgba(0,0,0,.12); }
+    .dh-proj-card::before { content:''; position:absolute; top:0; left:0; right:0; height:3px; background:var(--pc); }
+    .dh-domain-badge {
+        display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:6px;
+        font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+        background:color-mix(in srgb,var(--pc) 14%,transparent); color:var(--pc); margin-bottom:10px;
+    }
+    .dh-card-name { font-weight:700; font-size:15px; margin-bottom:2px;
+                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .dh-card-stack { font-size:11px; color:var(--mud-palette-text-secondary); margin-bottom:10px; }
+    .dh-card-port { font-family:monospace; font-size:12px; color:var(--pc); font-weight:700; }
+    .dh-card-status { display:flex; align-items:center; gap:6px; font-size:12px; margin-bottom:12px; }
+    .dh-card-actions { display:flex; flex-wrap:wrap; gap:6px; }
+
+    /* ── Status dot ── */
+    .sd { width:8px; height:8px; border-radius:50%; flex-shrink:0; }
+    .sd-run { background:#10b981; box-shadow:0 0 6px #10b981; animation:pulse-dh 2s infinite; }
+    .sd-ok  { background:#10b981; }
+    .sd-start{ background:#f59e0b; }
+    .sd-err { background:#ef4444; }
+    .sd-idle{ background:#64748b; }
+    @@keyframes pulse-dh { 0%,100%{opacity:1}50%{opacity:.4} }
+
+    /* ── API Tester ── */
+    .api-request-bar {
+        display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;
+    }
+    .api-method-select {
+        padding:8px 12px; border-radius:8px; font-weight:700; font-family:monospace;
+        border:1.5px solid var(--mud-palette-divider); cursor:pointer;
+        background:var(--mud-palette-surface); color:var(--mud-palette-text-primary);
+        font-size:13px; min-width:90px;
+    }
+    .api-url-input {
+        flex:1; padding:8px 14px; border-radius:8px; font-family:monospace; font-size:13px;
+        border:1.5px solid var(--mud-palette-divider);
+        background:var(--mud-palette-surface); color:var(--mud-palette-text-primary);
+        min-width:200px;
+    }
+    .api-url-input:focus { outline:none; border-color:#818cf8; }
+    .api-tabs { display:flex; gap:0; margin-bottom:12px; border-bottom:2px solid var(--mud-palette-divider); }
+    .api-tab {
+        padding:8px 16px; cursor:pointer; font-size:13px; font-weight:600;
+        color:var(--mud-palette-text-secondary); border-bottom:2px solid transparent;
+        margin-bottom:-2px; transition:all .15s;
+    }
+    .api-tab.active { color:#818cf8; border-bottom-color:#818cf8; }
+    .api-header-row { display:grid; grid-template-columns:1fr 1fr 32px; gap:6px; margin-bottom:6px; }
+    .api-hdr-input {
+        padding:6px 10px; border-radius:6px; font-size:12px;
+        border:1px solid var(--mud-palette-divider);
+        background:var(--mud-palette-surface); color:var(--mud-palette-text-primary);
+    }
+    .api-body-editor {
+        width:100%; min-height:120px; padding:10px 14px; border-radius:8px;
+        font-family:'Cascadia Code',monospace; font-size:12px;
+        border:1.5px solid var(--mud-palette-divider);
+        background:var(--mud-palette-surface); color:var(--mud-palette-text-primary);
+        resize:vertical; box-sizing:border-box;
+    }
+    .api-body-editor:focus { outline:none; border-color:#818cf8; }
+    .api-response {
+        border-radius:10px; border:1.5px solid var(--mud-palette-divider);
+        background:var(--mud-palette-surface); overflow:hidden; margin-top:16px;
+    }
+    .api-resp-hdr {
+        display:flex; align-items:center; gap:12px; padding:10px 14px;
+        background:var(--mud-palette-background); border-bottom:1px solid var(--mud-palette-divider);
+    }
+    .api-status { padding:3px 10px; border-radius:6px; font-weight:700; font-family:monospace; font-size:13px; }
+    .sts-2xx { background:rgba(16,185,129,.15); color:#10b981; }
+    .sts-3xx { background:rgba(99,102,241,.15); color:#818cf8; }
+    .sts-4xx { background:rgba(245,158,11,.15); color:#f59e0b; }
+    .sts-5xx { background:rgba(239,68,68,.15);  color:#ef4444; }
+    .api-resp-body {
+        padding:14px; font-family:'Cascadia Code',monospace; font-size:12px;
+        max-height:320px; overflow-y:auto; white-space:pre-wrap; word-break:break-all;
+        line-height:1.6; color:var(--mud-palette-text-primary);
+    }
+
+    /* ── Swagger panel ── */
+    .swagger-project-list { display:flex; flex-direction:column; gap:10px; }
+    .swagger-card {
+        border-radius:12px; padding:16px; background:var(--mud-palette-surface);
+        border:1.5px solid var(--mud-palette-divider); display:flex; align-items:center;
+        gap:14px; flex-wrap:wrap;
+    }
+    .swagger-url { font-family:monospace; font-size:12px; color:var(--mud-palette-text-secondary);
+                   flex:1; min-width:200px; }
+
+    /* ── Device panel ── */
+    .device-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+    .device-section { background:var(--mud-palette-surface); border-radius:14px; padding:18px;
+                      border:1.5px solid var(--mud-palette-divider); }
+    .device-section-title { font-weight:700; font-size:13px; text-transform:uppercase;
+                             letter-spacing:.06em; color:var(--mud-palette-text-secondary);
+                             margin-bottom:14px; }
+    .device-row {
+        display:flex; align-items:center; gap:10px; padding:10px 12px;
+        border-radius:10px; margin-bottom:8px;
+        background:var(--mud-palette-background);
+        border:1px solid var(--mud-palette-divider);
+    }
+    .device-model { font-weight:700; font-size:13px; flex:1; }
+    .device-id { font-family:monospace; font-size:11px; color:var(--mud-palette-text-secondary); }
+    .device-auth { font-size:10px; padding:2px 6px; border-radius:4px; font-weight:700; }
+    .da-ok  { background:rgba(16,185,129,.14); color:#10b981; }
+    .da-no  { background:rgba(239,68,68,.14); color:#ef4444; }
+
+    /* ── Phone graphic ── */
+    .phone-frame {
+        width:160px; height:300px; border-radius:28px; margin:0 auto;
+        background:var(--mud-palette-background); border:4px solid var(--mud-palette-divider);
+        display:flex; flex-direction:column; align-items:center; padding:14px 10px;
+        box-shadow:0 12px 32px rgba(0,0,0,.18); position:relative; overflow:hidden;
+    }
+    .phone-notch { width:60px; height:12px; background:var(--mud-palette-divider);
+                   border-radius:0 0 10px 10px; margin-bottom:12px; }
+    .phone-screen { flex:1; width:100%; border-radius:12px;
+                    background:var(--mud-palette-surface); display:flex;
+                    align-items:center; justify-content:center; }
+    .phone-home-bar { width:50px; height:4px; border-radius:2px;
+                      background:var(--mud-palette-divider); margin-top:10px; }
+
+    /* ── Network log ── */
+    .net-log-bar { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; align-items:center; }
+    .net-log-table { width:100%; border-collapse:collapse; font-size:12px; }
+    .net-log-table th {
+        text-align:left; padding:8px 10px; font-size:10px; font-weight:700; text-transform:uppercase;
+        letter-spacing:.06em; color:var(--mud-palette-text-secondary);
+        border-bottom:2px solid var(--mud-palette-divider);
+    }
+    .net-log-table td { padding:7px 10px; border-bottom:1px solid var(--mud-palette-divider); }
+    .net-log-table tr:hover td { background:var(--mud-palette-action-hover); }
+    .net-method { font-family:monospace; font-weight:700; padding:2px 6px; border-radius:4px; font-size:11px; }
+    .nm-get    { background:rgba(16,185,129,.14); color:#10b981; }
+    .nm-post   { background:rgba(245,158,11,.14); color:#f59e0b; }
+    .nm-put    { background:rgba(99,102,241,.14); color:#818cf8; }
+    .nm-patch  { background:rgba(139,92,246,.14); color:#8b5cf6; }
+    .nm-delete { background:rgba(239,68,68,.14);  color:#ef4444; }
+    .nm-other  { background:rgba(100,116,139,.14); color:#64748b; }
+
+    /* ── Availability badge ── */
+    .avail-badge { display:inline-flex; align-items:center; gap:5px; padding:4px 10px;
+                   border-radius:8px; font-size:11px; font-weight:700; }
+    .avail-ok  { background:rgba(16,185,129,.13); color:#10b981; }
+    .avail-no  { background:rgba(239,68,68,.13); color:#ef4444; }
+    .avail-unk { background:rgba(100,116,139,.13); color:#64748b; }
+</style>
+
+<div class="dh">
+
+    <!-- ── Top bar ─────────────────────────────────────────────────────── -->
+    <div class="dh-topbar">
+        <div class="dh-logo">
+            <MudIcon Icon="@Icons.Material.Filled.Hub" Color="Color.Surface" Size="Size.Small" />
+        </div>
+        <div>
+            <div class="dh-title">DevHub</div>
+            <div class="dh-subtitle">@Hub.Projects.Count project@(Hub.Projects.Count==1?"":"s") in fleet</div>
+        </div>
+
+        <div class="d-flex gap-2 align-center ml-2">
+            @{ var running = Hub.Projects.Count(p => p.RunState?.State is "running" or "healthy"); }
+            @if (Hub.Projects.Count == 0)
+            {
+                <span class="dh-health-chip dh-offline">No fleet</span>
+            }
+            else if (running == Hub.Projects.Count)
+            {
+                <span class="dh-health-chip dh-healthy">● @running/@Hub.Projects.Count Running</span>
+            }
+            else if (running > 0)
+            {
+                <span class="dh-health-chip dh-partial">◐ @running/@Hub.Projects.Count Partial</span>
+            }
+            else
+            {
+                <span class="dh-health-chip dh-offline">○ Fleet Idle</span>
+            }
+        </div>
+
+        <div class="ml-auto d-flex gap-2 align-center">
+            <MudText Typo="Typo.caption" Class="text-muted">Auto-refresh 2s</MudText>
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Size="Size.Small"
+                           OnClick="ManualRefresh" Title="Force refresh" />
+        </div>
+    </div>
+
+    <!-- ── Body: sidebar + content ─────────────────────────────────────── -->
+    <div class="dh-body">
+
+        <!-- Sidebar navigation -->
+        <div class="dh-sidebar">
+            @foreach (var t in _tabs)
+            {
+                <button class="dh-nav-btn @(_tab == t.Id ? "active" : "")"
+                        @onclick="() => _tab = t.Id"
+                        title="@t.Label">
+                    <MudIcon Icon="@t.Icon" Style="font-size:20px;" />
+                    @t.Short
+                </button>
+            }
+            <div class="dh-nav-sep"></div>
+            <button class="dh-nav-btn" @onclick="RefreshDevices" title="Refresh ADB devices">
+                <MudIcon Icon="@Icons.Material.Filled.PhoneAndroid" Style="font-size:20px;" />
+                ADB
+            </button>
+        </div>
+
+        <!-- Tab content -->
+        <div class="dh-content">
+
+            <!-- ───── Tab 0: Preview Hub ───── -->
+            @if (_tab == 0)
+            {
+                <div class="dh-sec-hdr">
+                    <div>
+                        <div class="dh-sec-title">Preview Hub</div>
+                        <MudText Typo="Typo.caption" Class="text-muted">
+                            All projects — click to open a native preview window
+                        </MudText>
+                    </div>
+                </div>
+
+                @if (Hub.Projects.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                        No projects in the fleet. Add projects in the Universe Connector.
+                    </MudAlert>
+                }
+                else
+                {
+                    <div class="dh-proj-grid">
+                        @foreach (var node in Hub.Projects)
+                        {
+                            var color = DomainDetector.GetColor(node.Domain);
+                            var rs    = node.RunState;
+                            var alive = rs?.State is "running" or "healthy";
+
+                            <div class="dh-proj-card" style="--pc:@color;">
+                                <div class="dh-domain-badge">
+                                    <MudIcon Icon="@GetDomainIcon(node.Domain)" Style="font-size:11px;" />
+                                    @node.Domain
+                                </div>
+                                <div class="dh-card-name" title="@node.Path">@node.Label</div>
+                                <div class="dh-card-stack">@node.Stack</div>
+                                <div class="dh-card-status">
+                                    <span class="sd @GetSdClass(rs)"></span>
+                                    <span>@GetStateLabel(rs)</span>
+                                    @if (node.Port > 0)
+                                    {
+                                        <span class="dh-card-port ml-auto">:@node.Port</span>
+                                    }
+                                </div>
+
+                                @if (!string.IsNullOrWhiteSpace(node.GitBranch))
+                                {
+                                    <div style="font-size:11px;color:var(--mud-palette-text-secondary);margin-bottom:10px;">
+                                        <MudIcon Icon="@Icons.Material.Filled.Source" Style="font-size:12px;" />
+                                        @node.GitBranch
+                                        @if (node.IsGitDirty) { <span style="color:#f59e0b;font-weight:700;margin-left:4px;">dirty</span> }
+                                    </div>
+                                }
+
+                                <div class="dh-card-actions">
+                                    @if (node.Domain is DomainKind.Frontend or DomainKind.Mobile && node.Port > 0)
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                                   StartIcon="@Icons.Material.Filled.OpenInNew" Disabled="!alive"
+                                                   OnClick="() => PreviewWindowHelper.OpenPreview(node.Label, node.Port)">
+                                            Preview
+                                        </MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                                                   StartIcon="@Icons.Material.Filled.Language"
+                                                   OnClick="() => _ = OpenBrowserAsync(node.Port)">
+                                            Browser
+                                        </MudButton>
+                                    }
+                                    @if (node.Domain is DomainKind.Backend or DomainKind.AIService && node.Port > 0)
+                                    {
+                                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                                   StartIcon="@Icons.Material.Filled.Api" Disabled="!alive"
+                                                   OnClick="() => PreviewWindowHelper.OpenSwagger(node.Label, node.Port)">
+                                            Swagger
+                                        </MudButton>
+                                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                                   StartIcon="@Icons.Material.Filled.Science"
+                                                   OnClick="() => QuickFillApiTester(node)">
+                                            API Tester
+                                        </MudButton>
+                                    }
+                                    @if (node.Domain is DomainKind.Database)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 Color="Color.Warning">
+                                            DB · no preview
+                                        </MudChip>
+                                    }
+                                </div>
+
+                                <!-- Live process output snippet -->
+                                @if (_logs.TryGetValue(node.Id, out var snap) && snap.Count > 0)
+                                {
+                                    <div style="margin-top:10px;background:#0f172a;border-radius:8px;padding:8px 10px;font-family:monospace;font-size:10px;color:#94a3b8;max-height:60px;overflow:hidden;">
+                                        @foreach (var l in snap.TakeLast(3))
+                                        {
+                                            <div style="@GetLogStyle(l);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">@l</div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+
+            <!-- ───── Tab 1: API Tester ───── -->
+            @if (_tab == 1)
+            {
+                <div class="dh-sec-hdr">
+                    <div>
+                        <div class="dh-sec-title">API Tester</div>
+                        <MudText Typo="Typo.caption" Class="text-muted">Postman-style HTTP client</MudText>
+                    </div>
+                </div>
+
+                <!-- Quick URL suggestions from running backends -->
+                @if (Hub.Projects.Any(p => p.Domain is DomainKind.Backend or DomainKind.AIService && p.Port > 0))
+                {
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+                        <MudText Typo="Typo.caption" Class="text-muted d-flex align-center">Quick base URL:</MudText>
+                        @foreach (var be in Hub.Projects.Where(p => p.Domain is DomainKind.Backend or DomainKind.AIService && p.Port > 0))
+                        {
+                            var bePort = be.Port;
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                                     OnClick="() => SetQuickBaseUrl(bePort)">
+                                @be.Label :@be.Port
+                            </MudChip>
+                        }
+                    </div>
+                }
+
+                <!-- Request bar -->
+                <div class="api-request-bar">
+                    <select class="api-method-select" @bind="_apiMethod"
+                            style="color:@GetMethodColor(_apiMethod);">
+                        @foreach (var m in new[]{"GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"})
+                        {
+                            <option value="@m">@m</option>
+                        }
+                    </select>
+                    <input class="api-url-input" type="text" placeholder="http://localhost:3001/api/..."
+                           @bind="_apiUrl" @bind:event="oninput" />
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary"
+                               StartIcon="@(_apiSending ? Icons.Material.Filled.HourglassEmpty : Icons.Material.Filled.Send)"
+                               Disabled="_apiSending || string.IsNullOrWhiteSpace(_apiUrl)"
+                               OnClick="SendRequestAsync">
+                        @(_apiSending ? "Sending…" : "Send")
+                    </MudButton>
+                </div>
+
+                <!-- Request tabs -->
+                <div class="api-tabs">
+                    @for (var ti = 0; ti < _apiTabNames.Length; ti++)
+                    {
+                        var ti2 = ti;
+                        var lbl = _apiTabNames[ti];
+                        <div class="api-tab @(_apiSubTab == ti2 ? "active" : string.Empty)"
+                             @onclick="() => _apiSubTab = ti2">
+                            @lbl
+                            @if (ti2 == 0 && _apiHeaders.Count > 0)
+                            { <MudBadge Content="@_apiHeaders.Count" Color="Color.Primary" Class="ml-1" /> }
+                        </div>
+                    }
+                </div>
+
+                @if (_apiSubTab == 0)
+                {
+                    <!-- Headers -->
+                    @for (var hi = 0; hi < _apiHeaders.Count; hi++)
+                    {
+                        var idx2 = hi;
+                        <div class="api-header-row">
+                            <input class="api-hdr-input" placeholder="Header name"
+                                   value="@_apiHeaders[idx2].Key"
+                                   @onchange="e => UpdateHeaderKey(idx2, e.Value?.ToString() ?? string.Empty)" />
+                            <input class="api-hdr-input" placeholder="Value"
+                                   value="@_apiHeaders[idx2].Value"
+                                   @onchange="e => UpdateHeaderValue(idx2, e.Value?.ToString() ?? string.Empty)" />
+                            <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                           OnClick="() => RemoveHeader(idx2)" />
+                        </div>
+                    }
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                               StartIcon="@Icons.Material.Filled.Add" OnClick="AddHeader"
+                               Style="margin-top:6px;">
+                        Add Header
+                    </MudButton>
+                }
+                @if (_apiSubTab == 1)
+                {
+                    <!-- Body -->
+                    <textarea class="api-body-editor" placeholder='{"key": "value"}'
+                              @bind="_apiBody" @bind:event="oninput" rows="6" />
+                    <div style="display:flex;gap:6px;margin-top:6px;">
+                        @foreach (var preset in new[]{ "{}", "{\"id\":1}", "[{\"id\":1}]" })
+                        {
+                            var p2 = preset;
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                     OnClick="() => _apiBody = p2">@p2</MudChip>
+                        }
+                    </div>
+                }
+                @if (_apiSubTab == 2)
+                {
+                    <!-- Auth -->
+                    <div style="display:flex;flex-direction:column;gap:10px;max-width:500px;">
+                        <MudSelect T="string" @bind-Value="_authType" Label="Auth Type"
+                                   Variant="Variant.Outlined" Margin="Margin.Dense">
+                            <MudSelectItem Value="@("None")">None</MudSelectItem>
+                            <MudSelectItem Value="@("Bearer")">Bearer Token</MudSelectItem>
+                            <MudSelectItem Value="@("Basic")">Basic Auth</MudSelectItem>
+                            <MudSelectItem Value="@("APIKey")">API Key</MudSelectItem>
+                        </MudSelect>
+                        @if (_authType == "Bearer")
+                        {
+                            <MudTextField T="string" @bind-Value="_authToken" Label="Token"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                                          InputType="InputType.Password" />
+                        }
+                        @if (_authType == "Basic")
+                        {
+                            <MudTextField T="string" @bind-Value="_authUser" Label="Username"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            <MudTextField T="string" @bind-Value="_authPass" Label="Password"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                                          InputType="InputType.Password" />
+                        }
+                        @if (_authType == "APIKey")
+                        {
+                            <MudTextField T="string" @bind-Value="_apiKeyHeader" Label="Header Name"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense" />
+                            <MudTextField T="string" @bind-Value="_apiKeyValue" Label="Key Value"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                                          InputType="InputType.Password" />
+                        }
+                    </div>
+                }
+
+                <!-- Response panel -->
+                @if (_apiResponseStatus > 0 || !string.IsNullOrEmpty(_apiResponseBody))
+                {
+                    <div class="api-response">
+                        <div class="api-resp-hdr">
+                            <span class="api-status @GetStatusClass(_apiResponseStatus)">
+                                @_apiResponseStatus @GetStatusText(_apiResponseStatus)
+                            </span>
+                            @if (_apiElapsedMs > 0)
+                            {
+                                <span style="font-size:12px;color:var(--mud-palette-text-secondary);">
+                                    @_apiElapsedMs ms
+                                </span>
+                            }
+                            @if (!string.IsNullOrEmpty(_apiContentType))
+                            {
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">
+                                    @_apiContentType
+                                </MudChip>
+                            }
+                            <MudIconButton Icon="@Icons.Material.Filled.ContentCopy" Size="Size.Small"
+                                           Class="ml-auto" Title="Copy response"
+                                           OnClick="ShowCopied" />
+                        </div>
+                        <div class="api-resp-body">@_apiResponseBody</div>
+                    </div>
+                }
+                else if (_apiSending)
+                {
+                    <div style="display:flex;align-items:center;gap:10px;padding:20px;color:var(--mud-palette-text-secondary);">
+                        <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+                        <span>Sending request…</span>
+                    </div>
+                }
+            }
+
+            <!-- ───── Tab 2: Swagger ───── -->
+            @if (_tab == 2)
+            {
+                <div class="dh-sec-hdr">
+                    <div>
+                        <div class="dh-sec-title">Swagger / OpenAPI</div>
+                        <MudText Typo="Typo.caption" Class="text-muted">Opens in a native window — no iframe restrictions</MudText>
+                    </div>
+                </div>
+
+                @if (BackendProjects.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                        Add a Backend or AI Service project to the fleet to use Swagger viewer.
+                    </MudAlert>
+                }
+                else
+                {
+                    <div class="swagger-project-list">
+                        @foreach (var node in BackendProjects)
+                        {
+                            var alive2 = node.RunState?.State is "running" or "healthy";
+                            <div class="swagger-card" style="--pc:@DomainDetector.GetColor(node.Domain);">
+                                <span style="color:@DomainDetector.GetColor(node.Domain);">
+                                    <MudIcon Icon="@Icons.Material.Filled.Api" />
+                                </span>
+                                <div style="flex:1;">
+                                    <div style="font-weight:700;font-size:14px;">@node.Label</div>
+                                    <div class="swagger-url">http://localhost:@node.Port/swagger</div>
+                                </div>
+                                <span class="sd @GetSdClass(node.RunState)"></span>
+                                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                               StartIcon="@Icons.Material.Filled.OpenInNew" Disabled="!alive2"
+                                               OnClick="() => PreviewWindowHelper.OpenSwagger(node.Label, node.Port)">
+                                        Open Swagger UI
+                                    </MudButton>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                                               StartIcon="@Icons.Material.Filled.Language" Disabled="!alive2"
+                                               OnClick="() => OpenSwaggerInBrowser(node.Port)">
+                                        Browser
+                                    </MudButton>
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                               StartIcon="@Icons.Material.Filled.Science"
+                                               OnClick="() => QuickFillApiTester(node)">
+                                        API Tester ↗
+                                    </MudButton>
+                                </div>
+                            </div>
+
+                            @if (node.Routes.Count > 0)
+                            {
+                                <div style="padding:0 4px;display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+                                    @foreach (var r in node.Routes.Take(12))
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined"
+                                                 Color="Color.Default"
+                                                 OnClick="() => QuickFillFromRoute(node, r)">
+                                            <span style="font-family:monospace;font-size:10px;">
+                                                @r.Method.ToString().ToUpper() @r.PathTemplate
+                                            </span>
+                                        </MudChip>
+                                    }
+                                    @if (node.Routes.Count > 12)
+                                    {
+                                        <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Text">
+                                            +@(node.Routes.Count - 12) more
+                                        </MudChip>
+                                    }
+                                </div>
+                            }
+                        }
+                    </div>
+                }
+            }
+
+            <!-- ───── Tab 3: Device ───── -->
+            @if (_tab == 3)
+            {
+                <div class="dh-sec-hdr">
+                    <div>
+                        <div class="dh-sec-title">Device</div>
+                        <MudText Typo="Typo.caption" Class="text-muted">ADB · scrcpy screen mirror · Flutter devices</MudText>
+                    </div>
+                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                               StartIcon="@Icons.Material.Filled.Refresh" OnClick="RefreshDevices"
+                               Disabled="_loadingDevices">
+                        @(_loadingDevices ? "Scanning…" : "Refresh")
+                    </MudButton>
+                </div>
+
+                <div class="device-grid">
+
+                    <!-- ADB section -->
+                    <div class="device-section">
+                        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                            <div class="device-section-title">ADB Devices</div>
+                            <span class="avail-badge @(_adbAvail ? "avail-ok" : "avail-no")">
+                                ADB @(_adbAvail ? "Ready" : "Not Found")
+                            </span>
+                        </div>
+
+                        @if (_loadingDevices)
+                        {
+                            <div class="d-flex align-center gap-2 pa-4">
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+                                <span style="color:var(--mud-palette-text-secondary);font-size:13px;">Scanning…</span>
+                            </div>
+                        }
+                        else if (_adbDevices.Count == 0)
+                        {
+                            <div style="color:var(--mud-palette-text-secondary);font-size:13px;padding:12px 0;">
+                                @(_adbAvail ? "No devices connected. Enable USB Debugging on your Android device." : "Install ADB (Android SDK Platform Tools) and add to PATH.")
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var dev in _adbDevices)
+                            {
+                                var isSelected = _selectedDevice?.Id == dev.Id;
+                                <div class="device-row" style="@(isSelected ? "border-color:#818cf8;" : "")">
+                                    <div style="flex:1;">
+                                        <div class="device-model">@dev.Model</div>
+                                        <div class="device-id">@dev.Id</div>
+                                    </div>
+                                    <span class="device-auth @(dev.IsAuthorized ? "da-ok" : "da-no")">
+                                        @(dev.IsAuthorized ? "authorized" : dev.Type)
+                                    </span>
+                                    @if (dev.IsAuthorized)
+                                    {
+                                        <MudIconButton Icon="@Icons.Material.Filled.Smartphone" Size="Size.Small"
+                                                       Color="@(isSelected ? Color.Primary : Color.Default)"
+                                                       OnClick="() => _selectedDevice = dev"
+                                                       Title="Select for preview" />
+                                        @if (_scrcpyAvail)
+                                        {
+                                            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                                       StartIcon="@Icons.Material.Filled.CastConnected"
+                                                       OnClick="() => AdbService.LaunchScrcpy(dev)">
+                                                Mirror
+                                            </MudButton>
+                                        }
+                                        <MudIconButton Icon="@Icons.Material.Filled.Terminal" Size="Size.Small"
+                                                       OnClick="() => AdbService.OpenAdbShell(dev)"
+                                                       Title="Open ADB shell" />
+                                    }
+                                </div>
+                            }
+                        }
+
+                        <div style="margin-top:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <span class="avail-badge @(_scrcpyAvail ? "avail-ok" : "avail-no")">
+                                scrcpy @(_scrcpyAvail ? "Ready" : "Not Found")
+                            </span>
+                            @if (!_scrcpyAvail)
+                            {
+                                <MudText Typo="Typo.caption" Class="text-muted">
+                                    Install scrcpy for screen mirroring
+                                </MudText>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Phone preview + Flutter -->
+                    <div style="display:flex;flex-direction:column;gap:14px;">
+
+                        <!-- Flutter-style phone preview -->
+                        <div class="device-section">
+                            <div class="device-section-title">Device Preview</div>
+                            <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+                                <div class="phone-frame">
+                                    <div class="phone-notch"></div>
+                                    <div class="phone-screen">
+                                        @if (_selectedDevice != null)
+                                        {
+                                            <div style="text-align:center;color:var(--mud-palette-text-secondary);font-size:11px;padding:10px;">
+                                                <MudIcon Icon="@Icons.Material.Filled.PhoneAndroid" Style="font-size:32px;color:#818cf8;display:block;margin:0 auto 6px;" />
+                                                @_selectedDevice.Model<br />
+                                                <span style="font-family:monospace;font-size:10px;">@_selectedDevice.Id</span><br />
+                                                @if (_scrcpyAvail)
+                                                {
+                                                    <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                                               Style="margin-top:8px;"
+                                                               OnClick="() => AdbService.LaunchScrcpy(_selectedDevice)">
+                                                        Mirror Screen
+                                                    </MudButton>
+                                                }
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div style="text-align:center;color:var(--mud-palette-text-secondary);font-size:11px;padding:8px;">
+                                                <MudIcon Icon="@Icons.Material.Filled.PhoneAndroid" Style="font-size:24px;display:block;margin:0 auto 4px;" />
+                                                Select device
+                                            </div>
+                                        }
+                                    </div>
+                                    <div class="phone-home-bar"></div>
+                                </div>
+
+                                <div style="flex:1;">
+                                    @if (_selectedDevice != null)
+                                    {
+                                        <MudText Typo="Typo.subtitle2" Class="mb-2">@_selectedDevice.Model</MudText>
+                                        <div style="display:flex;flex-direction:column;gap:6px;font-size:12px;">
+                                            <div><span style="color:var(--mud-palette-text-secondary);">ID: </span>
+                                                 <span style="font-family:monospace;">@_selectedDevice.Id</span></div>
+                                            <div><span style="color:var(--mud-palette-text-secondary);">Type: </span>@_selectedDevice.Type</div>
+                                        </div>
+                                        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;">
+                                            @if (_scrcpyAvail)
+                                            {
+                                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                                           StartIcon="@Icons.Material.Filled.CastConnected"
+                                                           OnClick="() => AdbService.LaunchScrcpy(_selectedDevice)">
+                                                    Mirror Screen
+                                                </MudButton>
+                                            }
+                                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                                                       StartIcon="@Icons.Material.Filled.Terminal"
+                                                       OnClick="() => AdbService.OpenAdbShell(_selectedDevice)">
+                                                Shell
+                                            </MudButton>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <MudText Typo="Typo.caption" Class="text-muted">
+                                            Select a device on the left to see details.
+                                        </MudText>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Flutter devices -->
+                        <div class="device-section">
+                            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+                                <div class="device-section-title">Flutter Devices</div>
+                                <span class="avail-badge @(_flutterAvail ? "avail-ok" : "avail-no")">
+                                    flutter @(_flutterAvail ? "Ready" : "Not Found")
+                                </span>
+                            </div>
+                            @if (_flutterDevices.Count == 0)
+                            {
+                                <MudText Typo="Typo.caption" Class="text-muted">
+                                    @(_flutterAvail ? "No Flutter devices found. Start an emulator or connect a device." : "Flutter not found in PATH.")
+                                </MudText>
+                            }
+                            else
+                            {
+                                @foreach (var d in _flutterDevices)
+                                {
+                                    <div style="padding:6px 10px;font-size:12px;font-family:monospace;color:var(--mud-palette-text-secondary);border-bottom:1px solid var(--mud-palette-divider);">
+                                        @d
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <!-- ───── Tab 4: Network Monitor ───── -->
+            @if (_tab == 4)
+            {
+                <div class="dh-sec-hdr">
+                    <div>
+                        <div class="dh-sec-title">Network Monitor</div>
+                        <MudText Typo="Typo.caption" Class="text-muted">HTTP activity extracted from running process logs</MudText>
+                    </div>
+                    <div class="d-flex gap-2 align-center">
+                        <MudSelect T="string" @bind-Value="_netFilter" Variant="Variant.Outlined"
+                                   Margin="Margin.Dense" Style="min-width:160px;">
+                            <MudSelectItem Value="@("all")">All projects</MudSelectItem>
+                            @foreach (var p in Hub.Projects)
+                            {
+                                <MudSelectItem Value="@p.Id.ToString()">@p.Label</MudSelectItem>
+                            }
+                        </MudSelect>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                                   StartIcon="@Icons.Material.Filled.ClearAll"
+                                   OnClick="() => _netEntries.Clear()">
+                            Clear
+                        </MudButton>
+                    </div>
+                </div>
+
+                @if (FilteredEntries.Count == 0)
+                {
+                    <MudAlert Severity="Severity.Info" Variant="Variant.Outlined">
+                        No HTTP activity detected yet. Start a backend service to see network requests here.
+                    </MudAlert>
+                }
+                else
+                {
+                    <table class="net-log-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Project</th>
+                                <th>Method</th>
+                                <th>Path / URL</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var e in FilteredEntries.TakeLast(200).Reverse())
+                            {
+                                <tr>
+                                    <td style="font-family:monospace;font-size:11px;color:var(--mud-palette-text-secondary);">@e.Time</td>
+                                    <td style="font-size:12px;">@e.Project</td>
+                                    <td><span class="net-method @GetNetMethodClass(e.Method)">@e.Method</span></td>
+                                    <td style="font-family:monospace;font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="@e.Path">@e.Path</td>
+                                    <td style="font-family:monospace;font-size:12px;font-weight:700;color:@GetNetStatusColor(e.Status);">
+                                        @(e.Status > 0 ? e.Status.ToString() : "—")
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+
+        </div>
+    </div>
+</div>
+
+@code {
+    // ── Tab navigation ────────────────────────────────────────────────────────
+    private int _tab = 0;
+
+    private readonly string[] _apiTabNames = { "Headers", "Body", "Auth" };
+
+    private record TabDef(int Id, string Label, string Short, string Icon);
+    private readonly TabDef[] _tabs = {
+        new(0, "Preview Hub",    "HUB",  Icons.Material.Filled.GridView),
+        new(1, "API Tester",     "API",  Icons.Material.Filled.Science),
+        new(2, "Swagger",        "SWG",  Icons.Material.Filled.Api),
+        new(3, "Device",         "DEV",  Icons.Material.Filled.PhoneAndroid),
+        new(4, "Network",        "NET",  Icons.Material.Filled.NetworkCheck),
+    };
+
+    // ── Process logs per project ──────────────────────────────────────────────
+    private readonly Dictionary<Guid, List<string>> _logs = new();
+
+    // ── API Tester state ─────────────────────────────────────────────────────
+    private string _apiMethod   = "GET";
+    private string _apiUrl      = "";
+    private string _apiBody     = "";
+    private int    _apiSubTab   = 0;
+    private bool   _apiSending;
+    private int    _apiResponseStatus;
+    private long   _apiElapsedMs;
+    private string _apiResponseBody = "";
+    private string _apiContentType  = "";
+
+    private readonly List<ApiHeader> _apiHeaders = new();
+    private sealed class ApiHeader { public string Key = ""; public string Value = ""; }
+
+    // Auth fields
+    private string _authType     = "None";
+    private string _authToken    = "";
+    private string _authUser     = "";
+    private string _authPass     = "";
+    private string _apiKeyHeader = "X-API-Key";
+    private string _apiKeyValue  = "";
+
+    // ── ADB / Device ─────────────────────────────────────────────────────────
+    private bool _adbAvail;
+    private bool _scrcpyAvail;
+    private bool _flutterAvail;
+    private bool _loadingDevices;
+    private List<AdbDevice> _adbDevices = new();
+    private List<string>    _flutterDevices = new();
+    private AdbDevice?      _selectedDevice;
+
+    // ── Network Monitor ───────────────────────────────────────────────────────
+    private string _netFilter = "all";
+    private readonly List<NetEntry> _netEntries = new();
+    private sealed class NetEntry
+    {
+        public string Time = "";
+        public string Project = "";
+        public string ProjectId = "";
+        public string Method = "";
+        public string Path = "";
+        public int    Status;
+    }
+
+    // ── Timer ─────────────────────────────────────────────────────────────────
+    private System.Threading.Timer? _timer;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    protected override async void OnInitialized()
+    {
+        _timer = new System.Threading.Timer(_ =>
+        {
+            RefreshLogs();
+            InvokeAsync(StateHasChanged);
+        }, null, 500, 2000);
+
+        Hub.Changed += OnHubChanged;
+        await RefreshDevicesAsync();
+    }
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        Hub.Changed -= OnHubChanged;
+    }
+
+    private void OnHubChanged() => InvokeAsync(StateHasChanged);
+
+    private void ManualRefresh()
+    {
+        RefreshLogs();
+        StateHasChanged();
+    }
+
+    // ── Log refresh ───────────────────────────────────────────────────────────
+
+    private void RefreshLogs()
+    {
+        var procs = RunManager.Running();
+        foreach (var node in Hub.Projects)
+        {
+            node.RunState = RunManager.Snapshot().FirstOrDefault(s =>
+                s.WorkspaceId == node.Path || s.Label == node.Label);
+
+            var proc = procs.FirstOrDefault(p =>
+                p.Spec.WorkspaceId == node.Path || p.Spec.Label == node.Label);
+
+            if (proc != null)
+            {
+                var lines = proc.RecentOutput().ToList();
+                _logs[node.Id] = lines;
+                ExtractNetworkEntries(node, lines);
+            }
+        }
+    }
+
+    private void ExtractNetworkEntries(ConnectorWorkspaceNode node, List<string> lines)
+    {
+        var httpMethods = new[] { " GET ", " POST ", " PUT ", " PATCH ", " DELETE " };
+        foreach (var line in lines)
+        {
+            var up = line.ToUpperInvariant();
+            var method = httpMethods.FirstOrDefault(m => up.Contains(m));
+            if (method == null) continue;
+
+            method = method.Trim();
+            var path = ExtractPath(line);
+            if (string.IsNullOrEmpty(path)) continue;
+
+            var key = $"{node.Id}|{path}|{method}";
+            if (_netEntries.Any(e => e.ProjectId == node.Id.ToString() && e.Path == path && e.Method == method &&
+                                     (DateTime.TryParse(e.Time, out var t) && (DateTime.Now - t).TotalSeconds < 2)))
+                continue;
+
+            _netEntries.Add(new NetEntry
+            {
+                Time      = DateTime.Now.ToString("HH:mm:ss"),
+                Project   = node.Label,
+                ProjectId = node.Id.ToString(),
+                Method    = method,
+                Path      = path,
+                Status    = ExtractStatus(line)
+            });
+
+            if (_netEntries.Count > 1000) _netEntries.RemoveAt(0);
+        }
+    }
+
+    private static string ExtractPath(string line)
+    {
+        var patterns = new[] { "GET /", "POST /", "PUT /", "PATCH /", "DELETE /",
+                                "GET http", "POST http" };
+        foreach (var p in patterns)
+        {
+            var idx = line.IndexOf(p, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) continue;
+            var start = idx + p.LastIndexOf(' ') + 1;
+            var rest  = line[start..].Split(new[]{' ','\t','"','\'','<'}, 2)[0];
+            return rest.Length > 0 ? rest : "";
+        }
+        return "";
+    }
+
+    private static int ExtractStatus(string line)
+    {
+        foreach (var word in line.Split(' '))
+        {
+            if (word.Length == 3 && int.TryParse(word, out var s) && s is >= 100 and <= 599)
+                return s;
+        }
+        return 0;
+    }
+
+    // ── API Tester ────────────────────────────────────────────────────────────
+
+    private void AddHeader()     => _apiHeaders.Add(new ApiHeader());
+    private void RemoveHeader(int i)  { if (i < _apiHeaders.Count) _apiHeaders.RemoveAt(i); }
+    private void UpdateHeaderKey(int i, string k)   { if (i < _apiHeaders.Count) _apiHeaders[i].Key   = k; }
+    private void UpdateHeaderValue(int i, string v) { if (i < _apiHeaders.Count) _apiHeaders[i].Value = v; }
+
+    private void QuickFillApiTester(ConnectorWorkspaceNode node)
+    {
+        _apiUrl = $"http://localhost:{node.Port}/";
+        _tab = 1;
+    }
+
+    private void QuickFillFromRoute(ConnectorWorkspaceNode node, Syncro.Desktop.Services.Connector.Models.BackendRoute r)
+    {
+        _apiUrl    = $"http://localhost:{node.Port}{r.PathTemplate}";
+        _apiMethod = r.Method.ToString().ToUpper();
+        _tab = 1;
+    }
+
+    private async Task SendRequestAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_apiUrl)) return;
+        _apiSending = true;
+        _apiResponseStatus = 0;
+        _apiResponseBody   = "";
+        _apiContentType    = "";
+        StateHasChanged();
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+
+            var req = new HttpRequestMessage(new HttpMethod(_apiMethod), _apiUrl);
+
+            // Add headers
+            foreach (var h in _apiHeaders.Where(h => !string.IsNullOrWhiteSpace(h.Key)))
+                req.Headers.TryAddWithoutValidation(h.Key, h.Value);
+
+            // Auth
+            if (_authType == "Bearer" && !string.IsNullOrEmpty(_authToken))
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _authToken);
+            else if (_authType == "Basic" && !string.IsNullOrEmpty(_authUser))
+                req.Headers.Authorization = new AuthenticationHeaderValue("Basic",
+                    Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_authUser}:{_authPass}")));
+            else if (_authType == "APIKey" && !string.IsNullOrEmpty(_apiKeyValue))
+                req.Headers.TryAddWithoutValidation(_apiKeyHeader, _apiKeyValue);
+
+            // Body
+            if (_apiMethod is not "GET" and not "DELETE" and not "HEAD" && !string.IsNullOrWhiteSpace(_apiBody))
+                req.Content = new StringContent(_apiBody, Encoding.UTF8, "application/json");
+
+            var resp = await http.SendAsync(req);
+            sw.Stop();
+            _apiElapsedMs      = sw.ElapsedMilliseconds;
+            _apiResponseStatus = (int)resp.StatusCode;
+            _apiContentType    = resp.Content.Headers.ContentType?.MediaType ?? "";
+            _apiResponseBody   = await resp.Content.ReadAsStringAsync();
+
+            if (_apiContentType.Contains("json"))
+                _apiResponseBody = PrettyJson(_apiResponseBody);
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            _apiElapsedMs      = sw.ElapsedMilliseconds;
+            _apiResponseStatus = 0;
+            _apiResponseBody   = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _apiSending = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string PrettyJson(string raw)
+    {
+        try
+        {
+            var parsed = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(raw);
+            return System.Text.Json.JsonSerializer.Serialize(parsed,
+                new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        }
+        catch { return raw; }
+    }
+
+    // ── Device ────────────────────────────────────────────────────────────────
+
+    private async void RefreshDevices() => await RefreshDevicesAsync();
+
+    private async Task RefreshDevicesAsync()
+    {
+        _loadingDevices = true;
+        StateHasChanged();
+
+        _adbAvail    = await Task.Run(AdbService.IsAdbAvailable);
+        _scrcpyAvail = await Task.Run(AdbService.IsScrcpyAvailable);
+        _flutterAvail = await Task.Run(AdbService.IsFlutterAvailable);
+
+        if (_adbAvail)
+            _adbDevices = await AdbService.GetDevicesAsync();
+
+        if (_flutterAvail)
+            _flutterDevices = await AdbService.GetFlutterDevicesAsync();
+
+        _loadingDevices = false;
+        StateHasChanged();
+    }
+
+    // ── Browser launch ────────────────────────────────────────────────────────
+
+    private static async Task OpenBrowserAsync(int port, string path = "")
+    {
+        try { await Microsoft.Maui.ApplicationModel.Launcher.OpenAsync(new Uri($"http://localhost:{port}{path}")); }
+        catch { }
+    }
+
+    private static void OpenSwaggerInBrowser(int port) =>
+        _ = OpenBrowserAsync(port, "/swagger");
+
+    private IList<ConnectorWorkspaceNode> BackendProjects =>
+        Hub.Projects.Where(p => p.Domain is DomainKind.Backend or DomainKind.AIService).ToList();
+
+    private IList<NetEntry> FilteredEntries =>
+        _netFilter == "all" ? _netEntries : _netEntries.Where(e => e.ProjectId == _netFilter).ToList();
+
+    private void SetQuickBaseUrl(int port) => _apiUrl = $"http://localhost:{port}/";
+
+    private void ShowCopied() => Snackbar.Add("Copied to clipboard!", Severity.Info);
+
+    // ── Display helpers ───────────────────────────────────────────────────────
+
+    private static string GetDomainIcon(DomainKind d) => d switch
+    {
+        DomainKind.Frontend  => Icons.Material.Filled.Web,
+        DomainKind.Backend   => Icons.Material.Filled.Api,
+        DomainKind.Database  => Icons.Material.Filled.Storage,
+        DomainKind.Mobile    => Icons.Material.Filled.Smartphone,
+        DomainKind.AIService => Icons.Material.Filled.Psychology,
+        _                    => Icons.Material.Filled.HelpOutline
+    };
+
+    private static string GetSdClass(RunStatus? s) => s?.State switch
+    {
+        "running" => "sd sd-run",
+        "healthy" => "sd sd-ok",
+        "starting"=> "sd sd-start",
+        "crashed" => "sd sd-err",
+        _         => "sd sd-idle"
+    };
+
+    private static string GetStateLabel(RunStatus? s) => s?.State switch
+    {
+        "running" => "Running",
+        "healthy" => "Healthy",
+        "starting"=> "Starting…",
+        "crashed" => "Crashed",
+        "stopped" => "Stopped",
+        _         => "Idle"
+    };
+
+    private static string GetLogStyle(string line)
+    {
+        var lo = line.ToLowerInvariant();
+        if (lo.Contains("error") || lo.Contains("fail")) return "color:#f87171;";
+        if (lo.Contains("warn"))  return "color:#fbbf24;";
+        if (lo.Contains("ready") || lo.Contains("compiled") || lo.Contains("started")) return "color:#34d399;";
+        if (lo.Contains("http://") || lo.Contains("localhost")) return "color:#60a5fa;";
+        return "";
+    }
+
+    private static string GetMethodColor(string m) => m switch
+    {
+        "GET"    => "#10b981",
+        "POST"   => "#f59e0b",
+        "PUT"    => "#6366f1",
+        "PATCH"  => "#8b5cf6",
+        "DELETE" => "#ef4444",
+        _        => "inherit"
+    };
+
+    private static string GetStatusClass(int s)
+    {
+        if (s >= 500) return "sts-5xx";
+        if (s >= 400) return "sts-4xx";
+        if (s >= 300) return "sts-3xx";
+        if (s >= 200) return "sts-2xx";
+        return "";
+    }
+
+    private static string GetStatusText(int s) => s switch
+    {
+        200 => "OK", 201 => "Created", 204 => "No Content",
+        400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden",
+        404 => "Not Found", 409 => "Conflict", 422 => "Unprocessable Entity",
+        500 => "Internal Server Error", 502 => "Bad Gateway", 503 => "Service Unavailable",
+        _ => ""
+    };
+
+    private static string GetNetMethodClass(string m) => m switch
+    {
+        "GET"    => "nm-get",
+        "POST"   => "nm-post",
+        "PUT"    => "nm-put",
+        "PATCH"  => "nm-patch",
+        "DELETE" => "nm-delete",
+        _        => "nm-other"
+    };
+
+    private static string GetNetStatusColor(int s)
+    {
+        if (s >= 500) return "#ef4444";
+        if (s >= 400) return "#f59e0b";
+        if (s >= 200) return "#10b981";
+        return "inherit";
+    }
+}

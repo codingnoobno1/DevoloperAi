@@ -1,0 +1,52 @@
+.sui-statusbar {
+    height: 22px;
+    background: var(--status-bg, var(--accent, #007acc));
+    color: var(--text-inverse, #ffffff);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    user-select: none;
+    transition: background-color 0.2s;
+}
+
+.sui-statusbar.empty {
+    background: var(--bg-title, #2d2d2d);
+    color: var(--text-muted, #858585);
+}
+
+.sui-statusbar-left, .sui-statusbar-right {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+
+.sui-statusbar-center {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    height: 100%;
+}
+
+.sui-status-item {
+    padding: 0 10px;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    transition: background-color 0.1s;
+    white-space: nowrap;
+}
+
+.sui-status-item:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.sui-statusbar.empty .sui-status-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.sui-status-item i {
+    margin-right: 4px;
+    font-size: 13px;
+}

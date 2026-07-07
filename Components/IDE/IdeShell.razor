@@ -1,0 +1,602 @@
+@page "/ide"
+@using System
+@using System.Collections.Generic
+@using System.IO
+@using System.Linq
+@using Microsoft.JSInterop
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.Ide
+@using Syncro.Desktop.Services.Ide.Models
+@using Syncro.Desktop.Services.AgentCli.Models
+@using Syncro.Desktop.SyncroUI.Components.Layout
+@using Syncro.Desktop.SyncroUI.Components.Primitives
+@inject IdeWorkspaceState State
+@inject IdeLaunchContext LaunchCtx
+@inject ProjectService ProjService
+@inject FileService FileSvc
+@inject NavigationManager Nav
+@inject Syncro.Desktop.Services.Ide.IdeWindowService IdeWin
+@inject Syncro.Desktop.Services.Ide.Engines.IEditorEngine Editor
+@inject Syncro.Desktop.Services.Ide.Engines.ITerminalEngine Terminal
+@inject Syncro.Desktop.Services.Ide.Engines.IRoslynLanguageService Roslyn
+@inject Syncro.Desktop.Services.AgentCli.Nlp.TaskRouter Router
+@inject Syncro.Desktop.Services.AgentCli.Loop.TaskStore Tasks
+@inject Syncro.Desktop.Services.AgentCli.Loop.TaskLoopEngine Loop
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="ide-root">
+    <!-- Title bar -->
+    <SuiTitleBar Title="@(State.ActiveTab is { } t ? System.IO.Path.GetFileName(t.FilePath) : State.Current?.Name ?? "")" />
+
+    <div class="ide-body">
+        <!-- Activity bar -->
+        <SuiActivityBar 
+            TopItems="_topItems" 
+            BottomItems="_bottomItems" 
+            ActiveId="@_activeActivityId"
+            ActiveIdChanged="OnActivityClick" />
+
+        <!-- GoldenLayout mounts here -->
+        <div id="ide-layout-container" class="ide-workbench"></div>
+    </div>
+
+    <!-- ════════════════ Hidden portals (JS moves them into panels) ════════════════ -->
+
+    <!-- CODE-OSS EDITOR -->
+    <div id="blazor-codeoss-portal" class="portal" style="display:none; padding:0; overflow:hidden;">
+        <!-- We point this to the daemon port managed by CLI -->
+        <iframe src="http://127.0.0.1:8080" style="width:100%; height:100%; border:none; background:transparent;"></iframe>
+    </div>
+
+    <!-- EXPLORER -->
+    <div id="blazor-explorer-portal" class="portal" style="display:none;">
+        <SuiPanel Title="EXPLORER" SubTitle="@(State.Current?.Name)">
+            <HeaderRightContent>
+                <!-- Add explorer actions here later -->
+            </HeaderRightContent>
+            <ChildContent>
+                @if (State.Current == null)
+                {
+                    <div class="muted pad">No folder opened.<br /><button class="ghost-btn" @onclick="FocusWelcome">Open a project →</button></div>
+                }
+                else
+                {
+                    <FileTree RootPath="@State.Current.RootPath" OnOpenFile="OpenFile" />
+                }
+            </ChildContent>
+        </SuiPanel>
+    </div>
+
+    <!-- WELCOME -->
+    <div id="blazor-welcome-portal" class="portal welcome" style="display:none;">
+        <div class="welcome-scroll">
+            <div class="welcome-cols">
+                <div class="welcome-col">
+                    <div class="welcome-h">Start</div>
+                    <button class="start-link" @onclick="FocusExplorerOrAnalyze"><i class="bi bi-folder-plus"></i> New Project…</button>
+                    <button class="start-link" @onclick="PickFolderAsync"><i class="bi bi-folder2-open"></i> Open Folder…</button>
+                    <button class="start-link" @onclick="AnalyzeCurrent"><i class="bi bi-bar-chart-line-fill"></i> Analyze Project…</button>
+                    <button class="start-link" @onclick='() => Focus("blazor-ai-portal")'><i class="bi bi-robot"></i> Ask the Agent…</button>
+                </div>
+                <div class="welcome-col">
+                    <div class="welcome-h">Recent</div>
+                    @if (_projects.Count == 0)
+                    {
+                        <div class="start-empty">No recent projects.</div>
+                    }
+                    else
+                    {
+                        @foreach (var p in _projects.Take(8))
+                        {
+                            <button class="recent-link" @onclick="() => OpenWorkspace(p.Path)">
+                                <span class="recent-name">@p.Name</span>
+                                <span class="recent-path">@p.Path</span>
+                            </button>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- TERMINAL -->
+    <div id="blazor-terminal-portal" class="portal" style="display:none;">
+        <div id="xterm-mount" style="flex:1; min-height:0; padding:6px 8px;"></div>
+    </div>
+
+    <!-- PROBLEMS -->
+    <div id="blazor-problems-portal" class="portal" style="display:none;">
+        <SuiPanel Title="PROBLEMS" SubTitle="@(_problems.Count.ToString())">
+            @if (_problems.Count == 0)
+            {
+                <div class="muted pad"><i class="bi bi-check-circle" style="color:#10b981"></i> No problems detected in the workspace.</div>
+            }
+            else
+            {
+                <div class="list-body">
+                    @foreach (var pr in _problems)
+                    {
+                        <div class="prob-row"><i class="bi bi-exclamation-triangle-fill" style="color:#f59e0b"></i> <span>@pr.Message (Line @pr.StartLineNumber)</span></div>
+                    }
+                </div>
+            }
+        </SuiPanel>
+    </div>
+
+    <!-- OUTPUT -->
+    <div id="blazor-output-portal" class="portal" style="display:none;">
+        <SuiPanel Title="OUTPUT" SubTitle="Syncro">
+            <div class="output-body">
+                @foreach (var line in _output)
+                {
+                    <div class="out-line">@line</div>
+                }
+            </div>
+        </SuiPanel>
+    </div>
+
+    <!-- AI AGENT -->
+    <div id="blazor-ai-portal" class="portal" style="display:none;">
+        <SuiPanel Title="AI AGENT" Icon="bi bi-robot">
+            <HeaderRightContent>
+                <span class="ai-dot"></span>
+            </HeaderRightContent>
+            <ChildContent>
+                <div class="ai-messages">
+                    @foreach (var m in _aiMessages)
+                    {
+                        <div class="ai-msg @m.Role">
+                            <div class="ai-who">@(m.Role == "user" ? "You" : "Syncro Agent")</div>
+                            <div class="ai-text">@m.Text</div>
+                        </div>
+                    }
+                </div>
+                <div class="ai-composer">
+                    <textarea class="ai-input" rows="2" placeholder="Ask the agent to scaffold, fix, analyze…"
+                              @bind="_aiInput" @bind:event="oninput" @onkeydown="AiKeyDown" disabled="@_aiBusy"></textarea>
+                    <button class="ai-send" @onclick="SendAi" disabled="@(string.IsNullOrWhiteSpace(_aiInput) || _aiBusy)">
+                        <i class="bi @(_aiBusy ? "bi-hourglass-split" : "bi-send-fill")"></i>
+                    </button>
+                </div>
+            </ChildContent>
+        </SuiPanel>
+    </div>
+
+    <!-- HINDSIGHT -->
+    <div id="blazor-hindsight-portal" class="portal" style="display:none;">
+        <SuiPanel Title="HINDSIGHT" SubTitle="memory">
+            <div class="hind-body">
+                <div class="hind-item"><div class="hind-dot ok"></div><div><b>RAG memory online</b><div class="muted2">Past fixes &amp; root-causes are matched against new errors.</div></div></div>
+                <div class="hind-item"><div class="hind-dot"></div><div><b>AST index</b><div class="muted2">Symbols, imports &amp; the dependency graph feed the editor.</div></div></div>
+                <div class="hind-item"><div class="hind-dot"></div><div><b>Timeline</b><div class="muted2">Edit, patch &amp; revert history for the workspace.</div></div></div>
+            </div>
+        </SuiPanel>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="blazor-settings-portal" class="portal" style="display:none;">
+        <SettingsPanel />
+    </div>
+
+    <!-- Status bar -->
+    <SuiStatusBar 
+        HasWorkspace="State.Current != null"
+        WorkspaceName="@(State.Current?.Name ?? "")"
+        Errors="_problems.Count"
+        HasActiveFile="State.ActiveTab != null"
+        Line="_ln"
+        Column="_col"
+        Language="@(State.ActiveTab?.Language ?? "plaintext")"
+        OnProblemsClick='() => Focus("blazor-problems-portal")' />
+</div>
+
+<style>
+    /* Neutral VS Code-grade theme, driven by Syncro.UI tokens (wwwroot/css/tokens.css). Flat — no gradients/glows. */
+    .ide-root { display:flex; flex-direction:column; height:100vh; width:100%; background:var(--bg-editor); color:var(--text);
+        font-family:var(--font-ui); font-size:var(--fs-ui); overflow:hidden; }
+
+    /* Body */
+    .ide-body { flex:1; display:flex; min-height:0; }
+    .ide-workbench { flex:1; position:relative; overflow:hidden; min-width:0; }
+
+    /* Shared portal chrome */
+    .portal { display:flex; flex-direction:column; background:var(--bg-side); height:100%; }
+    .muted { color:var(--text-muted); font-size:12px; line-height:1.6; }
+    .muted2 { color:var(--text-faint); font-size:11px; line-height:1.5; margin-top:2px; }
+    .pad { padding:14px; }
+    .ghost-btn { margin-top:10px; background:transparent; color:var(--accent); border:1px solid var(--border-soft);
+        padding:5px 11px; border-radius:var(--radius); cursor:pointer; font-size:12px; }
+    .ghost-btn:hover { background:var(--hover); }
+
+    /* Welcome — quiet Start/Recent (no hero, no gradient) */
+    .welcome { background:var(--bg-editor); }
+    .welcome-scroll { flex:1; overflow-y:auto; padding:48px 56px; }
+    .welcome-cols { display:flex; gap:64px; max-width:820px; }
+    .welcome-col { flex:1; min-width:0; }
+    .welcome-h { font-size:14px; color:var(--text); font-weight:600; margin-bottom:14px; }
+    .start-link, .recent-link { display:flex; width:100%; text-align:left; background:transparent; border:0;
+        color:var(--accent); cursor:pointer; padding:5px 0; font-size:13px; font-family:inherit; align-items:center; gap:8px; }
+    .start-link:hover, .recent-link:hover { color:var(--accent-hover); }
+    .start-link .bi { color:var(--text-muted); font-size:14px; }
+    .recent-link { flex-direction:column; align-items:flex-start; gap:1px; }
+    .recent-name { color:var(--accent); font-size:13px; }
+    .recent-path { color:var(--text-faint); font-size:11px; font-family:var(--font-mono);
+        overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+    .start-empty { color:var(--text-muted); font-size:12px; }
+    kbd { background:var(--bg-input); border:1px solid var(--border-soft); border-radius:3px; padding:1px 5px;
+        font-size:11px; font-family:var(--font-mono); color:var(--text); }
+
+    /* Problems / Output */
+    .list-body, .output-body, .hind-body, .ai-messages { flex:1; overflow-y:auto; padding:8px 10px; }
+    .prob-row { display:flex; gap:8px; align-items:center; padding:5px 8px; font-size:12px; color:var(--text); border-radius:var(--radius); }
+    .prob-row:hover { background:var(--hover); }
+    .output-body { font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted); line-height:1.7; }
+    .out-line { white-space:pre-wrap; word-break:break-all; }
+    .out-line:before { content:"›"; color:var(--text-faint); margin-right:8px; }
+
+    /* AI panel */
+    .ai-dot { width:8px; height:8px; border-radius:50%; background:var(--ok); }
+    .ai-messages { display:flex; flex-direction:column; gap:10px; }
+    .ai-msg { border-radius:var(--radius-lg); padding:9px 11px; font-size:12.5px; line-height:1.5; border:1px solid var(--border); }
+    .ai-msg.assistant { background:var(--hover); }
+    .ai-msg.user { background:transparent; }
+    .ai-who { font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-muted); margin-bottom:4px; }
+    .ai-msg.assistant .ai-who { color:var(--accent); }
+    .ai-text { color:var(--text); white-space:pre-wrap; }
+    .ai-composer { border-top:1px solid var(--border); padding:8px; display:flex; gap:8px; align-items:flex-end; }
+    .ai-input { flex:1; resize:none; background:var(--bg-input); border:1px solid var(--border-soft); border-radius:var(--radius); color:var(--text);
+        font-family:inherit; font-size:12.5px; padding:8px 10px; outline:none; }
+    .ai-input:focus { border-color:var(--accent); }
+    .ai-send { width:36px; height:36px; border:0; border-radius:var(--radius); background:var(--accent);
+        color:var(--on-accent); cursor:pointer; font-size:14px; }
+    .ai-send:disabled { opacity:.35; cursor:default; }
+
+    /* Hindsight */
+    .hind-item { display:flex; gap:10px; align-items:flex-start; padding:10px 6px; border-bottom:1px solid var(--border); }
+    .hind-item b { font-size:12.5px; color:var(--text); }
+    .hind-dot { width:9px; height:9px; border-radius:50%; background:var(--text-faint); margin-top:4px; flex:none; }
+    .hind-dot.ok { background:var(--ok); }
+
+    /* GoldenLayout theme overrides */
+    .lm_header { background:var(--bg-side) !important; height:30px !important; }
+    .lm_tab { background:var(--bg-tab-inactive) !important; color:var(--text-muted) !important; border:none !important; margin-right:1px !important;
+        padding:0 14px !important; height:30px !important; line-height:30px !important; display:flex !important; align-items:center !important; }
+    .lm_tab.lm_active { background:var(--bg-tab-active) !important; color:var(--text-strong) !important; box-shadow:inset 0 -1px 0 var(--accent) !important; }
+    .lm_splitter { background:var(--border) !important; }
+    .lm_splitter:hover { background:var(--accent) !important; }
+    .lm_content { background:var(--bg-editor) !important; border:none !important; }
+    .lm_controls { right:8px !important; }
+    .lm_title { color:inherit !important; font-size:12px !important; font-family:var(--font-ui) !important; }
+    .lm_close_tab { width:12px !important; height:12px !important; background-image:none !important; opacity:.5; }
+    .lm_close_tab:before { content:"×"; font-size:16px; color:var(--text); line-height:12px; }
+    .lm_close_tab:hover { opacity:1; }
+    .lm_maximise { opacity:.5; }
+    .lm_maximise:hover { opacity:1; }
+
+    /* File tree */
+    .ftn-row { display:flex; align-items:center; gap:6px; padding:3px 10px; cursor:pointer; white-space:nowrap; font-size:13px; color:var(--text); }
+    .ftn-row:hover { background:var(--hover); }
+    .ftn-caret { width:12px; display:inline-block; color:var(--text-muted); text-align:center; flex:none; }
+    .ftn-folder { color:#c09553; font-size:15px; width:18px; display:inline-flex; justify-content:center; flex:none; }
+    .ftn-name { overflow:hidden; text-overflow:ellipsis; }
+    .ftn-muted { color:var(--text-muted); padding:10px 14px; font-size:12px; }
+
+    /* xterm fills its panel */
+    #xterm-mount .xterm { height:100%; }
+</style>
+
+@code {
+    [Parameter] public string? Token { get; set; }
+    private DotNetObjectReference<IdeShell>? _objRef;
+
+    private List<ProjectModel> _projects = new();
+    private bool _layoutReady;
+    private int _ln = 1, _col = 1;
+    private string _aiInput = "";
+    private readonly List<(string Role, string Text)> _aiMessages = new();
+    private readonly List<Syncro.Desktop.Services.Ide.Engines.DiagnosticDto> _problems = new();
+    private readonly List<string> _output = new();
+
+    private List<SuiActivityBar.ActivityItem> _topItems = new();
+    private List<SuiActivityBar.ActivityItem> _bottomItems = new();
+    private string _activeActivityId = "explorer";
+
+    protected override async Task OnInitializedAsync()
+    {
+        State.Changed += OnStateChanged;
+        Terminal.OnOutputDataReceived += OnTerminalDataReceived;
+        _projects = ProjService.GetProjects();
+
+        _topItems = new List<SuiActivityBar.ActivityItem>
+        {
+            new() { Id = "explorer", Title = "Explorer", Icon = "bi bi-files" },
+            new() { Id = "search", Title = "Search", Icon = "bi bi-search" },
+            new() { Id = "git", Title = "Source Control", Icon = "bi bi-git" },
+            new() { Id = "ast", Title = "AST Graph", Icon = "bi bi-diagram-3-fill" },
+            new() { Id = "ai", Title = "AI Agent", Icon = "bi bi-robot" },
+            new() { Id = "terminal", Title = "Terminal", Icon = "bi bi-terminal-fill" }
+        };
+
+        _bottomItems = new List<SuiActivityBar.ActivityItem>
+        {
+            new() { Id = "analyze", Title = "Analyze project", Icon = "bi bi-bar-chart-line-fill" },
+            new() { Id = "settings", Title = "Settings", Icon = "bi bi-gear-fill" }
+        };
+
+        string? path = null;
+        if (Token != null && LaunchCtx.TryClaim(Token, out var req))
+            path = req.WorkspacePath;
+
+        if (!string.IsNullOrEmpty(path))
+            await State.OpenWorkspaceAsync(path);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        _objRef = DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("window.SyncroIde.initLayout", "ide-layout-container", _objRef);
+    }
+
+    [JSInvokable]
+    public async Task OnLayoutReadyJS()
+    {
+        _layoutReady = true;
+        await JS.InvokeVoidAsync("window.SyncroIde.mountTerminal", "xterm-mount");
+        await Terminal.StartAsync(State.Current?.RootPath ?? "");
+        _ = Roslyn.LoadWorkspaceAsync(State.Current?.RootPath ?? "");
+
+        // Re-open any tabs restored from the previous session
+        foreach (var tab in State.Tabs)
+        {
+            var content = await FileSvc.ReadAsync(tab.FilePath);
+            await Editor.OpenAsync(tab.Uri, content, tab.Language, Path.GetFileName(tab.FilePath));
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OpenWorkspace(string path)
+    {
+        await State.OpenWorkspaceAsync(path);
+        Log($"Opened workspace: {path}");
+        await Terminal.StartAsync(path);
+        _ = Roslyn.LoadWorkspaceAsync(path);
+        await Focus("blazor-explorer-portal");
+        foreach (var tab in State.Tabs)
+        {
+            var content = await FileSvc.ReadAsync(tab.FilePath);
+            await Editor.OpenAsync(tab.Uri, content, tab.Language, Path.GetFileName(tab.FilePath));
+        }
+    }
+
+    private async Task PickFolderAsync()
+    {
+        try
+        {
+            var result = await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync(
+                () => CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync());
+                
+            if (result.IsSuccessful && result.Folder != null && !string.IsNullOrEmpty(result.Folder.Path))
+            {
+                var folderPath = result.Folder.Path;
+                ProjService.ImportProject(folderPath); // Register in recent projects
+                await OpenWorkspace(folderPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"Failed to pick folder: {ex.Message}");
+        }
+    }
+
+    private async Task OpenFile(string filePath)
+    {
+        var tab = State.OpenFile(filePath);
+        var content = await FileSvc.ReadAsync(filePath);
+        await Editor.OpenAsync(tab.Uri, content, tab.Language, Path.GetFileName(filePath));
+        Log($"Open file: {Path.GetFileName(filePath)}");
+    }
+
+    private void AnalyzeCurrent() => IdeWin.OpenAnalysis(State.Current?.RootPath);
+    private Task FocusWelcome() => Focus("blazor-welcome-portal");
+    private Task FocusExplorerOrAnalyze() => Focus("blazor-explorer-portal");
+    private async Task Focus(string portalId)
+    {
+        try { await JS.InvokeVoidAsync("window.SyncroIde.focusPanel", portalId); } catch { }
+    }
+
+    private async Task OnActivityClick(string id)
+    {
+        _activeActivityId = id;
+        switch (id)
+        {
+            case "explorer":
+            case "search":
+                await Focus("blazor-explorer-portal");
+                break;
+            case "ast":
+                await Focus("blazor-hindsight-portal");
+                break;
+            case "ai":
+                await Focus("blazor-ai-portal");
+                break;
+            case "terminal":
+                await Focus("blazor-terminal-portal");
+                break;
+            case "analyze":
+                AnalyzeCurrent();
+                break;
+            case "settings":
+                await Focus("blazor-settings-portal");
+                break;
+        }
+    }
+
+    private async Task AiKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey) await SendAi();
+    }
+
+    private bool _aiBusy;
+
+    private async Task SendAi()
+    {
+        var msg = _aiInput.Trim();
+        if (string.IsNullOrEmpty(msg) || _aiBusy) return;
+        _aiBusy = true;
+        _aiMessages.Add(("user", msg));
+        _aiInput = "";
+        Log($"AI prompt: {msg}");
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            // 1. Route the goal through the Software-Understanding pipeline → a plan.
+            var projectPath = State.Current?.RootPath ?? "";
+            var plan = await Router.RouteAsync(msg, projectPath);
+
+            var steps = plan.Steps.Count == 0 ? "  • (no steps)" : string.Join("\n", plan.Steps.Select(s => $"  • {s}"));
+            _aiMessages.Add(("assistant", $"Intent: {plan.Intent} ({plan.Confidence:P0})\nPlan:\n{steps}"));
+            await InvokeAsync(StateHasChanged);
+
+            // 2. Enqueue a task and drive the loop live, streaming each transition.
+            var rec = new TaskRecord
+            {
+                Title = msg,
+                ProjectId = State.Current?.Id ?? "ide",
+                Intent = MapIntent(plan.Intent)
+            };
+            await Tasks.EnqueueAsync(rec);
+
+            _aiMessages.Add(("assistant", $"Task {rec.TaskId} enqueued…"));
+            int statusIdx = _aiMessages.Count - 1;
+            await InvokeAsync(StateHasChanged);
+
+            int guard = 0;
+            while (rec.Status != LoopStatus.Done && rec.Status != LoopStatus.NeedsHuman && guard++ < 20)
+            {
+                rec = await Loop.StepAsync(rec);
+                var trail = string.Join(" → ", rec.History.TakeLast(6).Select(h => h.Status.ToString().ToLowerInvariant()));
+                _aiMessages[statusIdx] = ("assistant", $"Task {rec.TaskId}\n{trail}");
+                await InvokeAsync(StateHasChanged);
+            }
+
+            var note = rec.History.LastOrDefault()?.Note ?? rec.NextAction ?? "";
+            _aiMessages.Add(("assistant", $"Final: {rec.Status}{(string.IsNullOrEmpty(note) ? "" : $" — {note}")}"));
+            Log($"Task {rec.TaskId} → {rec.Status}");
+        }
+        catch (Exception ex)
+        {
+            _aiMessages.Add(("assistant", $"Routing error: {ex.Message}"));
+        }
+        finally
+        {
+            _aiBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static TaskKind MapIntent(string? intent) => (intent ?? "").ToLowerInvariant() switch
+    {
+        "generate" => TaskKind.Generate,
+        "patch" => TaskKind.LlmFix,
+        "analyse" or "analyze" => TaskKind.Analyse,
+        "explain" => TaskKind.Show,
+        "refactor" => TaskKind.EditCode,
+        "test" => TaskKind.RunScript,
+        "clone" => TaskKind.Clone,
+        "report" => TaskKind.Report,
+        _ => TaskKind.Custom
+    };
+
+    [JSInvokable]
+    public async Task OnTerminalCommandJS(string command)
+    {
+        Log($"$ {command}");
+        await Terminal.WriteAsync(command);
+    }
+
+    private void OnTerminalDataReceived(string data)
+    {
+        // The data has \r\n appended by the engine.
+        // But termWrite uses writeln which adds another newline, wait.
+        // Let's use termWrite if it uses write or writeln.
+        InvokeAsync(() => JS.InvokeVoidAsync("window.SyncroIde.termWrite", data));
+    }
+
+    [JSInvokable]
+    public void OnCursorJS(int line, int col)
+    {
+        _ln = line; _col = col;
+        InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnTabClosedJS(string uri)
+    {
+        State.CloseTab(uri);
+        InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable]
+    public void OnEditorChangedJS(string uri, string newContent)
+    {
+        State.Buffers[uri] = newContent;
+        State.MarkDirty(uri, true);
+        _ = Roslyn.UpdateDocumentAsync(uri, newContent);
+        _ = DebounceDiagnosticsAsync(uri);
+    }
+
+    [JSInvokable]
+    public async Task OnEditorSaveJS(string uri, string content)
+    {
+        var tab = State.Tabs.FirstOrDefault(t => t.Uri == uri);
+        if (tab == null) return;
+        await FileSvc.WriteAsync(tab.FilePath, content);
+        State.Buffers[uri] = content;
+        State.MarkDirty(uri, false);
+        Log($"Saved: {Path.GetFileName(tab.FilePath)}");
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void Log(string line)
+    {
+        _output.Add(line);
+        if (_output.Count > 200) _output.RemoveAt(0);
+    }
+
+    private System.Threading.CancellationTokenSource? _diagnosticsCts;
+    private async Task DebounceDiagnosticsAsync(string uri)
+    {
+        _diagnosticsCts?.Cancel();
+        _diagnosticsCts = new System.Threading.CancellationTokenSource();
+        try
+        {
+            await Task.Delay(500, _diagnosticsCts.Token);
+            var diags = await Roslyn.GetDiagnosticsAsync(uri);
+            _problems.Clear();
+            _problems.AddRange(diags);
+            await JS.InvokeVoidAsync("window.SyncroMonaco.setDiagnostics", uri, diags);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    [JSInvokable]
+    public Task<IEnumerable<Syncro.Desktop.Services.Ide.Engines.CompletionItemDto>> GetCompletionsJS(string uri, int line, int column)
+        => Roslyn.GetCompletionsAsync(uri, line, column);
+
+    [JSInvokable]
+    public Task<Syncro.Desktop.Services.Ide.Engines.HoverDto?> GetHoverJS(string uri, int line, int column)
+        => Roslyn.GetHoverAsync(uri, line, column);
+
+    private void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        State.Changed -= OnStateChanged;
+        Terminal.OnOutputDataReceived -= OnTerminalDataReceived;
+        _objRef?.Dispose();
+    }
+}

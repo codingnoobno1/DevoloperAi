@@ -1,0 +1,71 @@
+{
+  "ProjectPath": "D:\\DeveloperAI\\DEVOLOPER\\Syncro.Desktop\\test",
+  "ProjectName": "test",
+  "Language": "Swift/Objective-C",
+  "Framework": "iOS Native SwiftUI/UIKit",
+  "Nodes": [
+    {
+      "Id": "D:\\DeveloperAI\\DEVOLOPER\\Syncro.Desktop\\test\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py::handle_new_rx_page",
+      "Type": 4,
+      "Name": "handle_new_rx_page",
+      "FilePath": "D:\\DeveloperAI\\DEVOLOPER\\Syncro.Desktop\\test\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py",
+      "LineNumber": 7,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "cyclomaticComplexity": 2,
+        "complexityRating": "Low"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "Python Method definition",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "D:\\DeveloperAI\\DEVOLOPER\\Syncro.Desktop\\test\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py::__lldb_init_module",
+      "Type": 4,
+      "Name": "__lldb_init_module",
+      "FilePath": "D:\\DeveloperAI\\DEVOLOPER\\Syncro.Desktop\\test\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py",
+      "LineNumber": 24,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "cyclomaticComplexity": 1,
+        "complexityRating": "Low"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "Python Method definition",
+      "IsExternalOrBoilerplate": false
+    }
+  ],
+  "Endpoints": [],
+  "Dtos": [],
+  "Dependencies": [],
+  "Ports": [
+    {
+      "Port": 3000,
+      "State": "Open",
+      "Service": "React/Next.js",
+      "Type": "Scanned"
+    },
+    {
+      "Port": 3306,
+      "State": "Open",
+      "Service": "MySQL DB",
+      "Type": "Scanned"
+    }
+  ],
+  "SwaggerSpecs": [],
+  "ConfigFiles": {
+    "__cache_signature__": "223FF554DCB675096D68836989A3F781B1E8A62A5001BC74697B7074A0A92E7B"
+  },
+  "Errors": [],
+  "DependencyGraphDot": "digraph AstGraph {\r\n  rankdir=LR;\r\n  node [shape=box, style=filled, fillcolor=lightblue];\r\n  \"D:\\DeveloperAI\\DEVOLOPER\\Syncro.Desktop\\test\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py::handle_new_rx_page\" [label=\"handle_new_rx_page\\n(Method)\"];\r\n  \"D:\\DeveloperAI\\DEVOLOPER\\Syncro.Desktop\\test\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py::__lldb_init_module\" [label=\"__lldb_init_module\\n(Method)\"];\r\n}\r\n",
+  "CallGraphDot": "digraph AstGraph {\r\n  rankdir=LR;\r\n  node [shape=box, style=filled, fillcolor=lightblue];\r\n}\r\n",
+  "DagFlowchartMermaid": "graph TD\r\n"
+}

@@ -1,0 +1,170 @@
+@using Syncro.Desktop.SyncroUI.Theme
+@using Syncro.Desktop.SyncroUI.Components.Primitives
+@implements IDisposable
+@inject ThemeEngine ThemeEngine
+
+<div class="flex flex-row h-full w-full bg-editor text-textMain font-ui">
+    <!-- Left Navigation Sidebar -->
+    <div class="w-64 border-r border-borderBase bg-side flex flex-col py-6 overflow-y-auto hide-scrollbar">
+        <ul class="flex flex-col gap-1 px-3">
+            @foreach (var tab in _tabs)
+            {
+                <li>
+                    <button class="w-full text-left px-4 py-2 rounded-md text-sm transition-colors @(ActiveTab == tab ? "bg-accent text-onAccent font-medium" : "text-textMuted hover:bg-hover hover:text-textMain")" 
+                            @onclick="() => SetTab(tab)">
+                        @tab
+                    </button>
+                </li>
+                
+                @if (tab == "Editor")
+                {
+                    <div class="my-4"></div>
+                    <li class="px-4 py-1 text-xs font-semibold text-textFaint uppercase tracking-wider">Workspaces</li>
+                }
+            }
+            
+            <li>
+                <button class="w-full text-left px-4 py-2 rounded-md text-sm text-textMuted hover:bg-hover hover:text-textMain mt-1 flex items-center gap-2">
+                    <i class="bi bi-folder2"></i> my-new-project
+                </button>
+            </li>
+            <li>
+                <button class="w-full text-left px-4 py-2 rounded-md text-sm text-textMuted hover:bg-hover hover:text-textMain flex items-center gap-2">
+                    <i class="bi bi-diagram-3"></i> Syncro.Desktop
+                </button>
+            </li>
+        </ul>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="flex-1 overflow-y-auto bg-editor px-12 py-10">
+        
+        <h2 class="text-2xl font-medium text-textStrong mb-2">@ActiveTab</h2>
+        
+        @if (ActiveTab == "Appearance")
+        {
+            <p class="text-textMuted mb-8 text-sm">Configure the agent's visual theme and display preferences.</p>
+            
+            <h3 class="text-sm font-medium text-textStrong mb-4 border-b border-borderBase pb-2">Chat Settings</h3>
+            
+            <div class="flex items-center justify-between py-3 mb-8">
+                <div>
+                    <div class="text-sm font-medium text-textStrong">Verbose agent chat</div>
+                    <div class="text-xs text-textMuted mt-1">Display and preserve intermediate thinking steps</div>
+                </div>
+                <SuiCheckbox @bind-Value="VerboseChat" />
+            </div>
+
+            <h3 class="text-sm font-medium text-textStrong mb-4 border-b border-borderBase pb-2">Theme Settings</h3>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
+                <SuiSelect Label="Color Theme" 
+                          Value="@ThemeEngine.CurrentOptions.ThemeName" 
+                          ValueChanged="OnThemeChanged"
+                          Options="_themeOptions" />
+                          
+                <SuiSelect Label="Font Size" 
+                          Value="@ThemeEngine.CurrentOptions.FontSize.ToString()" 
+                          ValueChanged="OnFontSizeChanged"
+                          Options="_fontOptions" />
+                          
+                <SuiSelect Label="Tab Size" 
+                          Value="@ThemeEngine.CurrentOptions.TabSize.ToString()" 
+                          ValueChanged="OnTabSizeChanged"
+                          Options="_tabOptions" />
+            </div>
+        }
+        else
+        {
+            <p class="text-textMuted mb-8 text-sm">Configuration for @ActiveTab goes here.</p>
+            
+            <div class="flex flex-col items-center justify-center h-64 text-textFaint border border-dashed border-borderSoft rounded-lg">
+                <i class="bi bi-tools text-3xl mb-3"></i>
+                <p>Under Construction</p>
+            </div>
+        }
+
+    </div>
+</div>
+
+<style>
+    .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+    }
+    .hide-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+</style>
+
+@code {
+    public string ActiveTab { get; set; } = "Appearance";
+    public bool VerboseChat { get; set; } = true;
+
+    private string[] _tabs = new[] { "General", "Account", "Permissions", "Appearance", "Notifications", "Models", "Customizations", "Browser", "Tab", "Editor" };
+
+    private List<SuiSelectOption> _themeOptions = new()
+    {
+        new("theme-syncro-special", "Syncro Special"),
+        new("theme-syncro-dark", "Syncro Dark"),
+        new("theme-syncro-light", "Syncro Light"),
+        new("theme-midnight", "Midnight Blue"),
+        new("theme-hc-dark", "High Contrast Dark"),
+        new("theme-solarized-dark", "Solarized Dark"),
+        new("theme-solarized-light", "Solarized Light"),
+        new("theme-monokai", "Monokai Pro"),
+        new("theme-github-dark", "GitHub Dark"),
+        new("theme-dracula", "Dracula")
+    };
+
+    private List<SuiSelectOption> _fontOptions = new()
+    {
+        new("11", "11px"), new("12", "12px"), new("13", "13px (Default)"),
+        new("14", "14px"), new("15", "15px"), new("16", "16px")
+    };
+
+    private List<SuiSelectOption> _tabOptions = new()
+    {
+        new("2", "2 spaces"), new("4", "4 spaces (Default)"), new("8", "8 spaces")
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ThemeEngine.InitializeAsync();
+        ThemeEngine.OnThemeChanged += StateHasChanged;
+    }
+
+    private void SetTab(string tab)
+    {
+        ActiveTab = tab;
+    }
+
+    private async Task OnThemeChanged(string val)
+    {
+        if (!string.IsNullOrEmpty(val))
+        {
+            await ThemeEngine.SetThemeAsync(val);
+        }
+    }
+
+    private async Task OnFontSizeChanged(string val)
+    {
+        if (int.TryParse(val, out int size))
+        {
+            await ThemeEngine.SetFontSizeAsync(size);
+        }
+    }
+
+    private async Task OnTabSizeChanged(string val)
+    {
+        if (int.TryParse(val, out int size))
+        {
+            await ThemeEngine.SetTabSizeAsync(size);
+        }
+    }
+
+    public void Dispose()
+    {
+        ThemeEngine.OnThemeChanged -= StateHasChanged;
+    }
+}

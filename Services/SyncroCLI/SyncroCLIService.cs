@@ -9,7 +9,9 @@ using Syncro.Desktop.Services.SyncroCLI.Providers;
 using Syncro.Desktop.Services.SyncroCLI.Execution;
 using Syncro.Desktop.Services.SyncroCLI.Providers.Git;
 using Syncro.Desktop.Services.SyncroCLI.Core.Platform;
+using Syncro.Desktop.Services.Ide;
 using DeveloperAI.BusinessLogic;
+using Syncro.Desktop.Services.AST;
 
 namespace Syncro.Desktop.Services.SyncroCLI
 {
@@ -22,12 +24,19 @@ namespace Syncro.Desktop.Services.SyncroCLI
         public readonly ElevationService Elevation;
         public readonly IPlatformService Platform;
         private readonly AIClient _aiClient;
+        private readonly AstService _astService;
+        private readonly IdeWindowService _ideWin;
+
+        /// <summary>The scan command instance, exposed so the UI can subscribe to OnScanComplete.</summary>
+        public ScanCommand ScanCmd { get; private set; } = null!;
 
         public event Action<string>? OnLog;
 
-        public SyncroCLIService(AIClient aiClient)
+        public SyncroCLIService(AIClient aiClient, AstService astService, IdeWindowService ideWin)
         {
             _aiClient = aiClient;
+            _astService = astService;
+            _ideWin = ideWin;
             
             // Phase 1: Platform Detection
             var platformType = PlatformDetector.Detect();
@@ -72,11 +81,19 @@ namespace Syncro.Desktop.Services.SyncroCLI
 
             var gitProvider = new GitProvider(ProcessRunner);
 
+            // Build the scan command and keep a reference for the UI
+            ScanCmd = new ScanCommand(_astService, Log);
+
             // Register Commands
             Engine.RegisterCommand(new InitCommand(providers, _aiClient, Log));
             Engine.RegisterCommand(new GitCommand(gitProvider, Log));
             Engine.RegisterCommand(new DoctorCommand(Log));
             Engine.RegisterCommand(new ScriptCommand(ScriptRunner, Marketplace, Log));
+            Engine.RegisterCommand(new AstCommand(_astService, Log));
+            Engine.RegisterCommand(new StatusCommand(Log));
+            Engine.RegisterCommand(ScanCmd);
+            Engine.RegisterCommand(new IdeCommand(_ideWin, Log));
+            Engine.RegisterCommand(new MonitorCommand(Log));
             // Add Help Command
             Engine.RegisterCommand(new HelpCommand(Engine, Log));
         }
@@ -88,7 +105,7 @@ namespace Syncro.Desktop.Services.SyncroCLI
 
         public async Task InitializeCLI()
         {
-            Log("SyncroCLI Engine Started.");
+            Log("Syncro CLI Engine Started.");
             await AddToPath(AppDomain.CurrentDomain.BaseDirectory);
         }
 
@@ -178,11 +195,15 @@ namespace Syncro.Desktop.Services.SyncroCLI
         public async Task Execute(CommandContext context)
         {
             await Task.Run(() => {
-                _logger("Available Commands:");
+                _logger("╔══════════════════════════════════════════╗");
+                _logger("║       SYNCRO CLI — COMMAND REFERENCE     ║");
+                _logger("╚══════════════════════════════════════════╝");
+                _logger("");
                 foreach (var cmd in _engine.GetCommands())
                 {
-                    _logger($"  {cmd.Name,-10} - {cmd.Description}");
+                    _logger($"  {cmd.Name,-12} {cmd.Description}");
                 }
+                _logger("");
             });
         }
     }

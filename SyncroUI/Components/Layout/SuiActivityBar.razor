@@ -1,0 +1,57 @@
+@using Syncro.Desktop.SyncroUI.Components.Primitives
+
+<div class="sui-activitybar">
+    <div class="sui-activitybar-top">
+        @foreach (var item in TopItems)
+        {
+            <div class="sui-activity-item @(ActiveId == item.Id ? "is-active" : "")" 
+                 title="@item.Title" 
+                 @onclick="() => OnItemClick(item)">
+                <i class="@item.Icon"></i>
+                @if (item.BadgeCount > 0)
+                {
+                    <div class="sui-activity-badge">
+                        <SuiBadge Color="accent" Text="@(item.BadgeCount > 99 ? "99+" : item.BadgeCount.ToString())" />
+                    </div>
+                }
+            </div>
+        }
+    </div>
+    <div class="sui-activitybar-bottom">
+        @foreach (var item in BottomItems)
+        {
+            <div class="sui-activity-item @(ActiveId == item.Id ? "is-active" : "")" 
+                 title="@item.Title" 
+                 @onclick="() => OnItemClick(item)">
+                <i class="@item.Icon"></i>
+                @if (item.BadgeCount > 0)
+                {
+                    <div class="sui-activity-badge">
+                        <SuiBadge Color="accent" Text="@(item.BadgeCount > 99 ? "99+" : item.BadgeCount.ToString())" />
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public List<ActivityItem> TopItems { get; set; } = new();
+    [Parameter] public List<ActivityItem> BottomItems { get; set; } = new();
+    [Parameter] public string ActiveId { get; set; } = "";
+    [Parameter] public EventCallback<string> ActiveIdChanged { get; set; }
+
+    public class ActivityItem
+    {
+        public string Id { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string Icon { get; set; } = "";
+        public int BadgeCount { get; set; }
+    }
+
+    private async Task OnItemClick(ActivityItem item)
+    {
+        ActiveId = item.Id;
+        await ActiveIdChanged.InvokeAsync(ActiveId);
+    }
+}

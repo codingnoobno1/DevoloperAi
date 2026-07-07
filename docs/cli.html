@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Syncro CLI v2 — Architecture & Deep Dive | Syncro Docs</title>
+  <meta name="description" content="Full architecture, command reference, Win32 integration, AI pipeline, and RAG shell for the Syncro CLI v2 standalone executable.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0d14;
+      --surface: #111520;
+      --surface2: #171c2e;
+      --border: #1e2540;
+      --accent: #6c63ff;
+      --accent2: #00d4ff;
+      --accent3: #ff6c6c;
+      --green: #00e5a0;
+      --yellow: #ffd166;
+      --text: #e2e8f0;
+      --text-dim: #8892a4;
+      --text-bright: #ffffff;
+      --sidebar-w: 280px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      min-height: 100vh;
+    }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: var(--sidebar-w);
+      min-height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    .sidebar-brand {
+      padding: 24px 20px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .brand-logo {
+      font-size: 22px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .sidebar nav { padding: 16px 12px; flex: 1; }
+
+    .nav-section-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      padding: 8px 8px 4px;
+      margin-top: 12px;
+    }
+
+    .nav-link {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 13.5px;
+      color: var(--text-dim);
+      text-decoration: none;
+      transition: all 0.2s;
+      margin-bottom: 2px;
+    }
+
+    .nav-link:hover, .nav-link.active {
+      background: linear-gradient(135deg, rgba(108,99,255,0.18), rgba(0,212,255,0.08));
+      color: var(--text-bright);
+      border-left: 2px solid var(--accent);
+      padding-left: 10px;
+    }
+
+    .nav-link .icon { font-size: 16px; width: 20px; text-align: center; }
+
+    /* ── Main Content ── */
+    .main {
+      flex: 1;
+      overflow-y: auto;
+      max-width: calc(100vw - var(--sidebar-w));
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #0f1428 0%, #141830 50%, #0a0d1a 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 60px 64px 48px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -60px; right: -60px;
+      width: 400px; height: 400px;
+      background: radial-gradient(circle, rgba(108,99,255,0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(108,99,255,0.15);
+      border: 1px solid rgba(108,99,255,0.4);
+      border-radius: 100px;
+      padding: 4px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #a89dff;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .hero h1 {
+      font-size: 48px;
+      font-weight: 800;
+      background: linear-gradient(135deg, #fff 0%, #a89dff 50%, var(--accent2) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      line-height: 1.1;
+      margin-bottom: 16px;
+    }
+
+    .hero-desc {
+      font-size: 17px;
+      color: var(--text-dim);
+      max-width: 600px;
+      line-height: 1.7;
+    }
+
+    .hero-stats {
+      display: flex;
+      gap: 32px;
+      margin-top: 36px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .stat-num {
+      font-size: 28px;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .stat-label {
+      font-size: 12px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* ── Content Sections ── */
+    .content { padding: 48px 64px; }
+
+    .section { margin-bottom: 64px; }
+
+    h2.section-title {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text-bright);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    h2.section-title .tag {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 100px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+
+    .tag-new { background: rgba(0,229,160,0.15); color: var(--green); border: 1px solid rgba(0,229,160,0.3); }
+    .tag-core { background: rgba(108,99,255,0.15); color: #a89dff; border: 1px solid rgba(108,99,255,0.3); }
+    .tag-win32 { background: rgba(0,212,255,0.15); color: var(--accent2); border: 1px solid rgba(0,212,255,0.3); }
+    .tag-ai { background: rgba(255,108,108,0.15); color: var(--accent3); border: 1px solid rgba(255,108,108,0.3); }
+
+    .section-sub {
+      font-size: 15px;
+      color: var(--text-dim);
+      margin-bottom: 28px;
+      line-height: 1.6;
+    }
+
+    /* ── Architecture Tree ── */
+    .tree-box {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+
+    .tree-header {
+      background: linear-gradient(135deg, rgba(108,99,255,0.1), rgba(0,212,255,0.05));
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tree-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-red { background: #ff5f57; }
+    .dot-yellow { background: #febc2e; }
+    .dot-green { background: #28c840; }
+
+    .tree-title {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      color: var(--text-dim);
+      margin-left: 8px;
+    }
+
+    pre.tree {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      color: #c8d6f0;
+      padding: 24px 28px;
+      line-height: 1.8;
+      overflow-x: auto;
+    }
+
+    pre.tree .kw { color: var(--accent); }
+    pre.tree .cmd { color: var(--accent2); }
+    pre.tree .comment { color: var(--text-dim); }
+    pre.tree .val { color: var(--green); }
+    pre.tree .warn { color: var(--yellow); }
+
+    /* ── Command Grid ── */
+    .cmd-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 16px;
+      margin-top: 8px;
+    }
+
+    .cmd-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      transition: all 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cmd-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .cmd-card:hover { border-color: rgba(108,99,255,0.5); transform: translateY(-2px); }
+    .cmd-card:hover::before { opacity: 1; }
+
+    .cmd-name {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--accent2);
+      margin-bottom: 6px;
+    }
+
+    .cmd-tag {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 8px;
+      border-radius: 100px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 10px;
+    }
+
+    .ctag-system { background: rgba(108,99,255,0.15); color: #a89dff; }
+    .ctag-ai { background: rgba(255,108,108,0.15); color: #ff9999; }
+    .ctag-dev { background: rgba(0,229,160,0.15); color: var(--green); }
+    .ctag-info { background: rgba(0,212,255,0.15); color: var(--accent2); }
+    .ctag-db { background: rgba(255,209,102,0.15); color: var(--yellow); }
+
+    .cmd-desc {
+      font-size: 13px;
+      color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    .cmd-examples {
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .cmd-ex-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .cmd-ex {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--green);
+      background: rgba(0,229,160,0.06);
+      padding: 6px 10px;
+      border-radius: 6px;
+      margin-bottom: 4px;
+      display: block;
+    }
+
+    /* ── Code Block ── */
+    .code-block {
+      background: #080b14;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      margin: 16px 0;
+    }
+
+    .code-header {
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .code-lang {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+
+    .code-dots { display: flex; gap: 6px; }
+    .code-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+    pre.code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      padding: 22px 24px;
+      line-height: 1.75;
+      overflow-x: auto;
+      color: #c8d6f0;
+    }
+
+    .cs-kw { color: #569cd6; }
+    .cs-type { color: #4ec9b0; }
+    .cs-str { color: #ce9178; }
+    .cs-comment { color: #6a9955; font-style: italic; }
+    .cs-num { color: #b5cea8; }
+    .cs-attr { color: #c586c0; }
+    .xml-tag { color: #4ec9b0; }
+    .xml-attr { color: #9cdcfe; }
+    .xml-val { color: #ce9178; }
+    .sh-cmd { color: var(--accent2); }
+    .sh-flag { color: var(--yellow); }
+    .sh-comment { color: #6a9955; font-style: italic; }
+
+    /* ── Flow Diagram ── */
+    .flow {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      flex-wrap: wrap;
+      padding: 24px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow-x: auto;
+    }
+
+    .flow-node {
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .fn-purple { background: rgba(108,99,255,0.25); border: 1px solid rgba(108,99,255,0.5); color: #c0b9ff; }
+    .fn-blue { background: rgba(0,212,255,0.15); border: 1px solid rgba(0,212,255,0.4); color: var(--accent2); }
+    .fn-green { background: rgba(0,229,160,0.15); border: 1px solid rgba(0,229,160,0.4); color: var(--green); }
+    .fn-red { background: rgba(255,108,108,0.15); border: 1px solid rgba(255,108,108,0.4); color: var(--accent3); }
+    .fn-yellow { background: rgba(255,209,102,0.15); border: 1px solid rgba(255,209,102,0.4); color: var(--yellow); }
+
+    .flow-arrow {
+      padding: 0 8px;
+      color: var(--text-dim);
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+
+    /* ── Info Cards ── */
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .info-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .info-icon { font-size: 24px; margin-bottom: 10px; }
+    .info-title { font-size: 15px; font-weight: 700; color: var(--text-bright); margin-bottom: 8px; }
+    .info-body { font-size: 13px; color: var(--text-dim); line-height: 1.65; }
+
+    /* ── Alert Box ── */
+    .alert {
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin: 16px 0;
+      border-left: 4px solid;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .alert-warn { background: rgba(255,209,102,0.08); border-color: var(--yellow); color: #e8d18a; }
+    .alert-info { background: rgba(0,212,255,0.08); border-color: var(--accent2); color: #99e8ff; }
+    .alert-success { background: rgba(0,229,160,0.08); border-color: var(--green); color: #88f0d0; }
+    .alert-danger { background: rgba(255,108,108,0.08); border-color: var(--accent3); color: #ffb3b3; }
+
+    .alert strong { font-weight: 700; }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; margin: 16px 0; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13.5px;
+    }
+
+    th {
+      background: var(--surface2);
+      padding: 12px 16px;
+      text-align: left;
+      font-weight: 700;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 11px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    td {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(30,37,64,0.5);
+      color: var(--text);
+      vertical-align: top;
+    }
+
+    tr:hover td { background: rgba(108,99,255,0.04); }
+
+    td code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      background: rgba(108,99,255,0.1);
+      padding: 2px 8px;
+      border-radius: 4px;
+      color: #c0b9ff;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(108,99,255,0.5); }
+
+    /* ── Responsive ── */
+    @media (max-width: 900px) {
+      .sidebar { display: none; }
+      .main { max-width: 100vw; }
+      .hero { padding: 40px 24px 32px; }
+      .content { padding: 32px 24px; }
+      .hero h1 { font-size: 32px; }
+    }
+
+    /* ── Anchors smooth ── */
+    html { scroll-behavior: smooth; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════ SIDEBAR ══════════ -->
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-logo">⚡ Syncro CLI</div>
+    <div class="brand-sub">v2 — Architecture Docs</div>
+  </div>
+  <nav>
+    <div class="nav-section-title">Overview</div>
+    <a href="#overview" class="nav-link active"><span class="icon">🏠</span> Introduction</a>
+    <a href="#tree" class="nav-link"><span class="icon">🌲</span> Directory Tree</a>
+    <a href="#commands" class="nav-link"><span class="icon">📟</span> Command Reference</a>
+
+    <div class="nav-section-title">Core Systems</div>
+    <a href="#win32" class="nav-link"><span class="icon">🪟</span> Win32 & PATH Install</a>
+    <a href="#shell" class="nav-link"><span class="icon">💻</span> Shell Runner</a>
+    <a href="#build" class="nav-link"><span class="icon">🔨</span> Build Pipeline</a>
+
+    <div class="nav-section-title">Advanced</div>
+    <a href="#ai-pipe" class="nav-link"><span class="icon">🤖</span> AI Command Pipeline</a>
+    <a href="#pipe-bridge" class="nav-link"><span class="icon">🔗</span> Named Pipe Bridge</a>
+    <a href="#scripts" class="nav-link"><span class="icon">📜</span> Pre-Written Scripts</a>
+    <a href="#security" class="nav-link"><span class="icon">🔒</span> Security & UAC</a>
+    <a href="#roadmap" class="nav-link"><span class="icon">🗺️</span> Roadmap</a>
+
+    <div class="nav-section-title">Navigation</div>
+    <a href="index.html" class="nav-link"><span class="icon">↩</span> Back to Home</a>
+    <a href="vectordb.html" class="nav-link"><span class="icon">🗄️</span> SyncroDB Docs</a>
+    <a href="rag.html" class="nav-link"><span class="icon">🧠</span> RAG & Memory</a>
+  </nav>
+</aside>
+
+<!-- ══════════ MAIN ══════════ -->
+<main class="main">
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-badge">🛠 Standalone Executable · Win32 · AI-Powered</div>
+    <h1>Syncro CLI v2</h1>
+    <p class="hero-desc">
+      A fully standalone Windows executable that bridges PowerShell, Bash, Win32 APIs, AI LLM inference,
+      and the Syncro Desktop agent — without ever blocking the MAUI UI thread.
+    </p>
+    <div class="hero-stats">
+      <div class="stat">
+        <span class="stat-num">18+</span>
+        <span class="stat-label">Top-Level Commands</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num">30+</span>
+        <span class="stat-label">Sub-Commands</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num">Win32</span>
+        <span class="stat-label">PATH Installer</span>
+      </div>
+      <div class="stat">
+        <span class="stat-num">RAG</span>
+        <span class="stat-label">Hindsight AI</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="content">
+
+    <!-- ── Overview ── -->
+    <section class="section" id="overview">
+      <h2 class="section-title">Introduction <span class="tag tag-core">Core</span></h2>
+      <p class="section-sub">
+        <code>syncro-cli.exe</code> is a <strong>completely independent .NET 9 console application</strong> that runs in its own native
+        Windows Terminal / PowerShell window. It communicates back to the Syncro Desktop agent via a
+        <strong>Named Pipe IPC bridge</strong>, making it safe to crash, restart, and extend
+        <em>without ever risking the MAUI host process</em>.
+      </p>
+      <div class="info-grid">
+        <div class="info-card">
+          <div class="info-icon">🔌</div>
+          <div class="info-title">Fully Isolated Process</div>
+          <div class="info-body">Spawned as a separate <code>Process</code> via <code>UseShellExecute=true</code>. Crashes in CLI never propagate to the Desktop app.</div>
+        </div>
+        <div class="info-card">
+          <div class="info-icon">🪟</div>
+          <div class="info-title">Win32 System Integration</div>
+          <div class="info-body">Uses <code>SendMessageTimeout</code> P/Invoke to broadcast <code>WM_SETTINGCHANGE</code> after PATH updates — no reboot required.</div>
+        </div>
+        <div class="info-card">
+          <div class="info-icon">🤖</div>
+          <div class="info-title">AI-Aware Commands</div>
+          <div class="info-body"><code>syncro ai explain</code>, <code>syncro ai generate</code>, and <code>syncro ai patch</code> call the local LLM with AST + Vector DB context.</div>
+        </div>
+        <div class="info-card">
+          <div class="info-icon">📡</div>
+          <div class="info-title">Status Reporting</div>
+          <div class="info-body">Live status pushed from CLI to Desktop UI over a Named Pipe — visible in the Agent sidebar as real-time task updates.</div>
+        </div>
+        <div class="info-card">
+          <div class="info-icon">📜</div>
+          <div class="info-title">Extendable Scripts</div>
+          <div class="info-body">Pre-written Bash/PS1 scripts bundled with the CLI. The AI can add new scripts at runtime via RAG hindsight learning.</div>
+        </div>
+        <div class="info-card">
+          <div class="info-icon">🔐</div>
+          <div class="info-title">UAC Elevation</div>
+          <div class="info-body">Detects admin rights at startup. If missing, relaunches itself with <code>verb="runas"</code> for PATH registration tasks.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Directory Tree ── -->
+    <section class="section" id="tree">
+      <h2 class="section-title">Project Directory Tree <span class="tag tag-new">Structure</span></h2>
+      <p class="section-sub">Full file layout of the <code>Syncro.CLI</code> standalone project and its integration hooks inside <code>Syncro.Desktop</code>.</p>
+      <div class="tree-box">
+        <div class="tree-header">
+          <div class="tree-dot dot-red"></div>
+          <div class="tree-dot dot-yellow"></div>
+          <div class="tree-dot dot-green"></div>
+          <span class="tree-title">Syncro.CLI — Project Structure</span>
+        </div>
+<pre class="tree">
+Syncro.Desktop/
+├── <span class="kw">Syncro.CLI/</span>                         <span class="comment"># Standalone console project</span>
+│   ├── <span class="cmd">Syncro.CLI.csproj</span>               <span class="comment"># net9.0 Exe, AssemblyName=syncro-cli</span>
+│   ├── <span class="cmd">Program.cs</span>                      <span class="comment"># Entry point, interactive REPL loop</span>
+│   ├── <span class="cmd">Win32Api.cs</span>                     <span class="comment"># P/Invoke: SendMessageTimeout, Broadcast</span>
+│   ├── <span class="cmd">ShellRunner.cs</span>                  <span class="comment"># PowerShell & Bash execution abstraction</span>
+│   ├── Commands/
+│   │   ├── <span class="val">InitCommand.cs</span>              <span class="comment"># syncro init — workspace bootstrapper</span>
+│   │   ├── <span class="val">DoctorCommand.cs</span>            <span class="comment"># syncro doctor — env health check</span>
+│   │   ├── <span class="val">GitCommand.cs</span>               <span class="comment"># syncro git clone/pull/push</span>
+│   │   ├── <span class="val">RunCommand.cs</span>               <span class="comment"># syncro run — project launcher</span>
+│   │   ├── <span class="val">ScanCommand.cs</span>              <span class="comment"># syncro scan — trigger AST analysis</span>
+│   │   ├── <span class="val">GraphCommand.cs</span>             <span class="comment"># syncro graph — render dependency graph</span>
+│   │   ├── <span class="val">AstCommand.cs</span>               <span class="comment"># syncro ast — inspect AST nodes</span>
+│   │   ├── <span class="val">KbCommand.cs</span>                <span class="comment"># syncro kb — knowledge base operations</span>
+│   │   ├── <span class="val">MemoryCommand.cs</span>            <span class="comment"># syncro memory — view agent memory</span>
+│   │   ├── <span class="val">AiCommand.cs</span>                <span class="comment"># syncro ai — LLM queries with RAG</span>
+│   │   ├── <span class="val">ProjectCommand.cs</span>           <span class="comment"># syncro project — manage projects</span>
+│   │   ├── <span class="val">TemplateCommand.cs</span>          <span class="comment"># syncro template — list/apply templates</span>
+│   │   ├── <span class="val">GenerateCommand.cs</span>          <span class="comment"># syncro generate — scaffold code</span>
+│   │   ├── <span class="val">PatchCommand.cs</span>             <span class="comment"># syncro patch — AI auto-fix</span>
+│   │   ├── <span class="val">DeployCommand.cs</span>            <span class="comment"># syncro deploy — push to cloud</span>
+│   │   ├── <span class="val">StatusCommand.cs</span>            <span class="comment"># syncro status — push status to Desktop</span>
+│   │   └── <span class="val">InstallCommand.cs</span>           <span class="comment"># syncro install — PATH registration</span>
+│   ├── AI/
+│   │   ├── <span class="warn">AgentBridge.cs</span>              <span class="comment"># Named Pipe client → Desktop UI</span>
+│   │   ├── <span class="warn">RagEngine.cs</span>                <span class="comment"># RAG retrieval from SyncroDB Vectors</span>
+│   │   └── <span class="warn">LlmClient.cs</span>               <span class="comment"># Local LLM or API call abstraction</span>
+│   └── Scripts/
+│       ├── <span class="val">setup-venv.sh</span>               <span class="comment"># Python venv bootstrapper</span>
+│       ├── <span class="val">install-node.ps1</span>            <span class="comment"># Node.js + npm installer</span>
+│       ├── <span class="val">check-db.sh</span>                 <span class="comment"># DB connectivity checker (SQL/NoSQL)</span>
+│       ├── <span class="val">clone-repo.ps1</span>              <span class="comment"># Safe repo cloner with crash guard</span>
+│       └── <span class="val">add-to-path.ps1</span>             <span class="comment"># Elevated PATH registration script</span>
+└── <span class="kw">Syncro.Desktop.csproj</span>               <span class="comment"># Post-build target: BuildCLI</span>
+</pre>
+      </div>
+    </section>
+
+    <!-- ── Commands ── -->
+    <section class="section" id="commands">
+      <h2 class="section-title">Full Command Reference <span class="tag tag-new">18 Commands</span></h2>
+      <p class="section-sub">Every top-level command with subcommands, descriptions, and usage examples.</p>
+      <div class="cmd-grid">
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro init</div>
+          <span class="cmd-tag ctag-dev">Dev</span>
+          <div class="cmd-desc">Bootstraps a new Syncro workspace. Creates <code>.syncro_db/</code>, registers the project, and detects the tech stack automatically via the language/framework fingerprinting engine.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro init .</code>
+            <code class="cmd-ex">syncro init ./myproject --name "Viking API"</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro doctor</div>
+          <span class="cmd-tag ctag-info">Info</span>
+          <div class="cmd-desc">Runs a complete environment health check: verifies Node.js, Python, .NET SDK, Git, Docker, database connectivity, and venv presence. Outputs a color-coded report.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro doctor</code>
+            <code class="cmd-ex">syncro doctor --fix</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro git</div>
+          <span class="cmd-tag ctag-dev">Dev</span>
+          <div class="cmd-desc">Safe Git wrapper that clones, pulls, and pushes repositories <em>in a child process</em>. Reports progress back to Desktop via Named Pipe. Clone failures never crash the host.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro git clone https://github.com/user/repo.git</code>
+            <code class="cmd-ex">syncro git pull --rebase</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro run</div>
+          <span class="cmd-tag ctag-dev">Dev</span>
+          <div class="cmd-desc">Detects the project type and runs its appropriate dev server: <code>npm run dev</code>, <code>dotnet run</code>, <code>python manage.py runserver</code>, <code>flutter run</code>, etc.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro run</code>
+            <code class="cmd-ex">syncro run --port 5000 --env .env.local</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro scan</div>
+          <span class="cmd-tag ctag-system">System</span>
+          <div class="cmd-desc">Triggers a full AST scan of the current project. Nodes are parsed, context-filtered (separating build artifacts from source), and stored in <code>SyncroDB/AST/</code>.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro scan --depth 5</code>
+            <code class="cmd-ex">syncro scan --filter source</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro graph</div>
+          <span class="cmd-tag ctag-info">Info</span>
+          <div class="cmd-desc">Renders the dependency graph from the AST. Outputs Mermaid or DOT format. Supports cross-project group graphs for combo stacks like Next.js + MongoDB.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro graph --format mermaid</code>
+            <code class="cmd-ex">syncro graph --output graph.dot</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro ast</div>
+          <span class="cmd-tag ctag-system">System</span>
+          <div class="cmd-desc">Directly queries the AST node store. Inspect specific symbols, list all classes, or find all usages of a method across the codebase.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro ast find TenderController</code>
+            <code class="cmd-ex">syncro ast usages loginUser</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro kb</div>
+          <span class="cmd-tag ctag-db">DB</span>
+          <div class="cmd-desc">Manages the Knowledge Base within SyncroDB. Add, search, and list architectural notes, design decisions, and framework documentation snippets.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro kb search "JWT auth flow"</code>
+            <code class="cmd-ex">syncro kb add --tag auth --file notes.md</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro memory</div>
+          <span class="cmd-tag ctag-ai">AI</span>
+          <div class="cmd-desc">Views and manages the Agent Memory Store — past code generations, their success/failure status, and iteration counts. Used to guide future RAG-based suggestions.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro memory list --status failed</code>
+            <code class="cmd-ex">syncro memory purge --older-than 30d</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro ai</div>
+          <span class="cmd-tag ctag-ai">AI</span>
+          <div class="cmd-desc">The primary AI command. Integrates AST context, Vector DB search, and LLM inference. Supports <code>explain</code>, <code>generate</code>, <code>find-auth-flow</code>, <code>patch</code>, and <code>review</code>.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro ai explain TenderController</code>
+            <code class="cmd-ex">syncro ai generate dto Tender</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro project</div>
+          <span class="cmd-tag ctag-system">System</span>
+          <div class="cmd-desc">Registers, lists, and removes projects from the SyncroDB Projects index. Supports grouping projects into combo stacks (e.g. Flutter + Next.js).</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro project list</code>
+            <code class="cmd-ex">syncro project group "MERN Stack" api frontend</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro template</div>
+          <span class="cmd-tag ctag-dev">Dev</span>
+          <div class="cmd-desc">Lists and applies micro-architecture templates stored in SyncroDB — e.g. <em>JWT Auth</em>, <em>Stripe Checkout</em>, <em>MongoDB Connector</em>, <em>Redis Cache</em>.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro template list</code>
+            <code class="cmd-ex">syncro template apply jwt-auth ./src/auth</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro generate</div>
+          <span class="cmd-tag ctag-ai">AI</span>
+          <div class="cmd-desc">Scaffolds full boilerplate matching the detected language and framework conventions. Uses Memory Store to prefer generation patterns with <code>success=true</code>.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro generate controller Tender</code>
+            <code class="cmd-ex">syncro generate service UserAuth --lang csharp</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro patch</div>
+          <span class="cmd-tag ctag-ai">AI</span>
+          <div class="cmd-desc">Reads the last compiler error from <code>SyncroDB/Errors/</code> and runs an AI-assisted auto-fix pipeline. Applies the patch, re-runs build, and updates memory on result.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro patch --last-error</code>
+            <code class="cmd-ex">syncro patch --file src/controllers/auth.ts</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro deploy</div>
+          <span class="cmd-tag ctag-system">System</span>
+          <div class="cmd-desc">Pushes the project to configured cloud targets (Cloud Run, Azure App Service, Vercel). Reads deployment config from <code>.syncro_db/deploy.json</code>.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro deploy --target cloudrun</code>
+            <code class="cmd-ex">syncro deploy --preview</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro status</div>
+          <span class="cmd-tag ctag-info">Info</span>
+          <div class="cmd-desc">Pushes the current CLI task status to the Syncro Desktop UI via Named Pipe. The Desktop sidebar shows live task progress without polling.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro status --msg "AST scan complete" --level success</code>
+            <code class="cmd-ex">syncro status --task current</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro install</div>
+          <span class="cmd-tag ctag-system">System</span>
+          <div class="cmd-desc">Auto-elevates via UAC and registers <code>syncro-cli.exe</code> in the Windows Machine-level PATH. Broadcasts <code>WM_SETTINGCHANGE</code> so all open shells pick it up immediately.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro install</code>
+            <code class="cmd-ex">syncro install --uninstall</code>
+          </div>
+        </div>
+
+        <div class="cmd-card">
+          <div class="cmd-name">syncro agent</div>
+          <span class="cmd-tag ctag-ai">AI</span>
+          <div class="cmd-desc">Invokes a multi-step autonomous AI agent task. The agent can chain AST scans, code generation, build verification, and auto-patching in a single session.</div>
+          <div class="cmd-examples">
+            <div class="cmd-ex-label">Examples</div>
+            <code class="cmd-ex">syncro agent "Refactor auth to use JWT refresh tokens"</code>
+            <code class="cmd-ex">syncro agent --plan-only</code>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ── Win32 & PATH ── -->
+    <section class="section" id="win32">
+      <h2 class="section-title">Win32 PATH Installer <span class="tag tag-win32">Win32 API</span></h2>
+      <p class="section-sub">
+        Setting the Machine-level <code>PATH</code> environment variable requires Administrator rights and a <code>WM_SETTINGCHANGE</code>
+        broadcast so that open shells (CMD, PowerShell, Windows Terminal) pick up the change without rebooting.
+      </p>
+
+      <div class="alert alert-warn">
+        <strong>⚠ UAC Elevation Required:</strong> The installer checks for admin rights using <code>WindowsIdentity.GetCurrent()</code>
+        and <code>IsInRole(WindowsBuiltInRole.Administrator)</code>. If not elevated, it relaunches itself with <code>verb = "runas"</code>.
+      </div>
+
+      <h3 style="color:var(--text-bright);margin:24px 0 12px;font-size:16px;">Elevation Flow</h3>
+      <div class="flow">
+        <div class="flow-node fn-purple">syncro install</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-blue">Check WindowsIdentity</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-red">Not Admin?</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-yellow">Relaunch runas</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-green">UAC Dialog</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-green">Write Machine PATH</div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node fn-green">Broadcast WM_SETTINGCHANGE</div>
+      </div>
+
+      <div class="code-block" style="margin-top:24px;">
+        <div class="code-header">
+          <span class="code-lang">C# — Win32Api.cs</span>
+          <div class="code-dots">
+            <div class="code-dot" style="background:#ff5f57"></div>
+            <div class="code-dot" style="background:#febc2e"></div>
+            <div class="code-dot" style="background:#28c840"></div>
+          </div>
+        </div>
+<pre class="code"><span class="cs-kw">public static class</span> <span class="cs-type">Win32Api</span>
+{
+    <span class="cs-comment">// Broadcast WM_SETTINGCHANGE so all open shells pick up the new PATH</span>
+    <span class="cs-attr">[DllImport(<span class="cs-str">"user32.dll"</span>, SetLastError = <span class="cs-kw">true</span>, CharSet = CharSet.Auto)]</span>
+    <span class="cs-kw">public static extern</span> <span class="cs-type">IntPtr</span> SendMessageTimeout(
+        <span class="cs-type">IntPtr</span> hWnd,     <span class="cs-comment">// HWND_BROADCAST = 0xFFFF</span>
+        <span class="cs-type">uint</span>   Msg,      <span class="cs-comment">// WM_SETTINGCHANGE = 0x001A</span>
+        <span class="cs-type">IntPtr</span> wParam,
+        <span class="cs-type">string</span> lParam,   <span class="cs-comment">// "Environment"</span>
+        <span class="cs-type">uint</span>   fuFlags,  <span class="cs-comment">// SMTO_ABORTIFHUNG = 0x0002</span>
+        <span class="cs-type">uint</span>   uTimeout,
+        <span class="cs-kw">out</span> <span class="cs-type">IntPtr</span> lpdwResult);
+
+    <span class="cs-kw">public static void</span> BroadcastEnvironmentChange()
+    {
+        <span class="cs-type">IntPtr</span> result;
+        SendMessageTimeout(
+            <span class="cs-kw">new</span> <span class="cs-type">IntPtr</span>(<span class="cs-num">0xFFFF</span>),  <span class="cs-comment">// HWND_BROADCAST</span>
+            <span class="cs-num">0x001A</span>,              <span class="cs-comment">// WM_SETTINGCHANGE</span>
+            <span class="cs-type">IntPtr</span>.Zero,
+            <span class="cs-str">"Environment"</span>,
+            <span class="cs-num">0x0002</span>,              <span class="cs-comment">// SMTO_ABORTIFHUNG</span>
+            <span class="cs-num">5000</span>,
+            <span class="cs-kw">out</span> result);
+    }
+
+    <span class="cs-kw">public static void</span> RegisterInSystemPath(<span class="cs-type">string</span> cliDirectory)
+    {
+        <span class="cs-kw">var</span> current = Environment.GetEnvironmentVariable(
+            <span class="cs-str">"PATH"</span>, EnvironmentVariableTarget.Machine) ?? <span class="cs-str">""</span>;
+
+        <span class="cs-kw">if</span> (!current.Contains(cliDirectory, StringComparison.OrdinalIgnoreCase))
+        {
+            Environment.SetEnvironmentVariable(
+                <span class="cs-str">"PATH"</span>,
+                current + <span class="cs-str">";"</span> + cliDirectory,
+                EnvironmentVariableTarget.Machine);
+
+            BroadcastEnvironmentChange();
+        }
+    }
+}</pre>
+      </div>
+    </section>
+
+    <!-- ── Shell Runner ── -->
+    <section class="section" id="shell">
+      <h2 class="section-title">Shell Runner <span class="tag tag-core">Core</span></h2>
+      <p class="section-sub">
+        <code>ShellRunner.cs</code> is the execution abstraction layer. It wraps PowerShell and Bash invocations,
+        captures stdout/stderr, streams output to the Named Pipe bridge in real-time, and records exit codes.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Shell</th>
+              <th>Use Case</th>
+              <th>Return</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>RunPowershell(script)</code></td>
+              <td>PowerShell 7+</td>
+              <td>Node install, PATH scripts, Windows automation</td>
+              <td><code>ShellResult { ExitCode, Stdout, Stderr }</code></td>
+            </tr>
+            <tr>
+              <td><code>RunBash(script)</code></td>
+              <td>Git Bash / WSL</td>
+              <td>Python venv, Linux-compatible setup scripts</td>
+              <td><code>ShellResult { ExitCode, Stdout, Stderr }</code></td>
+            </tr>
+            <tr>
+              <td><code>RunAndStream(cmd, pipe)</code></td>
+              <td>Any</td>
+              <td>Real-time output streaming to Desktop UI via Named Pipe</td>
+              <td>Async <code>IAsyncEnumerable&lt;string&gt;</code></td>
+            </tr>
+            <tr>
+              <td><code>RunElevated(exe, args)</code></td>
+              <td>OS Shell</td>
+              <td>Admin-required operations (PATH write, service install)</td>
+              <td><code>Process</code> handle</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Build Pipeline ── -->
+    <section class="section" id="build">
+      <h2 class="section-title">Build Pipeline <span class="tag tag-core">MSBuild</span></h2>
+      <p class="section-sub">
+        The CLI is compiled automatically every time <code>Syncro.Desktop</code> is built, via a post-build MSBuild target.
+        The output binary is copied directly into the Desktop's output directory.
+      </p>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-lang">XML — Syncro.Desktop.csproj (Post-Build Target)</span>
+          <div class="code-dots">
+            <div class="code-dot" style="background:#ff5f57"></div>
+            <div class="code-dot" style="background:#febc2e"></div>
+            <div class="code-dot" style="background:#28c840"></div>
+          </div>
+        </div>
+<pre class="code"><span class="xml-tag">&lt;Target</span> <span class="xml-attr">Name</span>=<span class="xml-val">"BuildCLI"</span> <span class="xml-attr">AfterTargets</span>=<span class="xml-val">"Build"</span><span class="xml-tag">&gt;</span>
+
+  <span class="cs-comment">&lt;!-- Step 1: Compile the standalone CLI console project --&gt;</span>
+  <span class="xml-tag">&lt;MSBuild</span>
+    <span class="xml-attr">Projects</span>=<span class="xml-val">"Syncro.CLI/Syncro.CLI.csproj"</span>
+    <span class="xml-attr">Targets</span>=<span class="xml-val">"Publish"</span>
+    <span class="xml-attr">Properties</span>=<span class="xml-val">"PublishSingleFile=true;SelfContained=false;RuntimeIdentifier=win-x64"</span> <span class="xml-tag">/&gt;</span>
+
+  <span class="cs-comment">&lt;!-- Step 2: Copy exe to Desktop output so it launches alongside the app --&gt;</span>
+  <span class="xml-tag">&lt;Copy</span>
+    <span class="xml-attr">SourceFiles</span>=<span class="xml-val">"Syncro.CLI/bin/Release/net9.0/win-x64/publish/syncro-cli.exe"</span>
+    <span class="xml-attr">DestinationFolder</span>=<span class="xml-val">"$(OutputPath)"</span>
+    <span class="xml-attr">SkipUnchangedFiles</span>=<span class="xml-val">"true"</span>
+    <span class="xml-attr">ContinueOnError</span>=<span class="xml-val">"true"</span> <span class="xml-tag">/&gt;</span>
+
+<span class="xml-tag">&lt;/Target&gt;</span></pre>
+      </div>
+      <div class="alert alert-info">
+        <strong>💡 PublishSingleFile:</strong> The CLI is published as a single self-contained <code>.exe</code> file.
+        No additional runtime DLLs are needed — just copy and run. Add the output directory to PATH and <code>syncro</code> works globally.
+      </div>
+    </section>
+
+    <!-- ── AI Command Pipeline ── -->
+    <section class="section" id="ai-pipe">
+      <h2 class="section-title">AI Command Pipeline <span class="tag tag-ai">AI + RAG</span></h2>
+      <p class="section-sub">
+        Every <code>syncro ai *</code> subcommand follows a multi-stage retrieval-augmented generation pipeline that
+        pulls context from AST nodes, Vector DB similarity search, and the Agent Memory Store.
+      </p>
+
+      <div class="flow" style="flex-direction:column;gap:12px;align-items:flex-start;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="flow-node fn-purple" style="min-width:180px;">1. Parse CLI Query</div>
+          <span style="color:var(--text-dim);font-size:13px;">— Extract intent: explain / generate / find / patch</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="flow-node fn-blue" style="min-width:180px;">2. AST Symbol Lookup</div>
+          <span style="color:var(--text-dim);font-size:13px;">— Fast O(1) index lookup in <code>SyncroDB/AST/</code></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="flow-node fn-blue" style="min-width:180px;">3. Vector Similarity</div>
+          <span style="color:var(--text-dim);font-size:13px;">— Cosine match in <code>SyncroDB/Vectors/</code> for semantic context</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="flow-node fn-yellow" style="min-width:180px;">4. Memory RAG</div>
+          <span style="color:var(--text-dim);font-size:13px;">— Inject past successful generations as few-shot examples</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="flow-node fn-red" style="min-width:180px;">5. Prompt Assembly</div>
+          <span style="color:var(--text-dim);font-size:13px;">— Merge AST + Vectors + Memory into structured LLM prompt</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="flow-node fn-green" style="min-width:180px;">6. LLM Inference</div>
+          <span style="color:var(--text-dim);font-size:13px;">— Call local or cloud LLM endpoint, stream output to terminal</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div class="flow-node fn-green" style="min-width:180px;">7. Save to Memory</div>
+          <span style="color:var(--text-dim);font-size:13px;">— Log result to <code>SyncroDB/Memory/</code> for hindsight learning</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Named Pipe Bridge ── -->
+    <section class="section" id="pipe-bridge">
+      <h2 class="section-title">Named Pipe Bridge <span class="tag tag-win32">IPC</span></h2>
+      <p class="section-sub">
+        The CLI and Desktop communicate via a local Windows Named Pipe. The Desktop hosts a
+        <code>NamedPipeServerStream</code>; the CLI connects as a client and pushes JSON status packets.
+        This is fully non-blocking — the Desktop reads on a background thread.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Packet Type</th>
+              <th>Fields</th>
+              <th>Triggered By</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>status</code></td>
+              <td><code>level, message, taskId</code></td>
+              <td><code>syncro status</code>, any long-running command</td>
+            </tr>
+            <tr>
+              <td><code>progress</code></td>
+              <td><code>percent, step, total</code></td>
+              <td>AST scan, clone, generate</td>
+            </tr>
+            <tr>
+              <td><code>error</code></td>
+              <td><code>code, message, file, line</code></td>
+              <td>Build failures, parser errors</td>
+            </tr>
+            <tr>
+              <td><code>result</code></td>
+              <td><code>type, data, durationMs</code></td>
+              <td>AI generate, graph render</td>
+            </tr>
+            <tr>
+              <td><code>heartbeat</code></td>
+              <td><code>pid, timestamp</code></td>
+              <td>Every 5 seconds while CLI is running</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ── Scripts ── -->
+    <section class="section" id="scripts">
+      <h2 class="section-title">Pre-Written Scripts <span class="tag tag-new">Bundled</span></h2>
+      <p class="section-sub">
+        The CLI ships with a <code>Scripts/</code> directory containing environment automation scripts.
+        The AI can generate and register new scripts at runtime via RAG hindsight.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Script</th>
+              <th>Shell</th>
+              <th>Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>setup-venv.sh</code></td>
+              <td>Bash</td>
+              <td>Detects Python version, creates <code>.venv</code>, installs <code>requirements.txt</code></td>
+            </tr>
+            <tr>
+              <td><code>install-node.ps1</code></td>
+              <td>PowerShell</td>
+              <td>Checks Node.js, installs via winget or nvm-windows</td>
+            </tr>
+            <tr>
+              <td><code>check-db.sh</code></td>
+              <td>Bash</td>
+              <td>Pings SQL/NoSQL hosts, reports latency and connection status</td>
+            </tr>
+            <tr>
+              <td><code>clone-repo.ps1</code></td>
+              <td>PowerShell</td>
+              <td>Safe git clone in child process; reports status via Named Pipe; never crashes host</td>
+            </tr>
+            <tr>
+              <td><code>add-to-path.ps1</code></td>
+              <td>PowerShell</td>
+              <td>Admin-elevated PATH registration + WM_SETTINGCHANGE broadcast</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="alert alert-success">
+        <strong>🤖 AI-Extendable:</strong> When <code>syncro ai generate script</code> creates a new helper script,
+        it is saved to <code>SyncroDB/Memory/</code> and registered in the script index.
+        On the next run, the RAG engine can suggest it as a reusable asset.
+      </div>
+    </section>
+
+    <!-- ── Security ── -->
+    <section class="section" id="security">
+      <h2 class="section-title">Security & UAC Model <span class="tag tag-ai">Security</span></h2>
+      <div class="info-grid">
+        <div class="info-card">
+          <div class="info-icon">🔐</div>
+          <div class="info-title">Principle of Least Privilege</div>
+          <div class="info-body">The CLI runs as a standard user by default. Elevation is only requested for PATH registration (<code>syncro install</code>). All other commands require no admin rights.</div>
+        </div>
+        <div class="info-card">
+          <div class="info-icon">🛡️</div>
+          <div class="info-title">Process Isolation</div>
+          <div class="info-body">Scripts run in child <code>Process</code> objects with explicit environment variable sandboxing. The CLI process cannot access the MAUI app's memory space.</div>
+        </div>
+        <div class="info-card">
+          <div class="info-icon">🔑</div>
+          <div class="info-title">Credential Safety</div>
+          <div class="info-body">API keys and DB URLs are stored in the user's <code>SyncroDB</code> config with file-system ACL protections. Never logged to stdout or the Named Pipe stream.</div>
+        </div>
+        <div class="info-card">
+          <div class="info-icon">📋</div>
+          <div class="info-title">Audit Logging</div>
+          <div class="info-body">Every elevated command and PATH change is logged to <code>SyncroDB/Agents/audit.jsonl</code> with timestamp, user, and operation details.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Roadmap ── -->
+    <section class="section" id="roadmap">
+      <h2 class="section-title">Roadmap <span class="tag tag-new">Upcoming</span></h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Phase</th><th>Feature</th><th>Status</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>v2.0</td><td>All 18 commands implemented + Named Pipe bridge</td><td style="color:var(--green)">✅ In Progress</td></tr>
+            <tr><td>v2.1</td><td>AI-extendable script registry via RAG</td><td style="color:var(--yellow)">🔧 Planned</td></tr>
+            <tr><td>v2.2</td><td>Multi-agent orchestration (chain of CLI agents)</td><td style="color:var(--text-dim)">📋 Backlog</td></tr>
+            <tr><td>v2.3</td><td>Mobile push: CLI status → Syncro Mobile app</td><td style="color:var(--text-dim)">📋 Backlog</td></tr>
+            <tr><td>v3.0</td><td>Syncro OS CLI: WSL2 integration + Linux agent</td><td style="color:var(--text-dim)">📋 Backlog</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+</body>
+</html>

@@ -1,0 +1,345 @@
+@page "/dto-planner"
+@using Syncro.Desktop.Services.AST
+@using Syncro.Desktop.Services.AST.Models
+@using System.IO
+@using System.Text
+@inject AstService AstService
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <!-- Sub-navigation Header -->
+    <div class="d-flex align-center justify-space-between mb-6 pa-6 panel rounded-lg ast-header-gradient text-white">
+        <div>
+            <div class="d-flex align-center gap-2">
+                <MudIcon Icon="@Icons.Material.Filled.DataArray" Size="Size.Large" Class="text-white" />
+                <MudText Typo="Typo.h5" Class="font-weight-bold text-white">DTO SCHEMA PLANNER</MudText>
+            </div>
+            @if (AstService.ActiveProjectMap != null)
+            {
+                <MudText Typo="Typo.caption" Class="text-white-50">Active Project: <strong>@AstService.ActiveProjectMap.ProjectName</strong> (@AstService.ActiveProjectMap.Language / @AstService.ActiveProjectMap.Framework)</MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Class="text-white-50">Please load and scan a project to view DTO models</MudText>
+            }
+        </div>
+        <div class="d-flex gap-2">
+            <MudButton Variant="Variant.Filled" 
+                       Color="Color.Primary" 
+                       OnClick="@(() => Navigation.NavigateTo("ast-dashboard"))" 
+                       StartIcon="@Icons.Material.Filled.Search"
+                       Class="header-nav-btn">Scan Hub</MudButton>
+            @if (AstService.ActiveProjectMap != null)
+            {
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Secondary" 
+                           OnClick="@(() => Navigation.NavigateTo("project-map-view"))" 
+                           StartIcon="@Icons.Material.Filled.AccountTree"
+                           Class="header-nav-btn">Graph Map</MudButton>
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Info" 
+                           OnClick="@(() => Navigation.NavigateTo("endpoint-explorer"))" 
+                           StartIcon="@Icons.Material.Filled.Api"
+                           Class="header-nav-btn">Endpoints</MudButton>
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Warning" 
+                           OnClick="@(() => Navigation.NavigateTo("dto-planner"))" 
+                           StartIcon="@Icons.Material.Filled.DataArray"
+                           Class="header-nav-btn active">DTO Planner</MudButton>
+            }
+        </div>
+    </div>
+
+    @if (AstService.ActiveProjectMap == null)
+    {
+        <MudPaper Elevation="0" Class="pa-12 panel rounded-lg text-center d-flex flex-column align-center justify-center">
+            <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning" Size="Size.Large" Class="mb-4" />
+            <MudText Typo="Typo.h6" Class="font-weight-bold">No Scanned Project Loaded</MudText>
+            <MudText Typo="Typo.body2" Class="text-muted mb-6">You must scan a project codebase first before accessing the DTO schema planner.</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search" OnClick="@(() => Navigation.NavigateTo("ast-dashboard"))">
+                Go to Scan Hub
+            </MudButton>
+        </MudPaper>
+    }
+    else
+    {
+        <MudGrid>
+            <!-- Left Side: List of DTO Classes -->
+            <MudItem xs="12" lg="7">
+                <MudPaper Elevation="0" Class="pa-6 panel rounded-lg">
+                    <div class="d-flex align-center justify-space-between mb-4 border-b pb-2">
+                        <MudText Typo="Typo.h6" Class="font-weight-bold">Data Transfer Objects & Models</MudText>
+                        <MudTextField T="string" Value="@SearchQuery" ValueChanged="OnFiltersChanged" Label="Search DTOs" Placeholder="e.g. UserDto" Variant="Variant.Outlined" Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.Search" Size="Size.Small" Clearable="true" />
+                    </div>
+
+                    <div style="max-height: 600px; overflow-y: auto;">
+                        <MudGrid Spacing="2">
+                            @if (FilteredDtos.Any())
+                            {
+                                @foreach (var dto in FilteredDtos)
+                                {
+                                    <MudItem xs="12">
+                                        <div class="dto-card pa-4 rounded-lg border border-subtle d-flex justify-space-between align-center @(dto == _selectedDto ? "active" : "")" @onclick="() => OnDtoSelected(dto)">
+                                            <div>
+                                                <div class="d-flex align-center gap-2">
+                                                    <span class="dto-title font-weight-bold">@dto.Name</span>
+                                                    @if (!string.IsNullOrEmpty(dto.ParentClass))
+                                                    {
+                                                        <span class="text-xs text-muted font-weight-medium">: @dto.ParentClass</span>
+                                                    }
+                                                </div>
+                                                <span class="text-xs text-secondary d-block mt-1 truncate" title="@dto.FilePath">File: @Path.GetFileName(dto.FilePath)</span>
+                                                <div class="d-flex flex-wrap gap-1 mt-2">
+                                                    @foreach (var anno in dto.Annotations)
+                                                    {
+                                                        <span class="annotation-badge text-xs">@anno</span>
+                                                    }
+                                                </div>
+                                            </div>
+                                            <div class="text-right">
+                                                <span class="badge badge-indigo">@dto.Properties.Count Fields</span>
+                                                <MudIcon Icon="@Icons.Material.Filled.ChevronRight" Color="Color.Secondary" Size="Size.Small" Class="d-block mt-2 float-right" />
+                                            </div>
+                                        </div>
+                                    </MudItem>
+                                }
+                            }
+                            else
+                            {
+                                <MudItem xs="12">
+                                    <div class="text-center py-12 text-muted italic">
+                                        No DTO models match search filters.
+                                    </div>
+                                </MudItem>
+                            }
+                        </MudGrid>
+                    </div>
+                </MudPaper>
+            </MudItem>
+
+            <!-- Right Side: Selected DTO Fields & Mock JSON serialization -->
+            <MudItem xs="12" lg="5">
+                @if (_selectedDto == null)
+                {
+                    <MudPaper Elevation="0" Class="pa-6 panel rounded-lg text-center py-12 height-full d-flex flex-column justify-center align-center">
+                        <MudIcon Icon="@Icons.Material.Filled.TouchApp" Color="Color.Secondary" Size="Size.Large" Class="mb-3" />
+                        <MudText Typo="Typo.body1" Class="text-muted font-weight-medium">Select a DTO class on the left to inspect schema</MudText>
+                    </MudPaper>
+                }
+                else
+                {
+                    <div class="d-flex flex-column gap-6">
+                        <!-- Fields Table -->
+                        <MudPaper Elevation="0" Class="pa-6 panel rounded-lg border-l-warning">
+                            <div class="d-flex align-center justify-space-between mb-4 border-b pb-2">
+                                <div>
+                                    <span class="text-caption text-muted font-weight-bold uppercase d-block">DTO SCHEMA</span>
+                                    <MudText Typo="Typo.h6" Class="font-weight-bold text-primary">@_selectedDto.Name</MudText>
+                                </div>
+                                <span class="badge badge-warning">@_selectedDto.Properties.Count Properties</span>
+                            </div>
+
+                            <table class="ent-table mb-4">
+                                <thead>
+                                    <tr>
+                                        <th>Field Name</th>
+                                        <th>Type</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var prop in _selectedDto.Properties)
+                                    {
+                                        <tr>
+                                            <td class="font-weight-bold font-mono text-sm">@prop.Key</td>
+                                            <td>
+                                                <span class="badge badge-type">@prop.Value</span>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+
+                            <div class="text-xs text-muted truncate mt-2">
+                                <strong>File path:</strong> @_selectedDto.FilePath:L@_selectedDto.LineNumber
+                            </div>
+                        </MudPaper>
+
+                        <!-- Mock JSON Preview -->
+                        <MudPaper Elevation="0" Class="pa-6 panel rounded-lg bg-dark text-white">
+                            <div class="d-flex align-center justify-space-between mb-4 border-b border-dark pb-2">
+                                <MudText Typo="Typo.subtitle2" Class="font-weight-bold text-white">Mock JSON Payload</MudText>
+                                <span class="badge badge-dark">JSON Schema</span>
+                            </div>
+
+                            <pre class="font-mono text-xs text-green pa-3 rounded bg-light-dark" style="max-height: 250px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">@_mockJson</pre>
+                        </MudPaper>
+                    </div>
+                }
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+<style>
+    .ast-header-gradient {
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+        box-shadow: 0 4px 20px -2px rgba(99, 102, 241, 0.15);
+    }
+    .text-white-50 {
+        color: rgba(255, 255, 255, 0.7) !important;
+    }
+    .header-nav-btn {
+        text-transform: none !important;
+        font-weight: 600 !important;
+        border-radius: 6px !important;
+    }
+    .header-nav-btn.active {
+        border: 2px solid white !important;
+    }
+    .bg-light {
+        background-color: #F9FAFB;
+    }
+    .border-b {
+        border-bottom: 1px solid var(--border-subtle);
+    }
+    .uppercase {
+        text-transform: uppercase;
+    }
+    .font-mono {
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .dto-card {
+        cursor: pointer;
+        background-color: #FFFFFF;
+        transition: all 0.2s;
+    }
+    .dto-card:hover {
+        background-color: #F9FAFB;
+        transform: translateX(3px);
+    }
+    .dto-card.active {
+        background-color: #FFFDF5;
+        border-color: #F59E0B !important;
+        box-shadow: 0 4px 12px -2px rgba(245, 158, 11, 0.1);
+    }
+    .dto-title {
+        font-size: 15px;
+        color: #1F2937;
+    }
+    .border-l-warning {
+        border-left: 5px solid #F59E0B;
+    }
+    .annotation-badge {
+        background-color: #FEF3C7;
+        color: #D97706;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+    }
+    .badge-indigo { background: #EEF2FF; color: #4F46E5; }
+    .badge-warning { background: #FFFBEB; color: #D97706; }
+    .badge-type { background: #F3F4F6; color: #2563EB; font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+    /* Dark Code Theme */
+    .bg-dark {
+        background-color: #0F172A !important;
+    }
+    .border-dark {
+        border-bottom-color: #1E293B !important;
+    }
+    .bg-light-dark {
+        background-color: #1E293B;
+    }
+    .text-green {
+        color: #38BDF8 !important;
+    }
+    .badge-dark {
+        background-color: #1E293B;
+        color: #94A3B8;
+    }
+</style>
+
+@code {
+    private List<AstDtoModel> AllDtos { get; set; } = new();
+    private List<AstDtoModel> FilteredDtos { get; set; } = new();
+    private AstDtoModel? _selectedDto;
+    private string SearchQuery { get; set; } = "";
+    private string _mockJson = "";
+
+    protected override void OnInitialized()
+    {
+        if (AstService.ActiveProjectMap != null)
+        {
+            AllDtos = AstService.ActiveProjectMap.Dtos;
+            ApplyFilters();
+            
+            // Default select
+            if (FilteredDtos.Any())
+            {
+                OnDtoSelected(FilteredDtos.First());
+            }
+        }
+    }
+
+    private void ApplyFilters()
+    {
+        var query = SearchQuery.Trim().ToLower();
+        FilteredDtos = AllDtos
+            .Where(d => string.IsNullOrEmpty(query) || d.Name.ToLower().Contains(query) ||
+                        (d.ParentClass != null && d.ParentClass.ToLower().Contains(query)))
+            .ToList();
+    }
+
+    private void OnFiltersChanged(string val)
+    {
+        SearchQuery = val;
+        ApplyFilters();
+        StateHasChanged();
+    }
+
+    private void OnDtoSelected(AstDtoModel dto)
+    {
+        _selectedDto = dto;
+        _mockJson = GenerateMockJson(dto);
+        StateHasChanged();
+    }
+
+    private string GenerateMockJson(AstDtoModel dto)
+    {
+        if (dto.Properties == null || dto.Properties.Count == 0) return "{ }";
+
+        var sb = new StringBuilder();
+        sb.AppendLine("{");
+        int index = 0;
+        foreach (var prop in dto.Properties)
+        {
+            sb.Append("  \"");
+            sb.Append(prop.Key);
+            sb.Append("\": ");
+            sb.Append(GetMockValueForType(prop.Value));
+            if (index < dto.Properties.Count - 1)
+            {
+                sb.AppendLine(",");
+            }
+            else
+            {
+                sb.AppendLine();
+            }
+            index++;
+        }
+        sb.Append("}");
+        return sb.ToString();
+    }
+
+    private string GetMockValueForType(string type)
+    {
+        string t = type.ToLower();
+        if (t.Contains("int") || t.Contains("long") || t.Contains("short") || t.Contains("byte") || t.Contains("number")) return "42";
+        if (t.Contains("double") || t.Contains("float") || t.Contains("decimal")) return "3.14";
+        if (t.Contains("bool") || t.Contains("boolean")) return "true";
+        if (t.Contains("datetime") || t.Contains("date")) return $"\"{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}\"";
+        if (t.Contains("list") || t.Contains("array") || t.Contains("[]") || t.Contains("ienumerable") || t.Contains("icollection")) return "[ ]";
+        return "\"string\"";
+    }
+}

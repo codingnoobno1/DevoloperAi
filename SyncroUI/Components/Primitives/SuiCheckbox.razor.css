@@ -1,0 +1,60 @@
+.sui-checkbox-container {
+    display: inline-flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+}
+
+.sui-checkbox-input {
+    position: absolute;
+    opacity: 0;
+    cursor: pointer;
+    height: 0;
+    width: 0;
+}
+
+.sui-checkbox-checkmark {
+    position: relative;
+    height: 16px;
+    width: 16px;
+    background-color: var(--bg-input, var(--bg-editor, #1e1e1e));
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    transition: all 0.15s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sui-checkbox-container:hover input ~ .sui-checkbox-checkmark {
+    border-color: var(--accent);
+}
+
+.sui-checkbox-container input:checked ~ .sui-checkbox-checkmark {
+    background-color: var(--accent);
+    border-color: var(--accent);
+}
+
+.sui-checkbox-checkmark i {
+    color: var(--text-inverse, #ffffff);
+    font-size: 14px;
+}
+
+.sui-checkbox-label {
+    margin-left: 8px;
+    font-size: 13px;
+    color: var(--text);
+}
+
+.sui-checkbox-container input:disabled ~ .sui-checkbox-checkmark {
+    background-color: var(--bg-activity);
+    border-color: var(--border);
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.sui-checkbox-container input:disabled ~ .sui-checkbox-label {
+    opacity: 0.6;
+    cursor: not-allowed;
+}

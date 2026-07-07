@@ -1,0 +1,231 @@
+@using System
+@using System.Collections.Generic
+@using System.IO
+@using System.Linq
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.AST
+@using Syncro.Desktop.Services.AST.Models
+@using Syncro.Desktop.Services.Ide
+@inject ProjectService ProjService
+@inject AstService AstService
+@inject IdeLaunchContext LaunchCtx
+@inject ISnackbar Snackbar
+
+<div class="an-root">
+    <div class="an-titlebar">
+        <span class="an-brand">⚡ PROJECT ANALYSIS</span>
+        <span class="an-ws">@(_map?.ProjectName ?? "no scan yet")</span>
+        <div style="flex:1"></div>
+        <span class="an-tag">real AstService · @(_busy ? "working…" : "idle")</span>
+    </div>
+
+    <div class="an-toolbar">
+        <select class="an-select" @bind="_path">
+            <option value="">— pick a project —</option>
+            @foreach (var p in _projects)
+            {
+                <option value="@p.Path">@p.Name</option>
+            }
+        </select>
+        <button class="an-btn primary" @onclick="Scan" disabled="@_busy">@(_busy ? "Scanning…" : "Scan")</button>
+        <div style="flex:1"></div>
+        <button class="an-btn" @onclick="GenerateReport" disabled="@(_map == null || _busy)">Generate PDF</button>
+        <button class="an-btn" @onclick="ExportJson" disabled="@(_map == null || _busy)">Export JSON</button>
+    </div>
+
+    @if (_map != null)
+    {
+        <div class="an-stats">
+            <span class="an-chip">@_map.Language</span>
+            <span class="an-chip">@_map.Framework</span>
+            <span class="an-chip">@_map.Nodes.Count nodes</span>
+            <span class="an-chip accent">@_map.Endpoints.Count endpoints</span>
+            <span class="an-chip">@_map.Dtos.Count DTOs</span>
+            <span class="an-chip">@_map.Dependencies.Count deps</span>
+            <span class="an-chip">@_map.Ports.Count ports</span>
+            @if (_map.Errors.Count > 0)
+            {
+                <span class="an-chip err">@_map.Errors.Count scan errors</span>
+            }
+        </div>
+    }
+
+    <div class="an-tabs">
+        <button class="@TabCls("map")" @onclick="ShowMap">API Endpoint Map</button>
+        <button class="@TabCls("report")" @onclick="ShowReport">Report</button>
+    </div>
+
+    <div class="an-body">
+        @if (_map == null)
+        {
+            <div class="an-empty">@(_busy ? "Scanning the project with AstService…" : "Pick a project and click Scan. This runs the real AST engine — no mock data.")</div>
+        }
+        else if (_tab == "map")
+        {
+            @if (_map.Endpoints.Count == 0)
+            {
+                <div class="an-empty">No HTTP endpoints detected. (@_map.Framework / @_map.Language)</div>
+            }
+            else
+            {
+                <table class="an-table">
+                    <thead>
+                        <tr><th>Method</th><th>Path</th><th>Controller · Handler</th><th>Params</th><th>Req → Res DTO</th><th>Location</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var e in _map.Endpoints.OrderBy(x => x.Path))
+                        {
+                            <tr>
+                                <td><span class="m m-@e.Method.ToLowerInvariant()">@e.Method</span></td>
+                                <td class="mono">@e.Path</td>
+                                <td>@e.ControllerName<span class="dim">@(string.IsNullOrEmpty(e.HandlerMethod) ? "" : " · " + e.HandlerMethod)</span></td>
+                                <td class="dim">@(e.Parameters.Count == 0 ? "—" : string.Join(", ", e.Parameters))</td>
+                                <td class="dim">@(e.RequestDto ?? "—") → @(e.ResponseDto ?? "—")</td>
+                                <td class="mono dim">@System.IO.Path.GetFileName(e.FilePath):@e.LineNumber</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+        else
+        {
+            <div class="an-report">
+                <p>Generate a real PDF report (QuestPDF) from the scanned map — endpoints, DTOs, dependencies and graphs.</p>
+                <div class="an-actions">
+                    <button class="an-btn primary" @onclick="GenerateReport" disabled="@(_map == null || _busy)">Generate PDF Report</button>
+                    <button class="an-btn" @onclick="ExportJson" disabled="@(_map == null || _busy)">Export JSON</button>
+                </div>
+                @if (!string.IsNullOrEmpty(_outPath))
+                {
+                    <div class="an-saved">
+                        Saved: <span class="mono">@_outPath</span>
+                        <button class="an-btn" @onclick="OpenOutput">Open</button>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+<style>
+    .an-root { display:flex; flex-direction:column; height:100vh; background:#0a0d14; color:#c8d6f0; font-family:'Inter',sans-serif; font-size:13px; }
+    .an-titlebar { height:34px; display:flex; align-items:center; gap:14px; padding:0 14px; background:#0d1117; border-bottom:1px solid #1e2540; }
+    .an-brand { font-weight:800; background:linear-gradient(135deg,#6c63ff,#00d4ff); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+    .an-ws { color:#8892a4; font-size:12px; } .an-tag { color:#475569; font-size:11px; }
+    .an-toolbar { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid #1e2540; }
+    .an-select { background:#0e1320; color:#c8d6f0; border:1px solid #1e2540; border-radius:6px; padding:7px 10px; min-width:260px; }
+    .an-btn { background:#11162a; color:#c8d6f0; border:1px solid #1e2540; border-radius:6px; padding:7px 14px; cursor:pointer; font-size:12px; }
+    .an-btn:hover:not(:disabled) { border-color:#6c63ff; }
+    .an-btn:disabled { opacity:.4; cursor:default; }
+    .an-btn.primary { background:#6c63ff; border-color:#6c63ff; color:#fff; font-weight:600; }
+    .an-stats { display:flex; flex-wrap:wrap; gap:8px; padding:10px 14px; border-bottom:1px solid #1e2540; }
+    .an-chip { font-size:11px; padding:3px 10px; border-radius:100px; background:#11162a; border:1px solid #1e2540; color:#aebbd4; }
+    .an-chip.accent { background:rgba(108,99,255,.2); border-color:#6c63ff; color:#c0b9ff; }
+    .an-chip.err { background:rgba(255,108,108,.15); border-color:#ff6c6c; color:#ffb3b3; }
+    .an-tabs { display:flex; gap:0; padding:0 8px; border-bottom:1px solid #1e2540; background:#0b0e16; }
+    .an-tab { background:transparent; border:0; color:#7c8699; padding:10px 16px; cursor:pointer; font-size:12.5px; border-bottom:2px solid transparent; }
+    .an-tab.active { color:#fff; border-bottom-color:#6c63ff; }
+    .an-body { flex:1; overflow:auto; padding:0; }
+    .an-empty { padding:48px; text-align:center; color:#5b6478; }
+    .an-table { width:100%; border-collapse:collapse; font-size:12.5px; }
+    .an-table th { position:sticky; top:0; background:#0d1117; text-align:left; padding:10px 14px; color:#5b6478; font-size:11px; text-transform:uppercase; letter-spacing:.05em; border-bottom:1px solid #1e2540; }
+    .an-table td { padding:9px 14px; border-bottom:1px solid #141a2e; vertical-align:top; }
+    .an-table tr:hover td { background:rgba(108,99,255,.05); }
+    .mono { font-family:'JetBrains Mono',monospace; }
+    .dim { color:#7c8699; }
+    .m { font-family:'JetBrains Mono',monospace; font-weight:700; font-size:10px; padding:2px 8px; border-radius:4px; }
+    .m-get { background:rgba(0,229,160,.15); color:#00e5a0; } .m-post { background:rgba(96,165,250,.15); color:#60a5fa; }
+    .m-put { background:rgba(255,209,102,.15); color:#ffd166; } .m-delete { background:rgba(255,108,108,.15); color:#ff6c6c; }
+    .m-patch { background:rgba(192,132,252,.15); color:#c084fc; }
+    .an-report { padding:24px; max-width:760px; } .an-report p { color:#8892a4; }
+    .an-actions { display:flex; gap:10px; margin:14px 0; }
+    .an-saved { margin-top:16px; padding:12px; background:#0e1320; border:1px solid #1e2540; border-radius:8px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+</style>
+
+@code {
+    [Parameter] public string? Token { get; set; }
+
+    private List<ProjectModel> _projects = new();
+    private string? _path;
+    private AstProjectMap? _map;
+    private bool _busy;
+    private string _tab = "map";
+    private string? _outPath;
+    private bool _autoScanned;
+
+    protected override void OnInitialized()
+    {
+        _projects = ProjService.GetProjects();
+        string? path = null;
+        if (Token != null && LaunchCtx.TryClaim(Token, out var req))
+        {
+            path = req.AnalysisPath;
+        }
+        _path = path ?? _projects.FirstOrDefault()?.Path;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_autoScanned && !string.IsNullOrEmpty(_path))
+        {
+            _autoScanned = true;
+            await Scan();
+        }
+    }
+
+    private void ShowMap() => _tab = "map";
+    private void ShowReport() => _tab = "report";
+    private string TabCls(string t) => _tab == t ? "an-tab active" : "an-tab";
+
+    private async Task Scan()
+    {
+        if (string.IsNullOrEmpty(_path)) { Snackbar.Add("Pick a project first.", Severity.Warning); return; }
+        _busy = true; _outPath = null; StateHasChanged();
+        try
+        {
+            _map = await AstService.ScanProjectAsync(_path);
+            Snackbar.Add($"Scanned {_map.ProjectName}: {_map.Endpoints.Count} endpoints, {_map.Nodes.Count} nodes.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add("Scan failed: " + ex.Message, Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private async Task GenerateReport()
+    {
+        if (_map == null || string.IsNullOrEmpty(_path)) return;
+        _busy = true; StateHasChanged();
+        try
+        {
+            var dir = Path.Combine(_path, ".syncro_db"); Directory.CreateDirectory(dir);
+            _outPath = await AstService.GeneratePdfAsync(_map, Path.Combine(dir, "analysis_report.pdf"));
+            _tab = "report";
+            Snackbar.Add("PDF report generated.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add("Report failed: " + ex.Message, Severity.Error); }
+        finally { _busy = false; }
+    }
+
+    private async Task ExportJson()
+    {
+        if (_map == null || string.IsNullOrEmpty(_path)) return;
+        try
+        {
+            var dir = Path.Combine(_path, ".syncro_db"); Directory.CreateDirectory(dir);
+            _outPath = await AstService.ExportJsonAsync(_map, Path.Combine(dir, "analysis_map.json"));
+            _tab = "report";
+            Snackbar.Add("JSON exported.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add("Export failed: " + ex.Message, Severity.Error); }
+    }
+
+    private void OpenOutput()
+    {
+        try
+        {
+            if (!string.IsNullOrEmpty(_outPath))
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(_outPath) { UseShellExecute = true });
+        }
+        catch (Exception ex) { Snackbar.Add("Open failed: " + ex.Message, Severity.Error); }
+    }
+}

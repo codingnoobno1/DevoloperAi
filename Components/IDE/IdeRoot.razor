@@ -1,0 +1,25 @@
+@* Chrome-less Blazor root for the standalone Syncro IDE window (no app sidebar/router). *@
+<MudThemeProvider IsDarkMode="true" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<ErrorBoundary>
+    <ChildContent>
+        <IdeShell Token="@Token" />
+    </ChildContent>
+    <ErrorContent Context="ex">
+        <div style="padding: 20px; color: red; font-family: monospace; overflow: auto; height: 100vh; background: black;">
+            <h3>IDE Crashed on Launch</h3>
+            <b>Message:</b> @ex.Message<br/><br/>
+            <b>Stack Trace:</b><br/>
+            <pre>@ex.StackTrace</pre>
+            <br/>
+            <p>Please share this stack trace with Antigravity to fix the issue!</p>
+        </div>
+    </ErrorContent>
+</ErrorBoundary>
+
+@code {
+    [Parameter] public string? Token { get; set; }
+}

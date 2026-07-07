@@ -1,0 +1,68 @@
+<div class="sui-statusbar @(HasWorkspace ? "" : "empty")">
+    <div class="sui-statusbar-left">
+        @if (HasWorkspace)
+        {
+            <div class="sui-status-item" title="Git Branch">
+                <i class="bi bi-git"></i> @Branch
+            </div>
+        }
+        <div class="sui-status-item" title="Problems" @onclick="OnProblemsClick">
+            <i class="bi bi-x-octagon"></i> @Errors
+            <i class="bi bi-exclamation-triangle" style="margin-left: 6px;"></i> @Warnings
+        </div>
+        @if (HasWorkspace)
+        {
+            <div class="sui-status-item">
+                <i class="bi bi-folder2"></i> @WorkspaceName
+            </div>
+        }
+    </div>
+    
+    <div class="sui-statusbar-center">
+        @if (CenterContent != null)
+        {
+            @CenterContent
+        }
+    </div>
+    
+    <div class="sui-statusbar-right">
+        @if (HasActiveFile)
+        {
+            <div class="sui-status-item">
+                Ln @Line, Col @Column
+            </div>
+            <div class="sui-status-item">
+                @Indent
+            </div>
+            <div class="sui-status-item">
+                @Encoding
+            </div>
+            <div class="sui-status-item">
+                @EndOfLine
+            </div>
+            <div class="sui-status-item">
+                @Language
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public bool HasWorkspace { get; set; }
+    [Parameter] public string WorkspaceName { get; set; } = "";
+    [Parameter] public string Branch { get; set; } = "main";
+    [Parameter] public int Errors { get; set; } = 0;
+    [Parameter] public int Warnings { get; set; } = 0;
+    
+    [Parameter] public bool HasActiveFile { get; set; }
+    [Parameter] public int Line { get; set; } = 1;
+    [Parameter] public int Column { get; set; } = 1;
+    [Parameter] public string Indent { get; set; } = "Spaces: 4";
+    [Parameter] public string Encoding { get; set; } = "UTF-8";
+    [Parameter] public string EndOfLine { get; set; } = "LF";
+    [Parameter] public string Language { get; set; } = "plaintext";
+    
+    [Parameter] public RenderFragment? CenterContent { get; set; }
+    
+    [Parameter] public EventCallback OnProblemsClick { get; set; }
+}

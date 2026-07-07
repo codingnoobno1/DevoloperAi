@@ -1,0 +1,1236 @@
+@page "/universe-connector"
+@using System.Globalization
+@using System.IO
+@using Syncro.Desktop.Services.Connector.Backend
+@using Syncro.Desktop.Services.Connector.Models
+@using Syncro.Desktop.Services.Connector.ProjectDomain
+@using Syncro.Desktop.Services.Universe.Runtime
+@using Syncro.Desktop.Services.Connector.DevHub
+@inject IBackendContractResolver BackendResolver
+@inject GroupRunOrchestrator GroupRun
+@inject StackRunManager RunManager
+@inject DevHubState DevHub
+@inject ISnackbar Snackbar
+@implements IDisposable
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<!--  UNIVERSE CONNECTOR — N-project fleet · AI domain detection            -->
+<!--  · wave-ordered parallel run · SVG service graph · git status          -->
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+
+<style>
+    /* ── Page ── */
+    .uc { display:flex; flex-direction:column; gap:16px; }
+
+    /* ── Header ── */
+    .uc-header {
+        display:flex; align-items:center; justify-content:space-between;
+        padding:10px 0 14px; border-bottom:1px solid var(--mud-palette-divider);
+        flex-wrap:wrap; gap:8px;
+    }
+    .uc-brand-ring {
+        width:42px; height:42px; border-radius:10px; flex-shrink:0;
+        background:linear-gradient(135deg,#8b5cf6,#3b82f6);
+        display:flex; align-items:center; justify-content:center;
+        box-shadow:0 4px 14px rgba(139,92,246,.35);
+    }
+
+    /* ── Fleet ── */
+    .fleet-grid { display:flex; flex-wrap:wrap; gap:12px; align-items:flex-start; }
+    .fleet-card {
+        border-radius:14px; padding:14px 16px; cursor:pointer;
+        transition:all .2s ease; border:2px solid transparent;
+        min-width:164px; max-width:210px; flex:1;
+        position:relative; overflow:hidden;
+        background:var(--mud-palette-surface);
+    }
+    .fleet-card::before {
+        content:''; position:absolute; top:0; left:0; right:0; height:3px;
+        background:var(--dc); border-radius:14px 14px 0 0;
+    }
+    .fleet-card:hover { transform:translateY(-3px); box-shadow:0 8px 26px rgba(0,0,0,.13); }
+    .fleet-card.is-selected { border-color:var(--dc); box-shadow:0 0 0 3px color-mix(in srgb,var(--dc) 18%,transparent); }
+
+    .dc-frontend  { --dc:#3b82f6; }
+    .dc-backend   { --dc:#10b981; }
+    .dc-database  { --dc:#f59e0b; }
+    .dc-mobile    { --dc:#ec4899; }
+    .dc-aiservice { --dc:#8b5cf6; }
+    .dc-unknown   { --dc:#64748b; }
+
+    .fleet-domain-badge {
+        display:inline-flex; align-items:center; gap:4px;
+        padding:2px 8px; border-radius:6px; font-size:10px; font-weight:700;
+        background:color-mix(in srgb,var(--dc) 14%,transparent);
+        color:var(--dc); text-transform:uppercase; letter-spacing:.05em; margin-bottom:8px;
+    }
+    .fleet-label { font-weight:700; font-size:14px; line-height:1.3; margin-bottom:2px;
+                   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .fleet-stack { font-size:11px; color:var(--mud-palette-text-secondary); margin-bottom:8px; }
+    .fleet-meta  { display:flex; flex-direction:column; gap:3px; font-size:11px; }
+    .fleet-meta-row { display:flex; align-items:center; gap:4px; color:var(--mud-palette-text-secondary); }
+    .fleet-meta-row .mv { color:var(--mud-palette-text-primary); font-family:'Cascadia Code',monospace; font-size:11px; }
+
+    .fleet-footer {
+        display:flex; align-items:center; justify-content:space-between;
+        margin-top:10px; padding-top:8px; border-top:1px solid var(--mud-palette-divider);
+        font-size:11px;
+    }
+    .status-dot { width:7px; height:7px; border-radius:50%; display:inline-block; flex-shrink:0; }
+    .sd-running  { background:#10b981; box-shadow:0 0 6px #10b981; animation:pulse-dot 2s infinite; }
+    .sd-healthy  { background:#10b981; box-shadow:0 0 6px #10b981; animation:pulse-dot 2s infinite; }
+    .sd-starting { background:#f59e0b; }
+    .sd-crashed  { background:#ef4444; }
+    .sd-idle     { background:#64748b; }
+    @@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    .dirty-chip { font-size:10px; background:rgba(245,158,11,.15); color:#f59e0b;
+                  padding:1px 5px; border-radius:4px; font-weight:700; }
+    .clean-chip { font-size:10px; background:rgba(16,185,129,.15); color:#10b981;
+                  padding:1px 5px; border-radius:4px; font-weight:700; }
+
+    .fleet-add-btn {
+        border-radius:14px; border:2px dashed var(--mud-palette-divider);
+        min-width:128px; max-width:170px; flex:1;
+        display:flex; flex-direction:column; align-items:center; justify-content:center;
+        padding:24px 12px; cursor:pointer; gap:6px;
+        color:var(--mud-palette-text-secondary); transition:all .2s; font-size:13px;
+    }
+    .fleet-add-btn:hover { border-color:var(--mud-palette-primary); color:var(--mud-palette-primary);
+                           background:rgba(14,165,233,.04); }
+
+    /* ── Split (wave plan + graph) ── */
+    .uc-split { display:grid; grid-template-columns:220px 1fr; gap:14px; }
+    .wave-plan-panel {
+        background:var(--mud-palette-surface); border-radius:12px; padding:16px;
+        display:flex; flex-direction:column; gap:4px;
+    }
+    .wave-group { margin-bottom:10px; }
+    .wave-title { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.08em;
+                  color:var(--mud-palette-text-secondary); margin-bottom:6px; }
+    .wave-item {
+        display:flex; align-items:center; gap:7px; padding:6px 8px; border-radius:8px;
+        font-size:13px; cursor:pointer; transition:background .15s;
+    }
+    .wave-item:hover { background:var(--mud-palette-action-hover); }
+    .wave-item.wi-selected { background:rgba(14,165,233,.09); }
+    .wave-item-label { flex:1; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .wave-item-port  { font-size:10.5px; color:var(--mud-palette-text-secondary); font-family:monospace; }
+
+    /* ── Graph ── */
+    .graph-panel {
+        background:var(--mud-palette-surface); border-radius:12px; padding:16px;
+        display:flex; flex-direction:column; gap:8px; overflow:hidden;
+    }
+    .graph-svg-wrap { width:100%; overflow-x:auto; }
+
+    /* ── Details ── */
+    .uc-details { background:var(--mud-palette-surface); border-radius:12px; overflow:hidden; }
+    .details-hdr {
+        display:flex; align-items:center; gap:10px; padding:14px 16px;
+        border-bottom:1px solid var(--mud-palette-divider); flex-wrap:wrap;
+    }
+    .details-body { display:grid; grid-template-columns:1fr 1fr; }
+    .details-routes { padding:16px; border-right:1px solid var(--mud-palette-divider); overflow:hidden; }
+    .details-side   { padding:16px; }
+
+    .route-row {
+        display:grid; grid-template-columns:60px 1fr 80px; align-items:center; gap:8px;
+        padding:7px 8px; border-radius:7px; font-size:12px;
+        border-left:3px solid transparent; margin-bottom:2px;
+        font-family:'Cascadia Code',monospace;
+    }
+    .rr-ok { background:rgba(16,185,129,.05); border-left-color:#10b981; }
+    .route-path { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .route-ctrl { font-size:10px; color:var(--mud-palette-text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    .verb-badge { font-size:10px; font-weight:700; padding:2px 5px; border-radius:4px; color:#fff; letter-spacing:.02em; }
+    .vb-get    { background:#10b981; }
+    .vb-post   { background:#f59e0b; }
+    .vb-put    { background:#3b82f6; }
+    .vb-patch  { background:#8b5cf6; }
+    .vb-delete { background:#ef4444; }
+    .vb-other  { background:#64748b; }
+
+    .git-section { display:flex; flex-direction:column; gap:6px; font-size:12px; }
+    .git-row { display:flex; align-items:center; gap:6px; }
+    .git-branch { font-family:monospace; font-weight:700; color:var(--mud-palette-primary); }
+    .git-remote { font-family:monospace; font-size:11px; color:var(--mud-palette-text-secondary);
+                  word-break:break-all; margin-top:2px; }
+
+    .cmd-chip {
+        font-family:'Cascadia Code',monospace; font-size:11.5px;
+        background:var(--mud-palette-background-grey); padding:4px 9px;
+        border-radius:6px; cursor:pointer; flex:1; overflow:hidden;
+        text-overflow:ellipsis; white-space:nowrap;
+    }
+    .cmd-chip:hover { background:var(--mud-palette-action-hover); }
+
+    /* ── Overline label ── */
+    .ov { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
+          color:var(--mud-palette-text-secondary); display:block; margin-bottom:8px; }
+
+    /* ── Terminal pane ── */
+    .uc-terminal {
+        background:#0f172a; border-radius:0 0 12px 12px;
+        border-top:1px solid #1e293b;
+        display:flex; flex-direction:column; max-height:200px; min-height:120px;
+    }
+    .term-hdr {
+        background:#1e293b; padding:5px 12px;
+        display:flex; align-items:center; justify-content:space-between;
+        border-bottom:1px solid #334155; flex-shrink:0;
+    }
+    .term-body {
+        flex:1; overflow-y:auto; padding:8px 14px;
+        font-family:'Cascadia Code','Fira Code',monospace; font-size:10.5px;
+        color:#cbd5e1; line-height:1.6;
+    }
+    .term-body::-webkit-scrollbar { width:4px; }
+    .term-body::-webkit-scrollbar-thumb { background:#334155; border-radius:4px; }
+    .term-line { white-space:pre-wrap; word-break:break-all; margin:0; }
+    .tl-err  { color:#f87171; }
+    .tl-warn { color:#fbbf24; }
+    .tl-ok   { color:#34d399; }
+    .tl-url  { color:#60a5fa; text-decoration:underline; cursor:pointer; }
+    .live-dot { width:7px;height:7px;background:#10b981;border-radius:50%;
+                display:inline-block;animation:pulse-dot 2s infinite;flex-shrink:0; }
+
+    /* ── Live preview pane ── */
+    .uc-preview { border-top:1px solid var(--mud-palette-divider); background:var(--mud-palette-surface); border-radius:0 0 12px 12px; }
+    .preview-bar {
+        display:flex; align-items:center; gap:8px; padding:8px 16px;
+        border-bottom:1px solid var(--mud-palette-divider); font-size:12px;
+    }
+    .preview-url { font-family:monospace; color:var(--mud-palette-text-secondary); flex:1; font-size:11px; }
+    .preview-content { display:flex; justify-content:center; background:#f1f5f9; overflow:auto; }
+    .browser-frame-uc {
+        flex:1; display:flex; flex-direction:column; background:white;
+        box-shadow:0 2px 12px rgba(0,0,0,.1); margin:12px; border-radius:10px; overflow:hidden;
+    }
+    .bframe-hdr {
+        display:flex; align-items:center; gap:8px; padding:8px 12px;
+        background:#e2e8f0; border-bottom:1px solid #cbd5e1; flex-shrink:0;
+    }
+    .bdots { display:flex; gap:5px; flex-shrink:0; }
+    .bdots span { width:10px; height:10px; border-radius:50%; display:block; }
+    .bdots span:nth-child(1) { background:#ff5f56; }
+    .bdots span:nth-child(2) { background:#ffbd2e; }
+    .bdots span:nth-child(3) { background:#27c93f; }
+    .burl { font-family:monospace; font-size:11px; color:#475569; flex:1;
+            background:#fff; border-radius:4px; padding:2px 8px; }
+    .uc-iframe { width:100%; height:420px; border:none; display:block; }
+    .mobile-frame {
+        width:340px; background:#0f172a; border-radius:36px; padding:10px;
+        margin:12px auto; box-shadow:0 16px 36px rgba(0,0,0,.4);
+        border:5px solid #334155; overflow:hidden;
+    }
+    .mobile-frame .uc-iframe { height:600px; border-radius:24px; }
+    .preview-waiting {
+        display:flex; align-items:center; gap:12px; padding:32px;
+        justify-content:center; color:var(--mud-palette-text-secondary); font-size:13px;
+    }
+</style>
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0 uc">
+
+    <!-- ────────────────────── HEADER ────────────────────────────────────── -->
+    <div class="uc-header">
+        <div class="d-flex align-center gap-3">
+            <div class="uc-brand-ring">
+                <MudIcon Icon="@Icons.Material.Filled.Hub" Color="Color.Surface" />
+            </div>
+            <div>
+                <div class="d-flex align-center gap-2">
+                    <MudText Typo="Typo.h6" Class="font-weight-bold" Style="line-height:1.2;">Universe Connector</MudText>
+                    @if (_projects.Count > 0)
+                    {
+                        <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Outlined">
+                            @_projects.Count @(_projects.Count == 1 ? "project" : "projects")
+                        </MudChip>
+                    }
+                </div>
+                <MudText Typo="Typo.caption" Class="text-muted">
+                    Multi-project fleet · AI domain detection · wave-ordered parallel runner
+                </MudText>
+            </div>
+        </div>
+
+        <div class="d-flex align-center gap-2 flex-wrap">
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                       StartIcon="@Icons.Material.Filled.FolderOpen" OnClick="AddProjectAsync">
+                Add Project
+            </MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                       StartIcon="@Icons.Material.Filled.AutoFixHigh"
+                       Disabled="_detectingAll || _projects.Count == 0" OnClick="DetectAllAsync">
+                @(_detectingAll ? "Detecting…" : "Detect All")
+            </MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                       StartIcon="@Icons.Material.Filled.Refresh"
+                       Disabled="_projects.Count == 0" OnClick="GitRefreshAllAsync">
+                Git Refresh
+            </MudButton>
+            <MudDivider Vertical="true" FlexItem="true" Style="height:24px;" />
+            <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                       StartIcon="@Icons.Material.Filled.PlayArrow"
+                       Disabled="_running || !HasRunnable" OnClick="RunStackAsync">
+                @(_running ? "Running…" : "Run Stack")
+            </MudButton>
+            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                       StartIcon="@Icons.Material.Filled.Stop"
+                       Disabled="!_running" OnClick="StopAll">
+                Stop All
+            </MudButton>
+            <MudDivider Vertical="true" FlexItem="true" Style="height:24px;" />
+            <MudButton Size="Size.Small" Variant="Variant.Filled"
+                       Style="background:linear-gradient(135deg,#6366f1,#06b6d4);color:#fff;"
+                       StartIcon="@Icons.Material.Filled.OpenInNew"
+                       Disabled="_projects.Count == 0"
+                       OnClick="OpenDevHub">
+                Open DevHub
+            </MudButton>
+        </div>
+    </div>
+
+    <!-- ────────────────────── EMPTY STATE ───────────────────────────────── -->
+    @if (_projects.Count == 0)
+    {
+        <MudPaper Elevation="0" Class="pa-16 d-flex flex-column align-center justify-center"
+                  Style="min-height:360px;">
+            <div class="uc-brand-ring mb-4" style="width:64px;height:64px;border-radius:16px;">
+                <MudIcon Icon="@Icons.Material.Filled.Hub" Color="Color.Surface" Size="Size.Large" />
+            </div>
+            <MudText Typo="Typo.h6" Class="font-weight-bold mb-1">No projects in the fleet</MudText>
+            <MudText Typo="Typo.body2" Class="text-muted mb-6"
+                     Style="max-width:400px;text-align:center;line-height:1.6;">
+                Add your project folders — frontend, backend, database, mobile app, AI service.
+                Syncro auto-detects the stack and technology, reads your git status,
+                plans the run order in waves, and can start the whole stack with one click.
+            </MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large"
+                       StartIcon="@Icons.Material.Filled.AddCircle" OnClick="AddProjectAsync">
+                Add First Project
+            </MudButton>
+        </MudPaper>
+    }
+    else
+    {
+        <!-- ─────────────────── PROJECT FLEET ─────────────────────────────── -->
+        <div>
+            <span class="ov">Project Fleet</span>
+            <div class="fleet-grid">
+
+                @foreach (var node in _projects)
+                {
+                    var dc   = GetDomainClass(node.Domain);
+                    var sel  = _selectedNode?.Id == node.Id;
+                    var rs   = node.RunState;
+
+                    <div class="fleet-card @dc @(sel ? "is-selected" : "")"
+                         style="--dc:@DomainDetector.GetColor(node.Domain);"
+                         @onclick="() => SelectNode(node)">
+
+                        <!-- domain badge -->
+                        <div class="fleet-domain-badge">
+                            <MudIcon Icon="@GetDomainIcon(node.Domain)" Style="font-size:11px;" />
+                            @node.Domain.ToString().ToUpperInvariant()
+                        </div>
+
+                        <!-- label / stack -->
+                        <div class="fleet-label" title="@node.Path">@node.Label</div>
+                        <div class="fleet-stack">@node.Stack · w@node.Wave</div>
+
+                        <!-- meta rows -->
+                        <div class="fleet-meta">
+                            @if (node.Port > 0)
+                            {
+                                <div class="fleet-meta-row">
+                                    <MudIcon Icon="@Icons.Material.Filled.Router" Style="font-size:12px;" />
+                                    <span class="mv">:@node.Port</span>
+                                </div>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(node.GitBranch))
+                            {
+                                <div class="fleet-meta-row">
+                                    <MudIcon Icon="@Icons.Material.Filled.Source" Style="font-size:12px;" />
+                                    <span class="mv">@node.GitBranch</span>
+                                    @if (node.IsGitDirty)
+                                    {
+                                        <span class="dirty-chip">dirty</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="clean-chip">clean</span>
+                                    }
+                                </div>
+                            }
+                            @if (node.Routes.Count > 0)
+                            {
+                                <div class="fleet-meta-row">
+                                    <MudIcon Icon="@Icons.Material.Filled.Api" Style="font-size:12px;" />
+                                    <span class="mv">@node.Routes.Count routes</span>
+                                </div>
+                            }
+                        </div>
+
+                        <!-- footer: status + remove -->
+                        <div class="fleet-footer">
+                            <div class="d-flex align-center gap-1">
+                                <span class="status-dot @GetStatusDotClass(rs)"></span>
+                                <span>@GetStatusLabel(rs)</span>
+                                @if (rs != null && rs.MemoryMb > 0)
+                                {
+                                    <span class="text-muted">· @((int)rs.MemoryMb)MB</span>
+                                }
+                            </div>
+                            <div @onclick:stopPropagation="true">
+                                <MudIconButton Icon="@Icons.Material.Filled.Close" Size="Size.Small"
+                                               Style="padding:2px;font-size:16px;"
+                                               OnClick="() => RemoveProject(node)" />
+                            </div>
+                        </div>
+
+                        <!-- detecting overlay -->
+                        @if (node.IsDetecting)
+                        {
+                            <div style="position:absolute;inset:0;background:rgba(0,0,0,.35);
+                                        border-radius:12px;display:flex;align-items:center;justify-content:center;">
+                                <MudProgressCircular Size="Size.Small" Color="Color.Primary" Indeterminate="true" />
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Add button tile -->
+                <div class="fleet-add-btn" @onclick="AddProjectAsync">
+                    <MudIcon Icon="@Icons.Material.Filled.AddCircleOutline" Size="Size.Medium" />
+                    <span>Add Project</span>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ─────────────────── SPLIT: WAVE PLAN + SERVICE GRAPH ──────────── -->
+        <div class="uc-split">
+
+            <!-- Wave Plan -->
+            <div class="wave-plan-panel">
+                <span class="ov">Wave Run Plan</span>
+                @foreach (var wg in _projects.GroupBy(p => p.Wave).OrderBy(g => g.Key))
+                {
+                    <div class="wave-group">
+                        <div class="wave-title">@GetWaveLabel(wg.Key) — @wg.Count() svc@(wg.Count()==1?"":"s")</div>
+                        @foreach (var node in wg)
+                        {
+                            var rs  = node.RunState;
+                            var sel = _selectedNode?.Id == node.Id;
+                            <div class="wave-item @(sel ? "wi-selected" : "")"
+                                 @onclick="() => SelectNode(node)">
+                                <span style="color:@DomainDetector.GetColor(node.Domain);line-height:1;">
+                                    <MudIcon Icon="@GetDomainIcon(node.Domain)" Style="font-size:16px;" />
+                                </span>
+                                <span class="wave-item-label">@node.Label</span>
+                                @if (node.Port > 0)
+                                {
+                                    <span class="wave-item-port">:@node.Port</span>
+                                }
+                                <span class="status-dot @GetStatusDotClass(rs)" style="margin-left:auto;flex-shrink:0;"></span>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (_running)
+                {
+                    <MudAlert Severity="Severity.Success" Dense="true" Class="mt-2">Stack running…</MudAlert>
+                }
+            </div>
+
+            <!-- Service Graph (SVG) -->
+            <div class="graph-panel">
+                <span class="ov">Service Graph</span>
+                <div class="graph-svg-wrap">
+                    @{ var (svgNodes, svgEdges, svgH) = ComputeGraph(); }
+                    <svg viewBox="0 0 500 @svgH.ToString(CultureInfo.InvariantCulture)"
+                         style="width:100%;height:@((int)svgH)px;display:block;"
+                         xmlns="http://www.w3.org/2000/svg">
+
+                        <!-- arrowhead marker -->
+                        <defs>
+                            <marker id="uc-arrow" markerWidth="10" markerHeight="7"
+                                    refX="9" refY="3.5" orient="auto">
+                                <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" opacity="0.6" />
+                            </marker>
+                        </defs>
+
+                        <!-- wave column labels -->
+                        @foreach (var col in new[] { (x: 80.0, lbl: "INFRA"), (x: 250.0, lbl: "SERVICES"), (x: 420.0, lbl: "CLIENTS") })
+                        {
+                            @((MarkupString)$"<text x=\"{Gf(col.x)}\" y=\"16\" text-anchor=\"middle\" font-size=\"9\" font-weight=\"700\" fill=\"#64748b\" font-family=\"system-ui\" letter-spacing=\"1\">{col.lbl}</text>")
+                            <line x1="@Gf(col.x)" y1="22" x2="@Gf(col.x)" y2="@Gf(svgH)"
+                                  stroke="#e2e8f0" stroke-width="1" stroke-dasharray="3,4" />
+                        }
+
+                        <!-- edges (bezier curves) -->
+                        @foreach (var e in svgEdges)
+                        {
+                            var mx1 = e.X1 + (e.X2 - e.X1) * 0.38;
+                            var mx2 = e.X1 + (e.X2 - e.X1) * 0.62;
+                            <path d="M @Gf(e.X1),@Gf(e.Y1) C @Gf(mx1),@Gf(e.Y1) @Gf(mx2),@Gf(e.Y2) @Gf(e.X2),@Gf(e.Y2)"
+                                  fill="none" stroke="#94a3b8" stroke-width="1.5"
+                                  stroke-dasharray="5,4" marker-end="url(#uc-arrow)" opacity="0.55" />
+                        }
+
+                        <!-- nodes -->
+                        @foreach (var sn in svgNodes)
+                        {
+                            var isSel   = _selectedNode?.Id == sn.Node.Id;
+                            var color   = DomainDetector.GetColor(sn.Node.Domain);
+                            var rs      = sn.Node.RunState;
+                            var running = rs?.State is "running" or "healthy";
+                            var letter  = GetDomainLetter(sn.Node.Domain);
+                            var lbl     = Truncate(sn.Node.Label, 11);
+
+                            <g @onclick="() => SelectNode(sn.Node)" style="cursor:pointer;"
+                               transform="translate(@Gf(sn.X),@Gf(sn.Y))">
+
+                                @if (isSel)
+                                {
+                                    <circle r="36" fill="@color" opacity="0.12" />
+                                }
+                                @if (running)
+                                {
+                                    <circle r="30" fill="none" stroke="@color" stroke-width="2" opacity="0">
+                                        <animate attributeName="r" values="28;38;28" dur="2s" repeatCount="indefinite" />
+                                        <animate attributeName="opacity" values="0.3;0;0.3" dur="2s" repeatCount="indefinite" />
+                                    </circle>
+                                }
+
+                                <circle r="28" fill="@color" opacity="0.14" />
+                                <circle r="28" fill="none" stroke="@color"
+                                        stroke-width="@(isSel ? 2.5 : 1.5)" />
+
+                                <!-- domain letter(s) in the circle -->
+                                <text x="0" y="5" text-anchor="middle" font-size="13" font-weight="800"
+                                      fill="@color" font-family="system-ui">@letter</text>
+
+                                <!-- label below circle -->
+                                <text x="0" y="46" text-anchor="middle" font-size="11" font-weight="600"
+                                      fill="currentColor" font-family="system-ui">@lbl</text>
+
+                                <!-- port badge -->
+                                @if (sn.Node.Port > 0)
+                                {
+                                    @((MarkupString)$"<text x=\"0\" y=\"59\" text-anchor=\"middle\" font-size=\"9.5\" fill=\"#94a3b8\" font-family=\"monospace\">:{sn.Node.Port}</text>")
+                                }
+
+                                <!-- status indicator dot -->
+                                <circle cx="22" cy="-22" r="6.5"
+                                        fill="@GetStatusColor(rs)"
+                                        stroke="var(--mud-palette-surface)" stroke-width="1.5" />
+
+                                @if (running)
+                                {
+                                    <circle cx="22" cy="-22" r="6.5" fill="@GetStatusColor(rs)" opacity="0">
+                                        <animate attributeName="r" values="6.5;11;6.5" dur="1.8s" repeatCount="indefinite" />
+                                        <animate attributeName="opacity" values="0.35;0;0.35" dur="1.8s" repeatCount="indefinite" />
+                                    </circle>
+                                }
+                            </g>
+                        }
+                    </svg>
+                </div>
+                @if (_projects.All(p => p.Wave == 1))
+                {
+                    <MudText Typo="Typo.caption" Class="text-muted">
+                        Tip: set different waves (infra/services/clients) so the graph shows connections.
+                    </MudText>
+                }
+            </div>
+        </div>
+
+        <!-- ─────────────────── DETAILS PANEL ─────────────────────────────── -->
+        @if (_selectedNode != null)
+        {
+            var node = _selectedNode;
+            var rs   = node.RunState;
+
+            <div class="uc-details">
+
+                <!-- details header -->
+                <div class="details-hdr">
+                    <span style="color:@DomainDetector.GetColor(node.Domain);flex-shrink:0;">
+                        <MudIcon Icon="@GetDomainIcon(node.Domain)" />
+                    </span>
+                    <div style="flex:1;min-width:0;">
+                        <div class="d-flex align-center gap-2 flex-wrap">
+                            <MudText Typo="Typo.subtitle1" Class="font-weight-bold">@node.Label</MudText>
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">
+                                @node.Stack
+                            </MudChip>
+                            @if (!string.IsNullOrWhiteSpace(node.GitBranch))
+                            {
+                                <span class="d-flex align-center gap-1" style="font-size:12px;">
+                                    <MudIcon Icon="@Icons.Material.Filled.Source" Style="font-size:14px;" Class="text-muted" />
+                                    <span class="git-branch">@node.GitBranch</span>
+                                    @if (node.IsGitDirty) { <span class="dirty-chip">dirty</span> }
+                                    else { <span class="clean-chip">clean</span> }
+                                </span>
+                            }
+                        </div>
+                        <MudText Typo="Typo.caption" Class="text-muted"
+                                 Style="font-family:monospace;font-size:11px;">@node.Path</MudText>
+                    </div>
+
+                    <!-- run command inline edit -->
+                    <div class="d-flex align-center gap-2">
+                        @if (_editingCmd && _editNodeId == node.Id)
+                        {
+                            <MudTextField T="string" @bind-Value="node.RunCommand"
+                                          Variant="Variant.Outlined" Margin="Margin.Dense"
+                                          Style="min-width:210px;font-family:monospace;font-size:12px;"
+                                          Immediate="true" Label="Run command"
+                                          Adornment="Adornment.End"
+                                          AdornmentIcon="@Icons.Material.Filled.Check"
+                                          OnAdornmentClick="() => { _editingCmd=false; }" />
+                        }
+                        else
+                        {
+                            <div class="d-flex align-center gap-1">
+                                <span class="cmd-chip"
+                                      title="Click to edit run command"
+                                      @onclick="() => { _editingCmd=true; _editNodeId=node.Id; }">
+                                    @(string.IsNullOrWhiteSpace(node.RunCommand)
+                                        ? "(no run command — click to set)"
+                                        : node.RunCommand)
+                                </span>
+                                <MudIconButton Icon="@Icons.Material.Filled.Edit" Size="Size.Small"
+                                               OnClick="() => { _editingCmd=true; _editNodeId=node.Id; }" />
+                            </div>
+                        }
+                        @if (node.Port > 0)
+                        {
+                            <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default">
+                                :@node.Port
+                            </MudChip>
+                        }
+                    </div>
+
+                    <!-- action buttons -->
+                    <div class="d-flex gap-2 flex-wrap">
+                        @if (node.Domain is DomainKind.Backend or DomainKind.AIService)
+                        {
+                            <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Info"
+                                       StartIcon="@Icons.Material.Filled.Radar"
+                                       Disabled="node.IsResolvingRoutes"
+                                       OnClick="() => ResolveRoutesAsync(node)">
+                                @(node.IsResolvingRoutes ? "Scanning…" : "Resolve Routes")
+                            </MudButton>
+                        }
+                        <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                   StartIcon="@Icons.Material.Filled.PlayArrow"
+                                   Disabled="string.IsNullOrWhiteSpace(node.RunCommand)"
+                                   OnClick="() => RunSingleAsync(node)">
+                            Run
+                        </MudButton>
+                        <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Error"
+                                   StartIcon="@Icons.Material.Filled.Stop"
+                                   OnClick="() => StopSingle(node)">
+                            Stop
+                        </MudButton>
+                    </div>
+                </div>
+
+                <!-- details body: routes | git + settings -->
+                <div class="details-body">
+
+                    <!-- Routes panel -->
+                    <div class="details-routes">
+                        <span class="ov">
+                            API Routes
+                            @if (node.Routes.Count > 0) { <span>(@node.Routes.Count)</span> }
+                        </span>
+
+                        @if (node.IsResolvingRoutes)
+                        {
+                            <div class="d-flex align-center gap-2 pa-4">
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+                                <MudText Typo="Typo.caption" Class="text-muted">Scanning routes…</MudText>
+                            </div>
+                        }
+                        else if (node.Routes.Count == 0)
+                        {
+                            <MudText Typo="Typo.caption" Class="text-muted pa-1">
+                                @if (node.Domain is DomainKind.Backend or DomainKind.AIService)
+                                {
+                                    <span>Hit <b>Resolve Routes</b> to scan the API surface.</span>
+                                }
+                                else
+                                {
+                                    <span>Route scanning is available for Backend / AI Service nodes.</span>
+                                }
+                            </MudText>
+                        }
+                        else
+                        {
+                            <div style="max-height:240px;overflow-y:auto;padding-right:4px;">
+                                @foreach (var route in node.Routes)
+                                {
+                                    <div class="route-row rr-ok">
+                                        <span class="verb-badge @GetVerbClass(route.Method)">
+                                            @route.Method.ToString().ToUpperInvariant()
+                                        </span>
+                                        <span class="route-path" title="@route.PathTemplate">@route.PathTemplate</span>
+                                        @{ var srcHint = route.OperationId ?? (route.FilePath != null ? Path.GetFileName(route.FilePath) : ""); }
+                                        <span class="route-ctrl" title="@srcHint">@srcHint</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <!-- Git + Settings panel -->
+                    <div class="details-side">
+                        <span class="ov">Git Status</span>
+                        <div class="git-section mb-4">
+                            @if (string.IsNullOrWhiteSpace(node.GitBranch))
+                            {
+                                <MudText Typo="Typo.caption" Class="text-muted">
+                                    No git info.
+                                    <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Primary"
+                                               OnClick="() => GitRefreshSingleAsync(node)">Refresh</MudButton>
+                                </MudText>
+                            }
+                            else
+                            {
+                                <div class="git-row">
+                                    <MudIcon Icon="@Icons.Material.Filled.Source" Style="font-size:14px;" Class="text-muted" />
+                                    <span class="text-muted">Branch:</span>
+                                    <span class="git-branch">@node.GitBranch</span>
+                                    @if (node.IsGitDirty) { <span class="dirty-chip">dirty</span> }
+                                    else { <span class="clean-chip">clean</span> }
+                                </div>
+                                @if (!string.IsNullOrWhiteSpace(node.GitRemote))
+                                {
+                                    <div style="display:flex;flex-direction:column;gap:2px;">
+                                        <div class="git-row">
+                                            <MudIcon Icon="@Icons.Material.Filled.Cloud" Style="font-size:14px;" Class="text-muted" />
+                                            <span class="text-muted">Remote:</span>
+                                        </div>
+                                        <span class="git-remote">@node.GitRemote</span>
+                                    </div>
+                                }
+                                <MudButton Size="Size.Small" Variant="Variant.Text" Color="Color.Default"
+                                           StartIcon="@Icons.Material.Filled.Refresh"
+                                           OnClick="() => GitRefreshSingleAsync(node)">
+                                    Refresh
+                                </MudButton>
+                            }
+                        </div>
+
+                        <MudDivider Class="mb-3" />
+                        <span class="ov">Node Settings</span>
+                        <div style="display:flex;flex-direction:column;gap:10px;">
+                            <MudNumericField T="int" Label="Port" Value="node.Port"
+                                             ValueChanged="v => { node.Port = v; StateHasChanged(); }"
+                                             Variant="Variant.Outlined" Margin="Margin.Dense"
+                                             Min="0" Max="65535" />
+                            <MudSelect T="int" Label="Wave" Value="node.Wave"
+                                       ValueChanged="v => { node.Wave = v; StateHasChanged(); }"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense">
+                                <MudSelectItem Value="0">Wave 0 — Infra / DB</MudSelectItem>
+                                <MudSelectItem Value="1">Wave 1 — Backend / Services</MudSelectItem>
+                                <MudSelectItem Value="2">Wave 2 — Frontend / Mobile</MudSelectItem>
+                            </MudSelect>
+                            <MudSelect T="DomainKind" Label="Domain override" Value="node.Domain"
+                                       ValueChanged="v => { node.Domain = v; node.Wave = DomainDetector.GetDefaultWave(v); StateHasChanged(); }"
+                                       Variant="Variant.Outlined" Margin="Margin.Dense">
+                                @foreach (DomainKind kind in Enum.GetValues<DomainKind>())
+                                {
+                                    <MudSelectItem Value="kind">@kind.ToString()</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- ── Terminal pane ─────────────────────────────────────────── -->
+                <div class="uc-terminal">
+                    <div class="term-hdr">
+                        <div class="d-flex align-center gap-2">
+                            <MudIcon Icon="@Icons.Material.Filled.Terminal"
+                                     Style="font-size:13px;color:#10b981;" />
+                            <span style="font-family:monospace;color:#10b981;font-size:11px;">
+                                @node.Label · process output
+                            </span>
+                            @if (node.RunState?.State is "running" or "healthy")
+                            {
+                                <span class="live-dot"></span>
+                            }
+                        </div>
+                        <MudIconButton Icon="@Icons.Material.Filled.ClearAll"
+                                       Size="Size.Small" Style="color:#64748b;padding:2px;"
+                                       OnClick="() => { if (_nodeLogs.ContainsKey(node.Id)) _nodeLogs[node.Id].Clear(); }" />
+                    </div>
+                    <div class="term-body">
+                        @if (_nodeLogs.TryGetValue(node.Id, out var termLogs) && termLogs.Count > 0)
+                        {
+                            @foreach (var line in termLogs)
+                            {
+                                <p class="@GetLogLineClass(line)">@line</p>
+                            }
+                        }
+                        else
+                        {
+                            <span style="color:#475569;">No output yet — run the service to see logs here.</span>
+                        }
+                    </div>
+                </div>
+
+                <!-- ── Live preview (frontend / mobile nodes) ─────────────────── -->
+                @if ((node.Domain is DomainKind.Frontend or DomainKind.Mobile) && node.Port > 0)
+                {
+                    var portOpen = _portReady.TryGetValue(node.Id, out var pr) && pr;
+                    <div class="uc-preview">
+                        <div class="preview-bar">
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(portOpen ? Color.Success : Color.Default)"
+                                     Variant="Variant.Filled">
+                                @(portOpen ? "LIVE" : "WAITING")
+                            </MudChip>
+                            <span class="preview-url">http://localhost:@node.Port</span>
+                            @if (portOpen)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Primary"
+                                           StartIcon="@Icons.Material.Filled.OpenInNew"
+                                           OnClick="() => Syncro.Desktop.Services.Connector.DevHub.PreviewWindowHelper.OpenPreview(node.Label, node.Port)">
+                                    Preview Window
+                                </MudButton>
+                                <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Default"
+                                           StartIcon="@Icons.Material.Filled.Language"
+                                           OnClick="() => _ = OpenInBrowserAsync(node.Port)">
+                                    Browser
+                                </MudButton>
+                            }
+                        </div>
+                        @if (!portOpen && node.RunState?.State is "running" or "healthy" or "starting")
+                        {
+                            <div class="preview-waiting">
+                                <MudProgressCircular Size="Size.Small" Indeterminate="true" Color="Color.Primary" />
+                                <span>Waiting for port :@node.Port to open…</span>
+                            </div>
+                        }
+                        else if (!portOpen)
+                        {
+                            <div class="preview-waiting">
+                                <MudIcon Icon="@Icons.Material.Filled.PlayCircleOutline" Class="text-muted" />
+                                <span>Start the service — Preview Window opens it with no iframe restrictions.</span>
+                            </div>
+                        }
+                    </div>
+                }
+                @if ((node.Domain is DomainKind.Backend or DomainKind.AIService) && node.Port > 0)
+                {
+                    var be_alive = node.RunState?.State is "running" or "healthy";
+                    <div class="uc-preview">
+                        <div class="preview-bar">
+                            <MudChip T="string" Size="Size.Small"
+                                     Color="@(be_alive ? Color.Success : Color.Default)"
+                                     Variant="Variant.Filled">
+                                @(be_alive ? "API LIVE" : "API IDLE")
+                            </MudChip>
+                            <span class="preview-url">http://localhost:@node.Port</span>
+                            @if (be_alive)
+                            {
+                                <MudButton Size="Size.Small" Variant="Variant.Filled" Color="Color.Success"
+                                           StartIcon="@Icons.Material.Filled.Api"
+                                           OnClick="() => Syncro.Desktop.Services.Connector.DevHub.PreviewWindowHelper.OpenSwagger(node.Label, node.Port)">
+                                    Swagger
+                                </MudButton>
+                            }
+                        </div>
+                    </div>
+                }
+
+            </div>
+        }
+    }
+
+</MudContainer>
+
+@code {
+    // ── State ────────────────────────────────────────────────────────────────
+
+    private readonly List<ConnectorWorkspaceNode> _projects = new();
+    private ConnectorWorkspaceNode? _selectedNode;
+
+    private bool _running;
+    private bool _detectingAll;
+    private bool _editingCmd;
+    private Guid _editNodeId;
+
+    // Terminal log + port readiness per node
+    private readonly Dictionary<Guid, List<string>> _nodeLogs = new();
+    private readonly Dictionary<Guid, bool> _portReady = new();
+
+    // Preview state (shared across the single selected node)
+    private int _previewKey;
+    private bool _mobilePreview;
+
+    private System.Threading.Timer? _statusTimer;
+
+    private bool HasRunnable => _projects.Any(p => !string.IsNullOrWhiteSpace(p.RunCommand));
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    protected override void OnInitialized()
+    {
+        _statusTimer = new System.Threading.Timer(_ =>
+        {
+            RefreshRunStatus();
+            InvokeAsync(StateHasChanged);
+        }, null, 2000, 2000);
+    }
+
+    public void Dispose() => _statusTimer?.Dispose();
+
+    private void RefreshRunStatus()
+    {
+        var snapshot = RunManager.Snapshot();
+        var procs    = RunManager.Running();
+
+        foreach (var node in _projects)
+        {
+            node.RunState = snapshot.FirstOrDefault(s =>
+                s.WorkspaceId == node.Path || s.Label == node.Label);
+
+            // Pull stdout/stderr ring-buffer from the matching CliWrap process
+            var proc = procs.FirstOrDefault(p =>
+                p.Spec.WorkspaceId == node.Path || p.Spec.Label == node.Label);
+
+            if (proc != null)
+            {
+                _nodeLogs[node.Id] = proc.RecentOutput().ToList();
+
+                // Check if the advertised port has actually opened (TCP probe, 400 ms)
+                if (node.Port > 0 && node.RunState?.State is "running" or "healthy")
+                    _portReady[node.Id] = PortProbe.IsOpen(node.Port);
+            }
+            else
+            {
+                _portReady[node.Id] = false;
+            }
+        }
+    }
+
+    // ── Fleet actions ─────────────────────────────────────────────────────────
+
+    private void SelectNode(ConnectorWorkspaceNode node)
+    {
+        _editingCmd   = false;
+        _selectedNode = _selectedNode?.Id == node.Id ? null : node;
+        StateHasChanged();
+    }
+
+    private void RemoveProject(ConnectorWorkspaceNode node)
+    {
+        _projects.Remove(node);
+        if (_selectedNode?.Id == node.Id) _selectedNode = null;
+        PushToDevHub();
+        StateHasChanged();
+    }
+
+    private async Task AddProjectAsync()
+    {
+        var path = await PickFolderAsync();
+        if (path == null) return;
+
+        var label = Path.GetFileName(path.TrimEnd('\\', '/'));
+        if (string.IsNullOrWhiteSpace(label)) label = path;
+
+        var node = new ConnectorWorkspaceNode { Path = path, Label = label, IsDetecting = true };
+        _projects.Add(node);
+        StateHasChanged();
+
+        await Task.Run(() => DomainDetector.Detect(node));
+        node.IsDetecting = false;
+        StateHasChanged();
+
+        _ = Task.Run(async () =>
+        {
+            await DomainDetector.ReadGitInfoAsync(node);
+            await InvokeAsync(StateHasChanged);
+        });
+
+        PushToDevHub();
+        Snackbar.Add($"Added {label} — {node.Domain} ({node.Stack})", Severity.Success);
+    }
+
+    private async Task DetectAllAsync()
+    {
+        _detectingAll = true;
+        StateHasChanged();
+
+        await Task.WhenAll(_projects.Select(async node =>
+        {
+            node.IsDetecting = true;
+            await InvokeAsync(StateHasChanged);
+            await Task.Run(() => DomainDetector.Detect(node));
+            await DomainDetector.ReadGitInfoAsync(node);
+            node.IsDetecting = false;
+            await InvokeAsync(StateHasChanged);
+        }));
+
+        _detectingAll = false;
+        StateHasChanged();
+        Snackbar.Add("Detection complete.", Severity.Success);
+    }
+
+    private async Task GitRefreshAllAsync()
+    {
+        await Task.WhenAll(_projects.Select(DomainDetector.ReadGitInfoAsync));
+        StateHasChanged();
+    }
+
+    private async Task GitRefreshSingleAsync(ConnectorWorkspaceNode node)
+    {
+        await DomainDetector.ReadGitInfoAsync(node);
+        StateHasChanged();
+    }
+
+    private async Task ResolveRoutesAsync(ConnectorWorkspaceNode node)
+    {
+        node.IsResolvingRoutes = true;
+        StateHasChanged();
+        try
+        {
+            var contract = await BackendResolver.ResolveAsync(node.Path);
+            node.Routes = contract.Routes;
+            node.Stack  = contract.Stack == BackendStack.Unknown ? node.Stack : contract.Stack.ToString();
+            Snackbar.Add($"Found {node.Routes.Count} route(s).", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Scan failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            node.IsResolvingRoutes = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Run / Stop ────────────────────────────────────────────────────────────
+
+    private async Task RunStackAsync()
+    {
+        var specs = _projects
+            .Where(p => !string.IsNullOrWhiteSpace(p.RunCommand))
+            .Select(p =>
+            {
+                var spec = RunSpec.FromCommandLine(p.Path, p.Label, p.Path, p.RunCommand, p.Port);
+                spec.Wave = p.Wave;
+                return spec;
+            }).ToList();
+
+        if (specs.Count == 0) { Snackbar.Add("No run commands configured.", Severity.Warning); return; }
+
+        _running = true;
+        StateHasChanged();
+
+        try
+        {
+            await GroupRun.RunGroupAsync(specs);
+            Snackbar.Add($"Stack launched — {specs.Count} service(s) in wave order.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            _running = false;
+            Snackbar.Add($"Run failed: {ex.Message}", Severity.Error);
+        }
+        StateHasChanged();
+    }
+
+    private void StopAll()
+    {
+        GroupRun.StopGroup();
+        _running = false;
+        StateHasChanged();
+        Snackbar.Add("All services stopped.", Severity.Info);
+    }
+
+    private async Task RunSingleAsync(ConnectorWorkspaceNode node)
+    {
+        var spec = RunSpec.FromCommandLine(node.Path, node.Label, node.Path, node.RunCommand, node.Port);
+        spec.Wave = node.Wave;
+        await Task.Run(() => RunManager.Start(spec));
+        Snackbar.Add($"Started {node.Label}.", Severity.Success);
+        StateHasChanged();
+    }
+
+    private void StopSingle(ConnectorWorkspaceNode node)
+    {
+        var id = $"proc:{node.Path}:{node.Label}";
+        try { RunManager.Stop(id); Snackbar.Add($"Stopped {node.Label}.", Severity.Info); }
+        catch { }
+        StateHasChanged();
+    }
+
+    // ── SVG Graph ─────────────────────────────────────────────────────────────
+
+    private record SvgNodePos(double X, double Y, ConnectorWorkspaceNode Node);
+    private record SvgEdgePos(double X1, double Y1, double X2, double Y2);
+
+    private (List<SvgNodePos> nodes, List<SvgEdgePos> edges, double height) ComputeGraph()
+    {
+        var byWave = new[] { 0, 1, 2 }
+            .Select(w => _projects.Where(p => p.Wave == w).ToList())
+            .ToArray();
+
+        int maxPerCol = byWave.Max(w => Math.Max(w.Count, 1));
+        double svgH   = Math.Max(180.0, maxPerCol * 100.0 + 70.0);
+        double[] xs   = { 80.0, 250.0, 420.0 };
+
+        var nodes = new List<SvgNodePos>();
+        for (int wi = 0; wi < 3; wi++)
+        {
+            var wn = byWave[wi];
+            for (int i = 0; i < wn.Count; i++)
+            {
+                double step = svgH / (wn.Count + 1);
+                nodes.Add(new SvgNodePos(xs[wi], step * (i + 1), wn[i]));
+            }
+        }
+
+        var w0 = nodes.Where(n => n.Node.Wave == 0).ToList();
+        var w1 = nodes.Where(n => n.Node.Wave == 1).ToList();
+        var w2 = nodes.Where(n => n.Node.Wave == 2).ToList();
+
+        var edges = new List<SvgEdgePos>();
+        foreach (var a in w0) foreach (var b in w1) edges.Add(new(a.X + 28, a.Y, b.X - 28, b.Y));
+        foreach (var a in w1) foreach (var b in w2) edges.Add(new(a.X + 28, a.Y, b.X - 28, b.Y));
+        if (!w0.Any() && !w1.Any() && w2.Any()) { /* nothing to connect */ }
+
+        return (nodes, edges, svgH);
+    }
+
+    // Format double as SVG coordinate (invariant culture, 1 dp)
+    private static string Gf(double v) => v.ToString("F1", CultureInfo.InvariantCulture);
+
+    private static string GetDomainLetter(DomainKind d) => d switch
+    {
+        DomainKind.Frontend  => "FE",
+        DomainKind.Backend   => "BE",
+        DomainKind.Database  => "DB",
+        DomainKind.Mobile    => "M",
+        DomainKind.AIService => "AI",
+        _                    => "?"
+    };
+
+    private static string Truncate(string s, int max) =>
+        s.Length > max ? s[..(max - 1)] + "…" : s;
+
+    // ── Display helpers ───────────────────────────────────────────────────────
+
+    private static string GetDomainClass(DomainKind d) => "dc-" + d.ToString().ToLowerInvariant();
+
+    private static string GetDomainIcon(DomainKind d) => d switch
+    {
+        DomainKind.Frontend  => Icons.Material.Filled.Web,
+        DomainKind.Backend   => Icons.Material.Filled.Api,
+        DomainKind.Database  => Icons.Material.Filled.Storage,
+        DomainKind.Mobile    => Icons.Material.Filled.Smartphone,
+        DomainKind.AIService => Icons.Material.Filled.Psychology,
+        _                    => Icons.Material.Filled.HelpOutline
+    };
+
+    private static string GetWaveLabel(int w) => w switch
+    {
+        0 => "Wave 0 — Infra",
+        1 => "Wave 1 — Services",
+        2 => "Wave 2 — Clients",
+        _ => $"Wave {w}"
+    };
+
+    private static string GetStatusDotClass(RunStatus? s) => s?.State switch
+    {
+        "running" => "sd-running",
+        "healthy" => "sd-healthy",
+        "starting"=> "sd-starting",
+        "crashed" => "sd-crashed",
+        _         => "sd-idle"
+    };
+
+    private static string GetStatusLabel(RunStatus? s) => s?.State switch
+    {
+        "running" => "Running",
+        "healthy" => "Healthy",
+        "starting"=> "Starting…",
+        "crashed" => "Crashed",
+        "stopped" => "Stopped",
+        _         => "Idle"
+    };
+
+    private static string GetStatusColor(RunStatus? s) => s?.State switch
+    {
+        "running" or "healthy" => "#10b981",
+        "starting"             => "#f59e0b",
+        "crashed"              => "#ef4444",
+        _                      => "#64748b"
+    };
+
+    private static string GetLogLineClass(string line)
+    {
+        var lo = line.ToLowerInvariant();
+        if (lo.Contains("error") || lo.Contains(" fail") || lo.StartsWith("✗"))   return "term-line tl-err";
+        if (lo.Contains("warn"))                                                    return "term-line tl-warn";
+        if (lo.Contains("ready") || lo.Contains("started") || lo.Contains("success") ||
+            lo.StartsWith("✓") || lo.Contains("compiled"))                          return "term-line tl-ok";
+        if (lo.Contains("http://") || lo.Contains("https://") || lo.Contains("localhost")) return "term-line tl-url";
+        return "term-line";
+    }
+
+    private static string GetVerbClass(HttpVerb v) => v switch
+    {
+        HttpVerb.Get    => "vb-get",
+        HttpVerb.Post   => "vb-post",
+        HttpVerb.Put    => "vb-put",
+        HttpVerb.Patch  => "vb-patch",
+        HttpVerb.Delete => "vb-delete",
+        _               => "vb-other"
+    };
+
+    // ── DevHub secondary window ───────────────────────────────────────────────
+
+    private void OpenDevHub()
+    {
+        PushToDevHub();
+        Components.Pages.Connector.DevHub.DevHubContentPage.Launch();
+    }
+
+    private void PushToDevHub() => DevHub.SetProjects(_projects);
+
+    // ── Browser launch ────────────────────────────────────────────────────────
+
+    private static async Task OpenInBrowserAsync(int port)
+    {
+        try { await Microsoft.Maui.ApplicationModel.Launcher.OpenAsync(new Uri($"http://localhost:{port}")); }
+        catch { }
+    }
+
+    // ── Folder picker ─────────────────────────────────────────────────────────
+
+    private static async Task<string?> PickFolderAsync()
+    {
+        try
+        {
+            var result = await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync(
+                () => CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync());
+            if (result.IsSuccessful && result.Folder != null && !string.IsNullOrEmpty(result.Folder.Path))
+                return result.Folder.Path;
+        }
+        catch { }
+        return null;
+    }
+}

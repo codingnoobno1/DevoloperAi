@@ -36,22 +36,65 @@ public class TypeScriptAstParser : IAstParser
                 nextRoute = DeriveNextJsRoute(normalizedPath, ctx.RootPath.Replace("\\", "/"));
             }
 
-            // 1. Interfaces & Types (DTOs)
-            // Match: export interface UserDto { ... } or export type UserType = { ... }
-            var interfaceRegex = new Regex(@"export\s+(interface|type)\s+(\w+)\b", RegexOptions.Compiled);
-            var interfaceMatches = interfaceRegex.Matches(content);
-            foreach (Match match in interfaceMatches)
+            // 1. Classes, Interfaces, Types & their properties/fields (DTOs/Models)
+            string[] lines = content.Split('\n');
+            string? currentScopeId = null;
+            for (int i = 0; i < lines.Length; i++)
             {
-                string typeName = match.Groups[2].Value;
-                nodes.Add(new AstNode
+                string line = lines[i].Trim();
+                
+                // Track start of interface/class/type
+                var scopeMatch = Regex.Match(line, @"export\s+(interface|type|class)\s+(\w+)\b");
+                if (scopeMatch.Success)
                 {
-                    Id = $"{filePath}::{typeName}",
-                    Name = typeName,
-                    Type = AstNodeType.Dto,
-                    FilePath = filePath,
-                    LineNumber = GetLineNumber(content, match.Index),
-                    Summary = $"TypeScript DTO {match.Groups[1].Value}"
-                });
+                    string kind = scopeMatch.Groups[1].Value;
+                    string name = scopeMatch.Groups[2].Value;
+                    currentScopeId = $"{filePath}::{name}";
+                    
+                    nodes.Add(new AstNode
+                    {
+                        Id = currentScopeId,
+                        Name = name,
+                        Type = kind == "class" ? AstNodeType.Class : AstNodeType.Dto,
+                        FilePath = filePath,
+                        LineNumber = i + 1,
+                        Summary = $"TypeScript {kind} {name}"
+                    });
+                    continue;
+                }
+
+                // Track end of scope
+                if (line == "}" || line == "};")
+                {
+                    currentScopeId = null;
+                    continue;
+                }
+
+                // If inside a class/interface/type scope, parse fields/properties
+                if (currentScopeId != null)
+                {
+                    var propMatch = Regex.Match(line, @"^(?:public|private|protected|readonly\s+)?(\w+)\??\s*:\s*([^;=]+)");
+                    if (propMatch.Success)
+                    {
+                        string propName = propMatch.Groups[1].Value;
+                        string propType = propMatch.Groups[2].Value.Trim();
+                        
+                        // Exclude keywords
+                        if (propName != "export" && propName != "import" && propName != "return" && propName != "class" && propName != "interface" && propName != "type")
+                        {
+                            nodes.Add(new AstNode
+                            {
+                                Id = $"{currentScopeId}::{propName}",
+                                Name = propName,
+                                Type = AstNodeType.Property,
+                                FilePath = filePath,
+                                LineNumber = i + 1,
+                                ReturnType = propType,
+                                Summary = $"Property {propName} of type {propType}"
+                            });
+                        }
+                    }
+                }
             }
 
             // 2. Next.js Route handlers (GET, POST, etc. exported functions in route.ts)

@@ -96,6 +96,46 @@ public class JavaScriptAstParser : IAstParser
                     Summary = $"Exported JS function: {funcName}"
                 });
             }
+
+            // 5. Classes & Fields (Models/DTOs)
+            var classRegex = new Regex(@"^(?:export\s+(?:default\s+)?)?class\s+(\w+)\b", RegexOptions.Compiled | RegexOptions.Multiline);
+            var classMatches = classRegex.Matches(content);
+            foreach (Match match in classMatches)
+            {
+                string className = match.Groups[1].Value;
+                string classId = $"{filePath}::{className}";
+                nodes.Add(new AstNode
+                {
+                    Id = classId,
+                    Name = className,
+                    Type = AstNodeType.Class,
+                    FilePath = filePath,
+                    LineNumber = GetLineNumber(content, match.Index),
+                    Summary = $"JavaScript Class {className}"
+                });
+
+                // Parse standard property assignments: this.prop = ...
+                var propRegex = new Regex(@"this\.(\w+)\s*=", RegexOptions.Compiled);
+                var propMatches = propRegex.Matches(content);
+                var seenProps = new HashSet<string>();
+                foreach (Match pm in propMatches)
+                {
+                    string propName = pm.Groups[1].Value;
+                    if (seenProps.Add(propName))
+                    {
+                        nodes.Add(new AstNode
+                        {
+                            Id = $"{classId}::{propName}",
+                            Name = propName,
+                            Type = AstNodeType.Property,
+                            FilePath = filePath,
+                            LineNumber = GetLineNumber(content, pm.Index),
+                            ReturnType = "any",
+                            Summary = $"Property {propName} of class {className}"
+                        });
+                    }
+                }
+            }
         }
         catch (Exception ex)
         {

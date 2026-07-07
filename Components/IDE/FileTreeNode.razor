@@ -1,0 +1,42 @@
+@using System.Collections.Generic
+@using System.Linq
+@using Syncro.Desktop.Services.Ide
+@using Syncro.Desktop.Services.Ide.Models
+@inject FileService Files
+
+<div class="ftn-row" style="padding-left:@(Depth * 12 + 6)px" @onclick="Toggle">
+    <span class="ftn-caret">@(Node.IsDirectory ? (_expanded ? "▾" : "▸") : "")</span>
+    @if (Node.IsDirectory)
+    {
+        <i class="bi @(_expanded ? "bi-folder2-open" : "bi-folder-fill") ftn-folder"></i>
+    }
+    else
+    {
+        <Syncro.Desktop.SyncroUI.SuiFileIcon FileName="@Node.Name" />
+    }
+    <span class="ftn-name">@Node.Name</span>
+</div>
+@if (Node.IsDirectory && _expanded && _children != null)
+{
+    @foreach (var child in _children)
+    {
+        <FileTreeNode Node="child" Depth="Depth + 1" OnOpenFile="OnOpenFile" />
+    }
+}
+
+@code {
+    [Parameter] public FileNode Node { get; set; } = default!;
+    [Parameter] public int Depth { get; set; }
+    [Parameter] public EventCallback<string> OnOpenFile { get; set; }
+
+    private bool _expanded;
+    private List<FileNode>? _children;
+
+    private async Task Toggle()
+    {
+        if (!Node.IsDirectory) { await OnOpenFile.InvokeAsync(Node.FullPath); return; }
+        _expanded = !_expanded;
+        if (_expanded && _children == null)
+            _children = (await Files.ListAsync(Node.FullPath)).ToList();
+    }
+}

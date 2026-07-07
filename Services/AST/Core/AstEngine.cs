@@ -5,6 +5,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using Syncro.Desktop.Services.AST.Models;
 using Syncro.Desktop.Services.AST.Scanners;
+using Syncro.Desktop.Services.AST.Analyzers;
+using Syncro.Desktop.Services.AST.Graph;
 
 namespace Syncro.Desktop.Services.AST.Core;
 
@@ -16,6 +18,12 @@ public class AstEngine
     private readonly SwaggerScanner _swaggerScanner;
     private readonly RouteScanner _routeScanner;
     private readonly ConfigScanner _configScanner;
+    private readonly FrameworkDetector _frameworkDetector;
+    private readonly DtoAnalyzer _dtoAnalyzer;
+    private readonly DependencyAnalyzer _dependencyAnalyzer;
+    private readonly ComplexityAnalyzer _complexityAnalyzer;
+    private readonly GraphExporter _graphExporter;
+    private readonly DagBuilder _dagBuilder;
 
     public AstEngine(
         AstRegistry registry,
@@ -23,7 +31,13 @@ public class AstEngine
         ApiEndpointScanner apiScanner,
         SwaggerScanner swaggerScanner,
         RouteScanner routeScanner,
-        ConfigScanner configScanner)
+        ConfigScanner configScanner,
+        FrameworkDetector frameworkDetector,
+        DtoAnalyzer dtoAnalyzer,
+        DependencyAnalyzer dependencyAnalyzer,
+        ComplexityAnalyzer complexityAnalyzer,
+        GraphExporter graphExporter,
+        DagBuilder dagBuilder)
     {
         _registry = registry;
         _portScanner = portScanner;
@@ -31,6 +45,12 @@ public class AstEngine
         _swaggerScanner = swaggerScanner;
         _routeScanner = routeScanner;
         _configScanner = configScanner;
+        _frameworkDetector = frameworkDetector;
+        _dtoAnalyzer = dtoAnalyzer;
+        _dependencyAnalyzer = dependencyAnalyzer;
+        _complexityAnalyzer = complexityAnalyzer;
+        _graphExporter = graphExporter;
+        _dagBuilder = dagBuilder;
     }
 
     public async Task<AstProjectMap> RunAsync(string projectPath, AstContext ctx)
@@ -55,30 +75,48 @@ public class AstEngine
                 map.ConfigFiles[cfg.Key] = cfg.Value;
             }
 
-            // 2. Detect Language & Framework
-            DetectLanguageAndFramework(map, ctx);
+            // 2. Detect Language & Framework using FrameworkDetector
+            map.Framework = _frameworkDetector.Detect(projectPath, configFiles);
+            map.Language = _frameworkDetector.DetectLanguage(map.Framework);
+            ctx.Framework = map.Framework.ToLower();
+            ctx.ProjectLanguage = map.Language.ToLower();
 
             // 3. Walk & Parse source files recursively
             var allSourceNodes = new List<AstNode>();
             await WalkAndParseSourceFiles(projectPath, allSourceNodes, ctx);
             map.Nodes.AddRange(allSourceNodes);
 
-            // 4. Parse configurations as AST nodes (dependencies, script nodes, connection string metadata)
-            var configParser = _registry.GetParser(".json"); // ConfigFileParser handles JSON/Yaml/txt/env
+            // 4. Parse configurations as AST nodes
+            var configParser = _registry.GetParser(".json");
             if (configParser != null)
             {
                 foreach (var cfg in configFiles)
                 {
                     if (ctx.CancellationToken.IsCancellationRequested) break;
                     var cfgNodes = await configParser.ParseFileAsync(cfg.Value, ctx);
+                    bool isExt = CheckIfExternalOrBoilerplate(cfg.Value);
+                    foreach (var n in cfgNodes)
+                    {
+                        n.IsExternalOrBoilerplate = isExt;
+                    }
                     map.Nodes.AddRange(cfgNodes);
                 }
             }
 
-            // 5. Build DTO class map & Dependency list from parsed nodes
-            ExtractDtosAndDependencies(map);
+            // 5. Run complexity analysis on all method nodes
+            foreach (var node in map.Nodes)
+            {
+                if (node.Type == AstNodeType.Method)
+                {
+                    _complexityAnalyzer.AnalyzeNode(node);
+                }
+            }
 
-            // 6. Run Swagger scanner
+            // 6. Build DTO class map & Dependency list using modular Analyzers
+            map.Dtos.AddRange(_dtoAnalyzer.Analyze(map.Nodes.Where(n => !n.IsExternalOrBoilerplate)));
+            map.Dependencies.AddRange(_dependencyAnalyzer.Analyze(map.Nodes.Where(n => !n.IsExternalOrBoilerplate)));
+
+            // 7. Run Swagger scanner
             if (ctx.ParseSwagger)
             {
                 var swaggerFiles = _swaggerScanner.FindSwaggerFiles(projectPath);
@@ -98,8 +136,8 @@ public class AstEngine
                 }
             }
 
-            // 7. Route & API scanning
-            var sourceEndpoints = _apiScanner.ExtractEndpoints(map.Nodes);
+            // 8. Route & API scanning
+            var sourceEndpoints = _apiScanner.ExtractEndpoints(map.Nodes.Where(n => !n.IsExternalOrBoilerplate));
             map.Endpoints.AddRange(sourceEndpoints);
 
             // Framework specific scanning
@@ -114,14 +152,13 @@ public class AstEngine
             // Normalize and deduplicate final endpoints
             map.Endpoints = _routeScanner.Normalize(map.Endpoints);
 
-            // 8. Port Scanning
+            // 9. Port Scanning
             var declaredPorts = await _portScanner.ExtractDeclaredPortsAsync(projectPath);
             map.Ports.AddRange(declaredPorts);
 
             if (ctx.ScanPorts)
             {
                 var activePorts = await _portScanner.ScanAsync("localhost", 200);
-                // Merge active ports with declared ports
                 foreach (var active in activePorts)
                 {
                     var existing = map.Ports.FirstOrDefault(p => p.Port == active.Port);
@@ -135,6 +172,9 @@ public class AstEngine
                     }
                 }
             }
+
+            // 10. Graph Construction & Serialization
+            BuildAndSerializeGraphs(map);
         }
         catch (Exception ex)
         {
@@ -145,121 +185,166 @@ public class AstEngine
         return map;
     }
 
-    private void DetectLanguageAndFramework(AstProjectMap map, AstContext ctx)
+    private bool CheckIfExternalOrBoilerplate(string filePath)
     {
-        // Guess language based on config files
-        if (map.ConfigFiles.Keys.Any(k => k.Equals("package.json", StringComparison.OrdinalIgnoreCase)))
-        {
-            map.Language = "TypeScript/JavaScript";
-            ctx.ProjectLanguage = "typescript";
-            
-            // Check framework
-            if (Directory.Exists(Path.Combine(map.ProjectPath, "app")) || Directory.Exists(Path.Combine(map.ProjectPath, "pages")))
-            {
-                map.Framework = "Next.js";
-                ctx.Framework = "nextjs";
-            }
-            else
-            {
-                map.Framework = "Express/Node";
-                ctx.Framework = "express";
-            }
-        }
-        else if (map.ConfigFiles.Keys.Any(k => k.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
-        {
-            map.Language = "C#";
-            ctx.ProjectLanguage = "csharp";
-            map.Framework = "ASP.NET Core";
-            ctx.Framework = "aspnet";
-        }
-        else if (map.ConfigFiles.Keys.Any(k => k.Equals("requirements.txt", StringComparison.OrdinalIgnoreCase) || k.Equals("pyproject.toml", StringComparison.OrdinalIgnoreCase)))
-        {
-            map.Language = "Python";
-            ctx.ProjectLanguage = "python";
-            map.Framework = "Flask/FastAPI";
-            ctx.Framework = "fastapi";
-        }
-        else
-        {
-            // Default heuristics based on file extensions
-            map.Language = "Unknown";
-            ctx.ProjectLanguage = "unknown";
-            map.Framework = "Generic";
-            ctx.Framework = "generic";
-        }
+        if (string.IsNullOrEmpty(filePath)) return false;
+        
+        string normPath = filePath.Replace('\\', '/').ToLower();
+        return normPath.Contains("/.next/") || 
+               normPath.Contains("/node_modules/") || 
+               normPath.Contains("/venv/") || 
+               normPath.Contains("/bin/") || 
+               normPath.Contains("/obj/") || 
+               normPath.Contains("/dist/") ||
+               normPath.Contains("/build/") ||
+               normPath.Contains("/__pycache__/");
     }
 
     private async Task WalkAndParseSourceFiles(string dir, List<AstNode> allNodes, AstContext ctx)
     {
-        if (ctx.CancellationToken.IsCancellationRequested) return;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        await WalkAndParseSourceFilesInternal(dir, allNodes, ctx, visited);
+    }
 
-        foreach (var file in Directory.GetFiles(dir))
+    private async Task WalkAndParseSourceFilesInternal(string dir, List<AstNode> allNodes, AstContext ctx, HashSet<string> visited)
+    {
+        if (ctx.CancellationToken.IsCancellationRequested) return;
+        if (string.IsNullOrEmpty(dir)) return;
+
+        // Normalize path to check for cycles
+        string canonicalPath;
+        try
         {
-            string ext = Path.GetExtension(file);
-            var parser = _registry.GetParser(ext);
-            if (parser != null)
+            canonicalPath = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (!visited.Add(canonicalPath))
             {
-                var nodes = await parser.ParseFileAsync(file, ctx);
-                allNodes.AddRange(nodes);
+                return; // Cycle detected!
+            }
+        }
+        catch
+        {
+            return; // Invalid path
+        }
+
+        bool isExt = CheckIfExternalOrBoilerplate(dir);
+
+        // Get files safely
+        string[] files;
+        try
+        {
+            files = Directory.GetFiles(dir);
+        }
+        catch (Exception ex)
+        {
+            ctx.Errors.Add($"Could not access files in directory '{dir}': {ex.Message}");
+            return;
+        }
+
+        foreach (var file in files)
+        {
+            if (ctx.CancellationToken.IsCancellationRequested) return;
+            try
+            {
+                string ext = Path.GetExtension(file);
+                var parser = _registry.GetParser(ext);
+                if (parser != null)
+                {
+                    var nodes = await parser.ParseFileAsync(file, ctx);
+                    foreach (var n in nodes)
+                    {
+                        n.IsExternalOrBoilerplate = isExt || CheckIfExternalOrBoilerplate(file);
+                    }
+                    allNodes.AddRange(nodes);
+                }
+            }
+            catch (Exception ex)
+            {
+                ctx.Errors.Add($"Error parsing file '{file}': {ex.Message}");
             }
         }
 
-        foreach (var subDir in Directory.GetDirectories(dir))
+        // Get subdirectories safely
+        string[] subDirs;
+        try
         {
+            subDirs = Directory.GetDirectories(dir);
+        }
+        catch (Exception ex)
+        {
+            ctx.Errors.Add($"Could not access subdirectories in '{dir}': {ex.Message}");
+            return;
+        }
+
+        foreach (var subDir in subDirs)
+        {
+            if (ctx.CancellationToken.IsCancellationRequested) return;
+
+            // Check if it's a symbolic link/junction
+            try
+            {
+                var attrs = File.GetAttributes(subDir);
+                if (attrs.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    continue; // Skip reparse points (symlinks/junctions) to prevent cycles
+                }
+            }
+            catch
+            {
+                continue; // Skip inaccessible directories
+            }
+
             string folderName = Path.GetFileName(subDir);
-            if (ctx.IgnorePatterns.Contains(folderName, StringComparer.OrdinalIgnoreCase)) continue;
-            await WalkAndParseSourceFiles(subDir, allNodes, ctx);
+            if (ctx.IgnorePatterns.Contains(folderName, StringComparer.OrdinalIgnoreCase) ||
+                folderName.StartsWith(".") ||
+                folderName.Equals("bin", StringComparison.OrdinalIgnoreCase) ||
+                folderName.Equals("obj", StringComparison.OrdinalIgnoreCase) ||
+                folderName.Equals("node_modules", StringComparison.OrdinalIgnoreCase) ||
+                folderName.Equals("dist", StringComparison.OrdinalIgnoreCase) ||
+                folderName.Equals("build", StringComparison.OrdinalIgnoreCase) ||
+                folderName.Equals("venv", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            await WalkAndParseSourceFilesInternal(subDir, allNodes, ctx, visited);
         }
     }
 
-    private void ExtractDtosAndDependencies(AstProjectMap map)
+    private void BuildAndSerializeGraphs(AstProjectMap map)
     {
-        foreach (var node in map.Nodes)
+        try
         {
-            // Extract DTOs
-            if (node.Type == AstNodeType.Dto || node.Name.EndsWith("Dto", StringComparison.OrdinalIgnoreCase) || node.Name.EndsWith("Model", StringComparison.OrdinalIgnoreCase))
-            {
-                // Ensure class/interface from source files is registered
-                if (node.Type == AstNodeType.Class || node.Type == AstNodeType.Interface || node.Type == AstNodeType.Dto)
-                {
-                    if (!map.Dtos.Any(d => d.Name == node.Name && d.FilePath == node.FilePath))
-                    {
-                        var dto = new AstDtoModel
-                        {
-                            Name = node.Name,
-                            FilePath = node.FilePath,
-                            LineNumber = node.LineNumber
-                        };
-                        
-                        // Extract class properties
-                        var childProps = map.Nodes.Where(n => n.FilePath == node.FilePath && n.Type == AstNodeType.Property && n.Id.StartsWith(node.Id));
-                        foreach (var prop in childProps)
-                        {
-                            dto.Properties[prop.Name] = prop.ReturnType ?? "object";
-                        }
+            // Build dependency graph using only source nodes (excluding boilerplate/chunks)
+            var sourceNodes = map.Nodes.Where(n => !n.IsExternalOrBoilerplate).ToList();
 
-                        map.Dtos.Add(dto);
+            var depGraph = new DependencyGraph();
+            depGraph.BuildFromNodes(sourceNodes);
+            map.DependencyGraphDot = _graphExporter.ToDot(depGraph.Graph, "DependencyGraph");
+
+            // Build call graph using only source nodes
+            var callGraph = new CallGraph();
+            var methodNodes = sourceNodes.Where(n => n.Type == AstNodeType.Method).ToList();
+            foreach (var caller in methodNodes)
+            {
+                foreach (var callee in methodNodes)
+                {
+                    if (caller.Id != callee.Id && 
+                        caller.Summary != null && 
+                        caller.Summary.Contains(callee.Name, StringComparison.OrdinalIgnoreCase))
+                    {
+                        callGraph.AddCall(caller.Id, callee.Id);
                     }
                 }
             }
+            map.CallGraphDot = _graphExporter.ToDot(callGraph.Graph, "CallGraph");
 
-            // Extract packages/dependencies from configuration Nodes
-            if (node.Type == AstNodeType.Module && node.Id.Contains("::dependency::") || node.Id.Contains("::pip::"))
-            {
-                string type = node.Id.Contains("::dependency::") ? "npm" : "pip";
-                string version = node.Metadata.TryGetValue("version", out var v) ? v.ToString() ?? "" : "";
-                
-                if (!map.Dependencies.Any(d => d.Name == node.Name))
-                {
-                    map.Dependencies.Add(new AstDependencyInfo
-                    {
-                        Name = node.Name,
-                        Version = version,
-                        Type = type,
-                        IsTransitive = false
-                    });
-                }
-            }
+            // Build DAG execution layers
+            var cycleFreeDag = _dagBuilder.BuildCycleFreeDag(depGraph.Graph, out _);
+            map.DagFlowchartMermaid = _dagBuilder.ToMermaidFlowchart(cycleFreeDag);
+        }
+        catch
+        {
+            // Suppress graphing errors
         }
     }
 }

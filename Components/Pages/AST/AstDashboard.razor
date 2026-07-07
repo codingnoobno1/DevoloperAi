@@ -1,0 +1,1147 @@
+@page "/ast-dashboard"
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.AST
+@using Syncro.Desktop.Services.AST.Models
+@using Syncro.Desktop.Services.AST.Git
+@using Syncro.Desktop.Services.AST.Env
+@using Syncro.Desktop.Services.AST.Storage
+@using CommunityToolkit.Maui.Storage
+@using System.IO
+@using System.Text
+@using System.Threading
+@inject ProjectService ProjectService
+@inject AstService AstService
+@inject GitRepoService GitRepoService
+@inject AstStorageService AstStorageService
+@inject EnvironmentConfigurator EnvConfigurator
+@inject ISnackbar Snackbar
+@inject NavigationManager Navigation
+@inject Syncro.Desktop.Services.SyncroCLI.AgentBridgeServer BridgeServer
+@inject Syncro.Desktop.Services.SyncroCLI.AgentOrchestrator Orchestrator
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <!-- Sub-navigation Header -->
+    <div class="d-flex align-center justify-space-between mb-6 pa-6 panel rounded-lg ast-header-gradient text-white">
+        <div>
+            <div class="d-flex align-center gap-2">
+                <MudIcon Icon="@Icons.Material.Filled.Search" Size="Size.Large" Class="text-white" />
+                <MudText Typo="Typo.h5" Class="font-weight-bold text-white">ARCHITECTURE</MudText>
+            </div>
+            @if (AstService.ActiveProjectMap != null)
+            {
+                <MudText Typo="Typo.caption" Class="text-white-50">Active Project: <strong>@AstService.ActiveProjectMap.ProjectName</strong> (@AstService.ActiveProjectMap.Language / @AstService.ActiveProjectMap.Framework)</MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Class="text-white-50">Select a project, paste a git repository URL, or run database overrides below</MudText>
+            }
+        </div>
+        <div class="d-flex gap-2">
+            <MudButton Variant="Variant.Filled" 
+                       Color="Color.Primary" 
+                       OnClick="@(() => Navigation.NavigateTo("ast-dashboard"))" 
+                       StartIcon="@Icons.Material.Filled.Search"
+                       Class="header-nav-btn active">Scan Hub</MudButton>
+            <MudButton Variant="Variant.Outlined" 
+                       Color="Color.Inherit" 
+                       OnClick="OpenNativeTerminal" 
+                       StartIcon="@Icons.Material.Filled.Terminal"
+                       Class="header-nav-btn">CLI Terminal</MudButton>
+            @if (AstService.ActiveProjectMap != null)
+            {
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Secondary" 
+                           OnClick="@(() => Navigation.NavigateTo("project-map-view"))" 
+                           StartIcon="@Icons.Material.Filled.AccountTree"
+                           Class="header-nav-btn">Dependency Graph</MudButton>
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Info" 
+                           OnClick="@(() => Navigation.NavigateTo("endpoint-explorer"))" 
+                           StartIcon="@Icons.Material.Filled.Api"
+                           Class="header-nav-btn">API Explorer</MudButton>
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Warning" 
+                           OnClick="@(() => Navigation.NavigateTo("dto-planner"))" 
+                           StartIcon="@Icons.Material.Filled.DataArray"
+                           Class="header-nav-btn">API Models</MudButton>
+            }
+        </div>
+    </div>
+
+    <MudGrid>
+        <!-- Scanner Form Panel -->
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="0" Class="pa-6 panel rounded-lg height-full d-flex flex-column justify-space-between">
+                <div>
+                    <MudText Typo="Typo.h6" Class="mb-4 font-weight-bold">Configure Scan Target</MudText>
+                    
+                    <div class="d-flex flex-column gap-4">
+                        <MudSelect T="string" Label="Select Project from Workspace" Value="@_selectedProjectName" ValueChanged="OnProjectSelected" AnchorOrigin="Origin.BottomCenter" Variant="Variant.Outlined">
+                            <MudSelectItem Value="@("Custom Path")">-- Enter Custom Path Manually --</MudSelectItem>
+                            @foreach (var p in _workspaceProjects)
+                            {
+                                <MudSelectItem Value="@p.Name">@p.Name (@p.Type - @p.Path)</MudSelectItem>
+                            }
+                        </MudSelect>
+
+                        <MudTextField @bind-Value="_projectPath" Label="Directory Path" Placeholder="e.g. D:\DeveloperAI\DEVOLOPER\my_project" Variant="Variant.Outlined" Required="true" RequiredError="Directory path is required!" Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseScanDirectory" />
+
+                        <MudExpansionPanel Text="Advanced" Class="mt-2">
+                            <MudTextField @bind-Value="_ignoreFolders" Label="Ignore Folders (Comma separated)" Placeholder="node_modules, bin, obj, .git, venv" Variant="Variant.Outlined" />
+
+                            <div class="d-flex align-center gap-4 mt-2">
+                                <MudSwitch T="bool" @bind-Value="_useCache" Color="Color.Success" Label="Use Cache" />
+                                <MudCheckBox T="bool" @bind-Value="_tokenizeAfterScan" Label="Index Engine" Color="Color.Primary" />
+                            </div>
+                        </MudExpansionPanel>
+
+                        <div class="d-flex align-center justify-space-between mt-2">
+                            <MudButton Variant="Variant.Filled" 
+                                       Color="Color.Primary" 
+                                       Size="Size.Medium"
+                                       OnClick="StartScan" 
+                                       Disabled="@(_isScanning || _isCloning)"
+                                       StartIcon="@Icons.Material.Filled.PlayArrow" 
+                                       Class="font-weight-bold">
+                                @(_isScanning ? "Analyzing..." : "Analyze Project")
+                            </MudButton>
+                        </div>
+                    </div>
+                </div>
+
+                @if (_isScanning)
+                {
+                    <div class="mt-6 pa-4 rounded-lg bg-light d-flex align-center gap-4 border border-subtle">
+                        <MudProgressCircular Color="Color.Primary" Size="Size.Small" Indeterminate="true" />
+                        <div>
+                            <MudText Typo="Typo.body2" Class="font-weight-bold">Analyzing Codebase Structures...</MudText>
+                            <MudText Typo="Typo.caption" Class="text-muted">Parsing files, mapping routing endpoints, and building graphs.</MudText>
+                        </div>
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(_scanStatusMsg))
+                {
+                    <div class="mt-4 pa-4 rounded-lg border @(_scanFailed ? "border-error bg-error-light" : "border-success bg-success-light")">
+                        <div class="d-flex align-center gap-2">
+                            <MudIcon Icon="@(_scanFailed ? Icons.Material.Filled.ErrorOutline : Icons.Material.Filled.CheckCircleOutline)" Color="@(_scanFailed ? Color.Error : Color.Success)" />
+                            <MudText Typo="Typo.body2" Class="@(_scanFailed ? "text-error font-weight-bold" : "text-success font-weight-bold")">
+                                @_scanStatusMsg
+                            </MudText>
+                        </div>
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <!-- Git Ingestion Panel -->
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="0" Class="pa-6 panel rounded-lg height-full d-flex flex-column justify-space-between">
+                <div>
+                    <MudText Typo="Typo.h6" Class="mb-4 font-weight-bold">Import Repository</MudText>
+                    
+                    <div class="d-flex flex-column gap-4">
+                        <MudTextField @bind-Value="_gitUrl" Label="Git Clone URL" Placeholder="e.g. https://github.com/user/project.git" Variant="Variant.Outlined" Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.CloudDownload" />
+                        
+                        <MudTextField @bind-Value="_projectName" Label="Destination Name (Optional)" Placeholder="e.g. my_cloned_project" Variant="Variant.Outlined" />
+
+                        <div class="d-flex align-center justify-space-between mt-2">
+                            <MudCheckBox T="bool" @bind-Value="_tokenizeAfterScan" Label="Index after Import" Color="Color.Primary" />
+                            <MudButton Variant="Variant.Filled" 
+                                       Color="Color.Secondary" 
+                                       Size="Size.Medium"
+                                       OnClick="StartCloneAndScan" 
+                                       Disabled="@(_isScanning || _isCloning)"
+                                       StartIcon="@Icons.Material.Filled.Download"
+                                       Class="font-weight-bold">
+                                @(_isCloning ? "Importing..." : "Import & Analyze")
+                            </MudButton>
+                        </div>
+                    </div>
+                </div>
+
+                @if (_isCloning || !string.IsNullOrEmpty(_cloneLog))
+                {
+                    <div class="mt-4">
+                        <MudText Typo="Typo.caption" Class="font-weight-bold text-secondary">Git Command Output:</MudText>
+                        <pre class="font-mono text-xs text-green pa-3 rounded bg-dark border border-subtle mt-1" style="max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">@_cloneLog</pre>
+                    </div>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <!-- Workspace Settings Panel (Always visible) -->
+        <MudItem xs="12">
+            <MudPaper Elevation="0" Class="pa-6 panel rounded-lg border border-subtle">
+                <div class="d-flex align-center justify-space-between mb-4">
+                    <div class="d-flex align-center gap-2">
+                        <MudIcon Icon="@Icons.Material.Filled.Settings" Color="Color.Primary" />
+                        <MudText Typo="Typo.h6" Class="font-weight-bold">Workspace Configuration</MudText>
+                    </div>
+                    <div>
+                        <MudChip T="string" Color="Color.Primary" Size="Size.Small" Variant="Variant.Filled">Active Workspace</MudChip>
+                    </div>
+                </div>
+
+                <MudGrid>
+                    <MudItem xs="12" md="8">
+                        <div class="d-flex flex-column gap-2">
+                            <MudText Typo="Typo.subtitle2" Class="font-weight-bold">Workspace Root Folder</MudText>
+                            <div class="d-flex align-center gap-2">
+                                <MudTextField Value="@_workspaceRootPath" ReadOnly="true" Label="Current Root" Variant="Variant.Outlined" Margin="Margin.Dense" FullWidth="true" />
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.FolderOpen" OnClick="ChangeWorkspaceRoot" Style="height: 40px;">Browse</MudButton>
+                                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ResetWorkspaceRoot" Style="height: 40px;">Reset</MudButton>
+                            </div>
+                            <MudText Typo="Typo.caption" Class="text-muted">
+                                This folder is the central location where Git repositories are cloned and scanning cache maps are stored.
+                                Default: <code>C:\Users\&lt;username&gt;\SyncroWorkspace</code>
+                            </MudText>
+                            <div class="d-flex align-center gap-2 mt-2">
+                                <MudIcon Icon="@(_isCliInPath ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Warning)" 
+                                         Color="@(_isCliInPath ? Color.Success : Color.Warning)" Size="Size.Small" />
+                                <MudText Typo="Typo.caption" Class="@(_isCliInPath ? "text-success font-weight-bold" : "text-warning font-weight-bold")">
+                                    @(_isCliInPath ? "Syncro CLI is registered in system PATH." : "Syncro CLI is not in system PATH.")
+                                </MudText>
+                                @if (!_isCliInPath)
+                                {
+                                    <MudButton Size="Size.Small" Variant="Variant.Outlined" Color="Color.Warning" 
+                                               OnClick="InstallCliToPath" Class="py-0 px-2 font-weight-bold">
+                                        Install to PATH
+                                    </MudButton>
+                                }
+                            </div>
+                        </div>
+                    </MudItem>
+
+                    <MudItem xs="12" md="4" Class="d-flex flex-column justify-center border-l pl-6">
+                        <MudText Typo="Typo.subtitle2" Class="font-weight-bold mb-2">Storage Usage</MudText>
+                        <div class="d-flex flex-column gap-1">
+                            <div class="d-flex justify-space-between text-caption">
+                                <span class="text-muted">AST Cache Size:</span>
+                                <span class="font-weight-bold">@FormatBytes(_cacheSize)</span>
+                            </div>
+                            <div class="d-flex justify-space-between text-caption">
+                                <span class="text-muted">Cloned Repos Size:</span>
+                                <span class="font-weight-bold">@FormatBytes(_clonesSize)</span>
+                            </div>
+                            <div class="d-flex justify-space-between text-caption border-t pt-1 mt-1 font-weight-bold">
+                                <span>Total Workspace:</span>
+                                <span class="text-primary">@FormatBytes(_cacheSize + _clonesSize)</span>
+                            </div>
+                        </div>
+                        <div class="mt-4 d-flex gap-2">
+                            <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.DeleteSweep" OnClick="ClearWorkspaceFiles" Size="Size.Small" FullWidth="true">
+                                Clean Space
+                            </MudButton>
+                        </div>
+                    </MudItem>
+                </MudGrid>
+            </MudPaper>
+        </MudItem>
+
+        <!-- Environment & Database Configurator (Only visible if project scanned) -->
+        @if (AstService.ActiveProjectMap != null)
+        {
+            var map = AstService.ActiveProjectMap;
+
+            <!-- Executive Statistics Cards -->
+            <MudItem xs="12">
+                <MudGrid Spacing="3">
+                    <MudItem xs="12" sm="6" md="3">
+                        <div class="stat-card-ast rounded-lg hover-elevate border border-subtle d-flex align-center gap-4 pa-5" style="border-left: 5px solid #6366f1;">
+                            <div class="icon-circle primary"><i class="bi bi-diagram-3-fill"></i></div>
+                            <div>
+                                <MudText Typo="Typo.h4" Class="font-weight-bold">@map.Nodes.Count(n => !n.IsExternalOrBoilerplate)</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted uppercase font-weight-bold">Source Nodes (Clean)</MudText>
+                            </div>
+                        </div>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" md="3">
+                        <div class="stat-card-ast rounded-lg hover-elevate border border-subtle d-flex align-center gap-4 pa-5" style="border-left: 5px solid #10B981;">
+                            <div class="icon-circle success"><i class="bi bi-gear-wide-connected"></i></div>
+                            <div>
+                                <MudText Typo="Typo.h4" Class="font-weight-bold">@map.Endpoints.Count</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted uppercase font-weight-bold">API Routes Discovered</MudText>
+                            </div>
+                        </div>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" md="3">
+                        <div class="stat-card-ast rounded-lg hover-elevate border border-subtle d-flex align-center gap-4 pa-5" style="border-left: 5px solid #F59E0B;">
+                            <div class="icon-circle warning"><i class="bi bi-braces"></i></div>
+                            <div>
+                                <MudText Typo="Typo.h4" Class="font-weight-bold">@map.Dtos.Count</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted uppercase font-weight-bold">DTO Schema Classes</MudText>
+                            </div>
+                        </div>
+                    </MudItem>
+
+                    <MudItem xs="12" sm="6" md="3">
+                        <div class="stat-card-ast rounded-lg hover-elevate border border-subtle d-flex align-center gap-4 pa-5" style="border-left: 5px solid #EF4444;">
+                            <div class="icon-circle danger"><i class="bi bi-cpu"></i></div>
+                            <div>
+                                <MudText Typo="Typo.h4" Class="font-weight-bold">@map.Nodes.Count(n => n.IsExternalOrBoilerplate)</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted uppercase font-weight-bold">Boilerplate / Library Nodes</MudText>
+                            </div>
+                        </div>
+                    </MudItem>
+                </MudGrid>
+            </MudItem>
+
+            <!-- Env & Database Overrides -->
+            <MudItem xs="12" md="7">
+                <MudPaper Elevation="0" Class="pa-6 panel rounded-lg">
+                    <MudText Typo="Typo.h6" Class="mb-3 font-weight-bold">Environment</MudText>
+                    <MudText Typo="Typo.caption" Class="text-muted d-block mb-4">Install project dependencies (pip/npm) and configure databases override strings.</MudText>
+
+                    <MudGrid>
+                        <!-- Left Sub-column: Installers -->
+                        <MudItem xs="12" sm="6">
+                            <div class="py-2">
+                                <MudText Typo="Typo.subtitle2" Class="font-weight-bold">Detected Database Requirements:</MudText>
+                                <div class="d-flex flex-wrap gap-1 mt-2 mb-4">
+                                    @if (_detectedDbs.Any())
+                                    {
+                                        @foreach (var db in _detectedDbs)
+                                        {
+                                            <MudChip T="string" Color="Color.Info" Size="Size.Small" Variant="Variant.Filled">@db</MudChip>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="text-xs text-muted italic">No specific database drivers detected in source.</span>
+                                    }
+                                </div>
+
+                                <MudButton Variant="Variant.Filled" 
+                                           Color="Color.Primary" 
+                                           OnClick="InstallEnvironment"
+                                           Disabled="_isInstallingEnv"
+                                           StartIcon="@Icons.Material.Filled.Build"
+                                           Class="font-weight-bold mt-2">
+                                    @(_isInstallingEnv ? "Installing..." : "Install Environment Packages")
+                                </MudButton>
+                            </div>
+                        </MudItem>
+
+                        <!-- Right Sub-column: DB Injection -->
+                        <MudItem xs="12" sm="6" Class="border-l pl-4">
+                            <MudText Typo="Typo.subtitle2" Class="font-weight-bold mb-2">Inject Database connection URL</MudText>
+                            <div class="d-flex flex-column gap-3">
+                                <MudSelect T="string" Label="Database Type" @bind-Value="_selectedDbToOverride" AnchorOrigin="Origin.BottomCenter" Dense="true" Variant="Variant.Outlined">
+                                    <MudSelectItem Value="@("PostgreSQL")">PostgreSQL</MudSelectItem>
+                                    <MudSelectItem Value="@("MongoDB")">MongoDB</MudSelectItem>
+                                    <MudSelectItem Value="@("Redis")">Redis</MudSelectItem>
+                                    <MudSelectItem Value="@("MySQL")">MySQL</MudSelectItem>
+                                    <MudSelectItem Value="@("SQL Server")">SQL Server</MudSelectItem>
+                                </MudSelect>
+
+                                <MudTextField @bind-Value="_connectionStringOverride" Label="Connection String Override" Placeholder="e.g. postgres://localhost:5432/db" Variant="Variant.Outlined" Dense="true" />
+
+                                <MudButton Variant="Variant.Filled" 
+                                           Color="Color.Warning" 
+                                           OnClick="ApplyDatabaseOverride"
+                                           StartIcon="@Icons.Material.Filled.Send"
+                                           Class="font-weight-bold align-self-end mt-1">
+                                    Inject Database URL
+                                </MudButton>
+                            </div>
+                        </MudItem>
+                    </MudGrid>
+
+                    @if (_isInstallingEnv || !string.IsNullOrEmpty(_envInstallLog))
+                    {
+                        <div class="mt-4 border-t pt-3">
+                            <MudText Typo="Typo.caption" Class="font-weight-bold text-secondary">Console installation output:</MudText>
+                            <pre class="font-mono text-xs text-green pa-3 rounded bg-dark border border-subtle mt-1" style="max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">@_envInstallLog</pre>
+                        </div>
+                    }
+                </MudPaper>
+            </MudItem>
+
+            <!-- Detailed Ingested Project Summary and Export Actions -->
+            <MudItem xs="12" md="5">
+                <MudPaper Elevation="0" Class="pa-6 panel rounded-lg height-full d-flex flex-column justify-space-between">
+                    <div>
+                        <div class="d-flex align-center justify-space-between mb-4 border-b pb-2">
+                            <MudText Typo="Typo.h6" Class="font-weight-bold">Code Metrics</MudText>
+                        </div>
+
+                        <div class="py-1">
+                            <span class="text-caption text-muted font-weight-bold uppercase">Project Name</span>
+                            <span class="text-body2 text-primary font-weight-bold d-block">@map.ProjectName</span>
+                        </div>
+                        <div class="py-1">
+                            <span class="text-caption text-muted font-weight-bold uppercase">Primary Language</span>
+                            <span class="text-body2 d-block"><MudChip T="string" Color="Color.Primary" Size="Size.Small" Variant="Variant.Text" Class="ma-0">@map.Language</MudChip></span>
+                        </div>
+                        <div class="py-1">
+                            <span class="text-caption text-muted font-weight-bold uppercase">Detected Framework</span>
+                            <span class="text-body2 d-block"><MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Text" Class="ma-0">@map.Framework</MudChip></span>
+                        </div>
+
+                        <div class="py-2">
+                            <span class="text-caption text-muted font-weight-bold uppercase d-block">Configuration Files</span>
+                            <div class="d-flex flex-wrap gap-1 mt-1">
+                                @if (map.ConfigFiles.Any())
+                                {
+                                    @foreach (var config in map.ConfigFiles.Where(k => k.Key != "__cache_signature__"))
+                                    {
+                                        <MudChip T="string" Color="Color.Secondary" Size="Size.Small" Variant="Variant.Outlined" Class="ma-0" Title="@config.Value">@config.Key</MudChip>
+                                    }
+                                }
+                                else
+                                {
+                                    <span class="text-xs text-muted italic">No configurations scanned.</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-4 d-flex justify-end gap-2 border-t">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="ExportJson" StartIcon="@Icons.Material.Filled.Code" Size="Size.Small">Export JSON</MudButton>
+                        <MudButton Variant="Variant.Filled" Color="Color.Secondary" OnClick="GeneratePdf" StartIcon="@Icons.Material.Filled.PictureAsPdf" Size="Size.Small">Export PDF</MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Error" StartIcon="@Icons.Material.Filled.Delete" OnClick="ClearStorageCache" Size="Size.Small">Clear Cache</MudButton>
+                    </div>
+                </MudPaper>
+            </MudItem>
+        }
+    </MudGrid>
+</MudContainer>
+
+<style>
+    .ast-header-gradient {
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+        box-shadow: 0 4px 20px -2px rgba(99, 102, 241, 0.15);
+    }
+    .text-white-50 {
+        color: rgba(255, 255, 255, 0.7) !important;
+    }
+    .header-nav-btn {
+        text-transform: none !important;
+        font-weight: 600 !important;
+        border-radius: 6px !important;
+    }
+    .header-nav-btn.active {
+        border: 2px solid white !important;
+    }
+    .bg-light {
+        background-color: #F9FAFB;
+    }
+    .border-b {
+        border-bottom: 1px solid var(--border-subtle);
+    }
+    .border-t {
+        border-top: 1px solid var(--border-subtle);
+    }
+    .border-l {
+        border-left: 1px solid var(--border-subtle);
+    }
+    .border-error {
+        border-color: #F87171 !important;
+    }
+    .bg-error-light {
+        background-color: #FEF2F2 !important;
+    }
+    .text-error {
+        color: #B91C1C !important;
+    }
+    .border-success {
+        border-color: #34D399 !important;
+    }
+    .bg-success-light {
+        background-color: #ECFDF5 !important;
+    }
+    .text-success {
+        color: #047857 !important;
+    }
+    .uppercase {
+        text-transform: uppercase;
+    }
+    .metric-row {
+        font-size: 13px;
+    }
+    .stat-card-ast {
+        background: #FFFFFF;
+        transition: all 0.25s ease-in-out;
+    }
+    .stat-card-ast:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+    }
+    .icon-circle {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        border-radius: 50%;
+        font-size: 20px;
+    }
+    .icon-circle.primary { background: #EEF2FF; color: #4F46E5; }
+    .icon-circle.success { background: #ECFDF5; color: #10B981; }
+    .icon-circle.warning { background: #FFFBEB; color: #F59E0B; }
+    .icon-circle.danger { background: #FEF2F2; color: #EF4444; }
+    .max-w-200 {
+        max-width: 200px;
+    }
+    .font-mono {
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .bg-dark {
+        background-color: #0F172A !important;
+        color: #38BDF8 !important;
+    }
+</style>
+
+@code {
+    private List<ProjectModel> _workspaceProjects = new();
+    private string _selectedProjectName = "Custom Path";
+    private string _projectPath = "";
+    private string _ignoreFolders = "node_modules, bin, obj, .git, venv";
+    private bool _useCache = true;
+    private bool _tokenizeAfterScan = true;
+    private bool _isScanning = false;
+    private bool _scanFailed = false;
+    private string _scanStatusMsg = "";
+    private string _storageDir = "";
+
+    // Git Ingestion fields
+    private string _gitUrl = "";
+    private string _projectName = "";
+    private bool _isCloning = false;
+    private string _cloneLog = "";
+
+    // Env & DB Configurator fields
+    private List<string> _detectedDbs = new();
+    private string _selectedDbToOverride = "PostgreSQL";
+    private string _connectionStringOverride = "";
+    private bool _isInstallingEnv = false;
+    private string _envInstallLog = "";
+
+    // Workspace settings fields
+    private string _workspaceRootPath = "";
+    private long _cacheSize = 0;
+    private long _clonesSize = 0;
+    private bool _isCliInPath = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _workspaceProjects = ProjectService.GetProjects();
+        
+        // Load active path if already scanned
+        if (AstService.ActiveProjectMap != null)
+        {
+            _projectPath = AstService.ActiveProjectMap.ProjectPath;
+            var match = _workspaceProjects.FirstOrDefault(p => p.Path == _projectPath);
+            if (match != null)
+            {
+                _selectedProjectName = match.Name;
+            }
+            // Populate database requirements
+            _detectedDbs = await EnvConfigurator.CheckDatabaseRequirementsAsync(
+                AstService.ActiveProjectMap.ProjectPath, 
+                AstService.ActiveProjectMap.Framework
+            );
+        }
+        else
+        {
+            // Set first project as default if exists
+            var firstProj = _workspaceProjects.FirstOrDefault();
+            if (firstProj != null)
+            {
+                _selectedProjectName = firstProj.Name;
+                _projectPath = firstProj.Path;
+            }
+        }
+
+        // Cache storage path
+        _storageDir = AstStorageService.CacheDirectory;
+        
+        UpdateWorkspaceStats();
+        CheckCliPathStatus();
+
+        BridgeServer.Start();
+        BridgeServer.OnRawMessageReceived += HandleBridgeMessage;
+    }
+
+    private void OnProjectSelected(string selection)
+    {
+        _selectedProjectName = selection;
+        if (selection == "Custom Path")
+        {
+            _projectPath = "";
+        }
+        else
+        {
+            var match = _workspaceProjects.FirstOrDefault(p => p.Name == selection);
+            if (match != null)
+            {
+                _projectPath = match.Path;
+            }
+        }
+    }
+
+    private async Task StartScan()
+    {
+        if (string.IsNullOrWhiteSpace(_projectPath))
+        {
+            Snackbar.Add("Please specify a project path.", Severity.Warning);
+            return;
+        }
+
+        if (!Directory.Exists(_projectPath))
+        {
+            _scanFailed = true;
+            _scanStatusMsg = $"Directory not found: {_projectPath}";
+            Snackbar.Add("Scan directory check failed.", Severity.Error);
+            return;
+        }
+
+        _isScanning = true;
+        _scanFailed = false;
+        _scanStatusMsg = "";
+        StateHasChanged();
+
+        try
+        {
+            // Update active state in service
+            var map = await AstService.ScanProjectAsync(_projectPath);
+            _scanFailed = false;
+            
+            if (_tokenizeAfterScan)
+            {
+                _scanStatusMsg = "Ingestion complete. Tokenizing project structures...";
+                StateHasChanged();
+                await AstService.TokenizeProjectAsync(map);
+            }
+
+            _scanStatusMsg = $"Successfully scanned project: {map.ProjectName} with {map.Nodes.Count(n => !n.IsExternalOrBoilerplate)} parsed source nodes{(_tokenizeAfterScan ? " and generated vector embeddings index" : "")}.";
+            Snackbar.Add("Scan completed successfully!", Severity.Success);
+
+            // Populate database requirements
+            _detectedDbs = await EnvConfigurator.CheckDatabaseRequirementsAsync(map.ProjectPath, map.Framework);
+            UpdateWorkspaceStats();
+        }
+        catch (Exception ex)
+        {
+            _scanFailed = true;
+            _scanStatusMsg = $"Ingestion failed: {ex.Message}";
+            Snackbar.Add("AST Ingestion encountered an error.", Severity.Error);
+        }
+        finally
+        {
+            _isScanning = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task StartCloneAndScan()
+    {
+        if (string.IsNullOrWhiteSpace(_gitUrl))
+        {
+            Snackbar.Add("Please specify a Git repository URL.", Severity.Warning);
+            return;
+        }
+
+        _isCloning = true;
+        _cloneLog = "Initializing remote clone task...";
+        StateHasChanged();
+
+        try
+        {
+            string clonedPath = await GitRepoService.CloneRepositoryAsync(
+                _gitUrl,
+                _projectName,
+                logLine =>
+                {
+                    _ = InvokeAsync(() =>
+                    {
+                        _cloneLog += "\n" + logLine;
+                        StateHasChanged();
+                    });
+                }
+            );
+
+            _projectPath = clonedPath;
+            _selectedProjectName = "Custom Path";
+            Snackbar.Add("Git repository cloned successfully! Running AST scanner...", Severity.Info);
+            await StartScan();
+
+            if (AstService.ActiveProjectMap != null)
+            {
+                Snackbar.Add("Auto-detecting environment & installing packages...", Severity.Info);
+                await InstallEnvironment();
+
+                Snackbar.Add("Launching dev server...", Severity.Info);
+                _envInstallLog += "\nChecking for dev server auto-run...";
+                StateHasChanged();
+                await EnvConfigurator.AutoRunDevServerAsync(
+                    AstService.ActiveProjectMap.ProjectPath,
+                    AstService.ActiveProjectMap.Framework,
+                    logLine =>
+                    {
+                        _ = InvokeAsync(() =>
+                        {
+                            _envInstallLog += "\n" + logLine;
+                            StateHasChanged();
+                        });
+                    }
+                );
+            }
+        }
+        catch (Exception ex)
+        {
+            _cloneLog += $"\n[ERROR] Clone task aborted: {ex.Message}";
+            Snackbar.Add($"Cloning failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isCloning = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task InstallEnvironment()
+    {
+        if (AstService.ActiveProjectMap == null) return;
+
+        _isInstallingEnv = true;
+        _envInstallLog = "Launching package installer checks...";
+        StateHasChanged();
+
+        try
+        {
+            await EnvConfigurator.AutoInstallEnvironmentAsync(
+                AstService.ActiveProjectMap.ProjectPath,
+                AstService.ActiveProjectMap.Framework,
+                logLine =>
+                {
+                    _ = InvokeAsync(() =>
+                    {
+                        _envInstallLog += "\n" + logLine;
+                        StateHasChanged();
+                    });
+                }
+            );
+            Snackbar.Add("Dependencies checked and installed successfully!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            _envInstallLog += $"\n[ERROR] Installation failed: {ex.Message}";
+            Snackbar.Add($"Failed to configure packages: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _isInstallingEnv = false;
+            StateHasChanged();
+        }
+    }
+
+    private void HandleBridgeMessage(string json)
+    {
+        _ = InvokeAsync(() =>
+        {
+            try
+            {
+                var packet = Newtonsoft.Json.JsonConvert.DeserializeObject<Syncro.Desktop.Infrastructure.AgentBridge.AgentPacket>(json);
+                if (packet != null)
+                {
+                    string msg = "";
+                    if (packet.Payload != null)
+                    {
+                        if (packet.Payload is Newtonsoft.Json.Linq.JToken token)
+                        {
+                            msg = token.ToString();
+                        }
+                        else
+                        {
+                            msg = packet.Payload.ToString() ?? "";
+                        }
+                    }
+
+                    if (!string.IsNullOrEmpty(msg))
+                    {
+                        if (packet.PacketType == "Error")
+                        {
+                            _cloneLog += $"\n[IPC ERROR] {msg}";
+                            _envInstallLog += $"\n[IPC ERROR] {msg}";
+                        }
+                        else
+                        {
+                            _cloneLog += $"\n[IPC] {msg}";
+                            _envInstallLog += $"\n[IPC] {msg}";
+                        }
+                        StateHasChanged();
+                    }
+                }
+            }
+            catch
+            {
+                _cloneLog += $"\n[IPC RAW] {json}";
+                StateHasChanged();
+            }
+        });
+    }
+
+    private async Task ApplyDatabaseOverride()
+    {
+        if (AstService.ActiveProjectMap == null) return;
+        
+        if (string.IsNullOrWhiteSpace(_connectionStringOverride))
+        {
+            Snackbar.Add("Please specify a Connection String.", Severity.Warning);
+            return;
+        }
+
+        try
+        {
+            await EnvConfigurator.InjectDatabaseConnectionStringAsync(
+                AstService.ActiveProjectMap.ProjectPath,
+                _selectedDbToOverride,
+                _connectionStringOverride,
+                logLine =>
+                {
+                    _envInstallLog += "\n" + logLine;
+                    StateHasChanged();
+                }
+            );
+            Snackbar.Add($"{_selectedDbToOverride} connection string injected to .env!", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to apply database override: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task ExportJson()
+    {
+        if (AstService.ActiveProjectMap == null) return;
+        try
+        {
+            string outDir = Path.Combine(AstService.ActiveProjectMap.ProjectPath, "exports");
+            string fullPath = await AstService.ExportJsonAsync(AstService.ActiveProjectMap, outDir);
+            Snackbar.Add($"JSON map exported to: {fullPath}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Export failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task GeneratePdf()
+    {
+        if (AstService.ActiveProjectMap == null) return;
+        try
+        {
+            string outDir = Path.Combine(AstService.ActiveProjectMap.ProjectPath, "exports");
+            string fullPath = await AstService.GeneratePdfAsync(AstService.ActiveProjectMap, outDir);
+            Snackbar.Add($"QuestPDF report generated at: {fullPath}", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"PDF compilation failed: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void ClearStorageCache()
+    {
+        try
+        {
+            AstStorageService.ClearCache();
+            Snackbar.Add("Local AST storage cache files deleted.", Severity.Success);
+            UpdateWorkspaceStats();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Cache clearing error: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private async Task BrowseScanDirectory()
+    {
+        try
+        {
+            var result = await FolderPicker.PickAsync(CancellationToken.None);
+            if (result != null && result.IsSuccessful && result.Folder != null)
+            {
+                _projectPath = result.Folder.Path;
+                _selectedProjectName = "Custom Path";
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to open directory picker: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void UpdateWorkspaceStats()
+    {
+        _workspaceRootPath = Microsoft.Maui.Storage.Preferences.Default.Get("__syncro_workspace_root__", "");
+        if (string.IsNullOrWhiteSpace(_workspaceRootPath))
+        {
+            _workspaceRootPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "SyncroWorkspace");
+        }
+        _cacheSize = AstStorageService.GetCacheSize();
+        _clonesSize = GitRepoService.GetClonesSize();
+        StateHasChanged();
+    }
+
+    private async Task ChangeWorkspaceRoot()
+    {
+        try
+        {
+            var result = await FolderPicker.PickAsync(CancellationToken.None);
+            if (result != null && result.IsSuccessful && result.Folder != null)
+            {
+                string newPath = result.Folder.Path;
+                
+                // Validate write permissions in target folder
+                try
+                {
+                    if (!Directory.Exists(newPath))
+                    {
+                        Directory.CreateDirectory(newPath);
+                    }
+                    string testFile = Path.Combine(newPath, ".write_test");
+                    await File.WriteAllTextAsync(testFile, "test");
+                    File.Delete(testFile);
+                }
+                catch (Exception)
+                {
+                    Snackbar.Add("Selected folder is not writable. Please choose another folder.", Severity.Error);
+                    return;
+                }
+
+                Microsoft.Maui.Storage.Preferences.Default.Set("__syncro_workspace_root__", newPath);
+                Snackbar.Add($"Workspace root updated to: {newPath}", Severity.Success);
+                UpdateWorkspaceStats();
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to change workspace: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private void ResetWorkspaceRoot()
+    {
+        Microsoft.Maui.Storage.Preferences.Default.Remove("__syncro_workspace_root__");
+        Snackbar.Add("Workspace root reset to default.", Severity.Info);
+        UpdateWorkspaceStats();
+    }
+
+    private void ClearWorkspaceFiles()
+    {
+        try
+        {
+            AstStorageService.ClearCache();
+            string clonesDir = GitRepoService.ClonesRootDirectory;
+            if (Directory.Exists(clonesDir))
+            {
+                foreach (var dir in Directory.GetDirectories(clonesDir))
+                {
+                    try { Directory.Delete(dir, true); } catch { }
+                }
+                foreach (var file in Directory.GetFiles(clonesDir))
+                {
+                    try { File.Delete(file); } catch { }
+                }
+            }
+            Snackbar.Add("Workspace cache and cloned repositories cleared.", Severity.Success);
+            UpdateWorkspaceStats();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to clear workspace files: {ex.Message}", Severity.Error);
+        }
+    }
+
+    private string FormatBytes(long bytes)
+    {
+        string[] suffixes = { "B", "KB", "MB", "GB", "TB" };
+        int counter = 0;
+        decimal number = bytes;
+        while (Math.Round(number / 1024) >= 1)
+        {
+            number = number / 1024;
+            counter++;
+        }
+        return $"{number:n1} {suffixes[counter]}";
+    }
+
+    // ── CLI Integration Methods ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Opens the Syncro CLI interactive shell in a new, separate console window.
+    /// Runs syncro-cli.exe as an independent process so crashes cannot affect
+    /// the MAUI Desktop UI.
+    /// </summary>
+    private void OpenNativeTerminal()
+    {
+        try
+        {
+            // Resolve CLI path: first try beside this exe, then fall back to PATH
+            string? cliPath = ResolveCliPath();
+
+            if (cliPath == null)
+            {
+                Snackbar.Add(
+                    "syncro-cli.exe not found. Run 'syncro install' or build the Syncro.CLI project first.",
+                    Severity.Warning);
+                return;
+            }
+
+            // Working directory = active project path or workspace root
+            string workDir = AstService.ActiveProjectMap?.ProjectPath
+                ?? _workspaceRootPath
+                ?? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = "cmd.exe",
+                Arguments       = $"/K \"{cliPath}\"",
+                WorkingDirectory = Directory.Exists(workDir) ? workDir : Environment.CurrentDirectory,
+                UseShellExecute  = true,   // Required for a new visible console window
+                CreateNoWindow   = false,
+                WindowStyle      = System.Diagnostics.ProcessWindowStyle.Normal
+            };
+
+            System.Diagnostics.Process.Start(psi);
+            Snackbar.Add("Syncro CLI terminal opened.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to open terminal: {ex.Message}", Severity.Error);
+        }
+    }
+
+    /// <summary>
+    /// Triggers a UAC-elevated re-launch of syncro-cli.exe with the 'install'
+    /// argument, which adds the CLI directory to the Windows Machine PATH.
+    /// </summary>
+    private void InstallCliToPath()
+    {
+        try
+        {
+            string? cliPath = ResolveCliPath();
+
+            if (cliPath == null)
+            {
+                Snackbar.Add(
+                    "syncro-cli.exe not found. Build the Syncro.CLI project first.",
+                    Severity.Warning);
+                return;
+            }
+
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName        = cliPath,
+                Arguments       = "install",
+                UseShellExecute = true,
+                Verb            = "runas"   // Request UAC elevation
+            };
+
+            System.Diagnostics.Process.Start(psi);
+
+            // Re-check status after a brief delay (the elevated process runs async)
+            _ = Task.Delay(3000).ContinueWith(_ =>
+            {
+                CheckCliPathStatus();
+                InvokeAsync(StateHasChanged);
+            });
+
+            Snackbar.Add("Launched elevated PATH installer. Check the UAC prompt.", Severity.Info);
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // User cancelled UAC prompt
+            Snackbar.Add("PATH installation cancelled by user.", Severity.Info);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed to launch installer: {ex.Message}", Severity.Error);
+        }
+    }
+
+    /// <summary>
+    /// Checks whether the syncro-cli.exe directory is registered in the
+    /// Windows Machine PATH variable and updates the <c>_isCliInPath</c> flag.
+    /// </summary>
+    private void CheckCliPathStatus()
+    {
+        try
+        {
+            string? cliPath = ResolveCliPath();
+            if (cliPath == null)
+            {
+                _isCliInPath = false;
+                return;
+            }
+
+            string cliDir = Path.GetDirectoryName(cliPath) ?? "";
+
+            // Check both Machine and User PATH scopes
+            string machinePath = Environment.GetEnvironmentVariable("PATH",
+                EnvironmentVariableTarget.Machine) ?? "";
+            string userPath = Environment.GetEnvironmentVariable("PATH",
+                EnvironmentVariableTarget.User) ?? "";
+            string processPath = Environment.GetEnvironmentVariable("PATH",
+                EnvironmentVariableTarget.Process) ?? "";
+
+            string allPaths = $"{machinePath};{userPath};{processPath}";
+
+            _isCliInPath = allPaths
+                .Split(';')
+                .Any(p => p.Trim().Equals(cliDir, StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            _isCliInPath = false;
+        }
+    }
+
+    /// <summary>
+    /// Resolves the full path to syncro-cli.exe.
+    /// Searches (in order): beside the current exe, in PATH via 'where'.
+    /// </summary>
+    private static string? ResolveCliPath()
+    {
+        // 1. Beside the running executable (published single-file layout)
+        string exeDir = AppDomain.CurrentDomain.BaseDirectory;
+        string candidate = Path.Combine(exeDir, "syncro-cli.exe");
+        if (File.Exists(candidate)) return candidate;
+
+        // 2. Sibling Syncro.CLI build output (Debug or Release)
+        foreach (var config in new[] { "Debug", "Release" })
+        {
+            string sibling = Path.Combine(exeDir, "..", "..", "..", "..",
+                "Syncro.CLI", "bin", config, "net9.0", "syncro-cli.exe");
+            sibling = Path.GetFullPath(sibling);
+            if (File.Exists(sibling)) return sibling;
+        }
+
+        // 3. Check system PATH (if already installed)
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName               = "where",
+                Arguments              = "syncro-cli",
+                RedirectStandardOutput = true,
+                UseShellExecute        = false,
+                CreateNoWindow         = true
+            };
+            using var proc = System.Diagnostics.Process.Start(psi);
+            string? line   = proc?.StandardOutput.ReadLine();
+            proc?.WaitForExit();
+            if (!string.IsNullOrWhiteSpace(line) && File.Exists(line.Trim()))
+                return line.Trim();
+        }
+        catch { }
+
+        return null;
+    }
+}

@@ -1,0 +1,55 @@
+@using MudBlazor
+@using Syncro.Desktop.Services.Connector.Models
+
+<MudPaper Elevation="0" Class="panel pa-4">
+    <div class="d-flex align-center gap-2 mb-2">
+        <MudIcon Icon="@Icons.Material.Filled.Link" Color="Color.Primary" Size="Size.Small" />
+        <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Contract</MudText>
+    </div>
+    <div class="contract-row">
+        <span class="contract-key">Frontend</span>
+        @if (FrontendContract != null)
+        {
+            <span>@FrontendContract.Stack · @FrontendContract.Calls.Count calls</span>
+        }
+        else
+        {
+            <span class="text-muted">Not mapped — add a frontend path and click Map</span>
+        }
+    </div>
+    <div class="contract-row">
+        <span class="contract-key">Backend</span>
+        @if (BackendContract != null)
+        {
+            <span>@BackendContract.Stack · @BackendContract.Routes.Count routes</span>
+        }
+        else
+        {
+            <span class="text-muted">Not resolved</span>
+        }
+    </div>
+    <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true" Class="mt-3"
+               StartIcon="@Icons.Material.Filled.Save" OnClick="OnSaveClick" Disabled="IsSaving || BackendContract == null">
+        @(IsSaving ? "Saving…" : "Save connector.json")
+    </MudButton>
+    @if (SavedPath != null)
+    {
+        <MudText Typo="Typo.caption" Class="text-muted mt-2 d-block">✅ Wrote @SavedPath</MudText>
+    }
+</MudPaper>
+
+<style>
+    .contract-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 13px;
+        border-bottom: 1px solid var(--mud-palette-lines-default); }
+    .contract-key { font-weight: 600; color: var(--mud-palette-text-primary); }
+</style>
+
+@code {
+    [Parameter] public FrontendContract? FrontendContract { get; set; }
+    [Parameter] public BackendContract? BackendContract { get; set; }
+    
+    [Parameter] public bool IsSaving { get; set; }
+    [Parameter] public string? SavedPath { get; set; }
+
+    [Parameter] public EventCallback OnSaveClick { get; set; }
+}

@@ -1,0 +1,21 @@
+<div class="sui-titlebar">
+    <div class="sui-titlebar-left">
+        <span class="sui-brand">Syncro</span>
+        <span class="sui-divider"></span>
+        <span class="sui-title">@Title</span>
+    </div>
+    <div class="sui-titlebar-center">
+        <!-- Future: Command Palette Input or Breadcrumbs could go here -->
+    </div>
+    <div class="sui-titlebar-right">
+        @if (RightContent != null)
+        {
+            @RightContent
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public RenderFragment? RightContent { get; set; }
+}

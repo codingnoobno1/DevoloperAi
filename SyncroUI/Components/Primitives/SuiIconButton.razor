@@ -1,0 +1,36 @@
+@namespace Syncro.Desktop.SyncroUI
+@inject IJSRuntime JS
+
+@* Reusable icon button — chrome's workhorse (activity bar, toolbars, panel headers).
+   C# owns state/click; JS (window.SyncroUI) owns the tooltip + click ripple. *@
+<button @ref="_el" class="sui-iconbtn sui-focusable @(Active ? "is-active" : "")" @onclick="OnClick">
+    <i class="@Icon"></i>
+    @if (Badge is { Length: > 0 })
+    {
+        <span class="sui-iconbtn-badge">@Badge</span>
+    }
+</button>
+
+@code {
+    [Parameter] public string Icon { get; set; } = "";
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public bool Active { get; set; }
+    [Parameter] public string? Badge { get; set; }
+    [Parameter] public EventCallback OnClick { get; set; }
+
+    private ElementReference _el;
+    private bool _wired;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _wired) return;
+        _wired = true;
+        try
+        {
+            if (!string.IsNullOrEmpty(Title))
+                await JS.InvokeVoidAsync("SyncroUI.tooltip", _el, Title, "right");
+            await JS.InvokeVoidAsync("SyncroUI.ripple", _el);
+        }
+        catch { /* JS optional; button still works */ }
+    }
+}

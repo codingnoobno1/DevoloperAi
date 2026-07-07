@@ -1,0 +1,195 @@
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.AST
+@using Syncro.Desktop.Services.AST.Git
+@using MudBlazor
+@using System.IO
+@inject ProjectService ProjService
+@inject AstService AstService
+@inject GitRepoService GitRepoService
+@inject ISnackbar Snackbar
+
+<MudDialog>
+    <TitleContent>
+        <div class="d-flex align-center gap-2">
+            <MudIcon Icon="@Icons.Material.Filled.CloudDownload" Color="Color.Primary" />
+            <MudText Typo="Typo.h6">Clone Git Repository</MudText>
+        </div>
+    </TitleContent>
+    <DialogContent>
+        @if (_isCloning)
+        {
+            <div class="d-flex flex-column align-center py-8">
+                <div class="terminal-animation mb-6">
+                    <div class="terminal-header">
+                        <div class="dot red"></div>
+                        <div class="dot yellow"></div>
+                        <div class="dot green"></div>
+                        <span class="ml-2">git clone @_gitUrl</span>
+                    </div>
+                    <div class="terminal-body" style="max-height: 200px; overflow-y: auto; width: 100%;">
+                        @foreach (var log in _cloneLogs)
+                        {
+                            <code>@log</code>
+                        }
+                        <code class="cursor">_</code>
+                    </div>
+                </div>
+                <MudText Typo="Typo.h6" Class="mb-2">Cloning & Ingesting Repository</MudText>
+                <MudProgressCircular Color="Color.Primary" Indeterminate="true" Size="Size.Large" />
+                <MudText Typo="Typo.caption" Class="mt-4">Downloading repository and building index...</MudText>
+            </div>
+        }
+        else
+        {
+            <MudText Typo="Typo.body2" Class="mb-4">
+                Clone a public or private git repository. Syncro will automatically download, analyze AST structures, and build hindsight semantic vectors.
+            </MudText>
+
+            <MudTextField T="string" Label="Git Repository URL" @bind-Value="GitUrl" 
+                          Required="true" RequiredError="Git URL is required" 
+                          Variant="Variant.Outlined" Class="mb-4"
+                          Placeholder="https://github.com/username/project.git" />
+
+            <MudTextField T="string" Label="Project Destination Name (Optional)" @bind-Value="ProjectName" 
+                          Variant="Variant.Outlined" Class="mb-4"
+                          Placeholder="e.g. my_project" />
+
+            <MudDivider Class="my-4" />
+            <div class="d-flex align-center justify-space-between">
+                <div>
+                    <MudText Typo="Typo.body2" Class="font-weight-bold">Index with Syncro Agent</MudText>
+                    <MudText Typo="Typo.caption" Class="text-muted">Generate AST index and vectorize for Hindsight search.</MudText>
+                </div>
+                <MudSwitch T="bool" @bind-Value="_syncWithAgent" Color="Color.Primary" />
+            </div>
+        }
+    </DialogContent>
+    <DialogActions>
+        @if (!_isCloning)
+        {
+            <MudButton OnClick="Cancel">Cancel</MudButton>
+            <MudButton Color="Color.Primary" Variant="Variant.Filled" OnClick="Submit" 
+                       Disabled="@(string.IsNullOrWhiteSpace(GitUrl))">
+                Clone & Ingest
+            </MudButton>
+        }
+    </DialogActions>
+</MudDialog>
+
+<style>
+    .terminal-animation {
+        width: 100%;
+        max-width: 460px;
+        background: #0f172a;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+    .terminal-header {
+        background: #1e293b;
+        padding: 8px 12px;
+        display: flex;
+        align-items: center;
+        font-family: monospace;
+        font-size: 12px;
+        color: #94a3b8;
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+    .red { background: #ef4444; }
+    .yellow { background: #f59e0b; }
+    .green { background: #10b981; }
+    .terminal-body {
+        padding: 16px;
+        font-family: 'Cascadia Code', 'Fira Code', monospace;
+        font-size: 13px;
+        color: #e2e8f0;
+        text-align: left;
+    }
+    .terminal-body code { display: block; margin-bottom: 4px; }
+    .cursor {
+        display: inline-block;
+        width: 8px;
+        height: 16px;
+        background: #6366f1;
+        animation: blink 1s infinite;
+    }
+    @@keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+</style>
+
+@code {
+    [CascadingParameter] MudBlazor.IMudDialogInstance MudDialog { get; set; } = default!;
+
+    private string _gitUrl = "";
+    public string GitUrl
+    {
+        get => _gitUrl;
+        set => _gitUrl = value;
+    }
+
+    public string ProjectName { get; set; } = "";
+    private bool _syncWithAgent = true;
+    private bool _isCloning = false;
+    private List<string> _cloneLogs = new();
+
+    private async Task Submit()
+    {
+        if (string.IsNullOrWhiteSpace(GitUrl)) return;
+
+        _isCloning = true;
+        _cloneLogs.Clear();
+        _cloneLogs.Add("> Initializing git repository download task...");
+        StateHasChanged();
+
+        try
+        {
+            string clonedPath = await GitRepoService.CloneRepositoryAsync(
+                GitUrl,
+                ProjectName,
+                logLine =>
+                {
+                    _ = InvokeAsync(() =>
+                    {
+                        _cloneLogs.Add(logLine);
+                        StateHasChanged();
+                    });
+                }
+            );
+
+            ProjectModel? project = ProjService.ImportProject(clonedPath);
+
+            if (project != null && _syncWithAgent)
+            {
+                _cloneLogs.Add("> Repository cloned. Initializing AST structure scan...");
+                StateHasChanged();
+                
+                var map = await AstService.ScanProjectAsync(clonedPath);
+                _cloneLogs.Add($"> Found {map.Nodes.Count} symbols. Initiating vector tokenization...");
+                StateHasChanged();
+
+                await AstService.TokenizeProjectAsync(map);
+                _cloneLogs.Add("> AST scan and Hindsight vector generation completed.");
+                StateHasChanged();
+            }
+
+            if (project != null)
+            {
+                Snackbar.Add($"Project '{project.Name}' successfully cloned and registered!", Severity.Success);
+                MudDialog.Close(DialogResult.Ok(project));
+            }
+            else
+            {
+                Snackbar.Add("Failed to register cloned project in dashboard cache.", Severity.Error);
+                MudDialog.Cancel();
+            }
+        }
+        catch (Exception ex)
+        {
+            _cloneLogs.Add($"[CRITICAL ERROR] Clone or Scan aborted: {ex.Message}");
+            Snackbar.Add($"Cloning failed: {ex.Message}", Severity.Error);
+            _isCloning = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Cancel() => MudDialog.Cancel();
+}

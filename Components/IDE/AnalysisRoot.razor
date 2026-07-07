@@ -1,0 +1,11 @@
+@* Chrome-less Blazor root for the standalone Project Analysis window. *@
+<MudThemeProvider IsDarkMode="true" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<AnalysisView Token="@Token" />
+
+@code {
+    [Parameter] public string? Token { get; set; }
+}

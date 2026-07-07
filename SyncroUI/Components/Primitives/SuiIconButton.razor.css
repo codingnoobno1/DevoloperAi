@@ -1,0 +1,20 @@
+.sui-iconbtn {
+    position: relative;
+    width: 42px; height: 42px;
+    border: 0; background: transparent;
+    color: var(--text-muted);
+    border-radius: var(--radius);
+    cursor: pointer; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    transition: color var(--motion-fast), background var(--motion-fast);
+}
+.sui-iconbtn:hover { color: var(--text); background: var(--hover); }
+.sui-iconbtn.is-active { color: var(--text-strong); box-shadow: inset 2px 0 0 var(--accent); }
+
+.sui-iconbtn-badge {
+    position: absolute; top: 6px; right: 6px;
+    min-width: 15px; height: 15px; padding: 0 3px;
+    background: var(--accent); color: var(--on-accent);
+    border-radius: 8px; font: 600 9px/15px var(--font-ui); text-align: center;
+}

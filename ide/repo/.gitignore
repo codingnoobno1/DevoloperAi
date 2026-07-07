@@ -1,0 +1,5 @@
+# Staging area only — the shipped runtime copies live in wwwroot/lib (committed).
+# Ignore the bulky npm-packed sources; keep the README + this file tracked.
+*
+!.gitignore
+!README.md

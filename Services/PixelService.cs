@@ -138,6 +138,25 @@ namespace Syncro.Desktop.Services
             }
             catch { return new(); }
         }
+
+        public async Task<List<AgentTaskModel>> GetAssignedTasksAsync()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(_authService.CurrentUserId)) return new();
+                SetAuthHeader();
+                
+                // Attempt to fetch from real API
+                var response = await _httpClient.GetAsync($"{BaseUrl}/api/mobile/user/tasks");
+                if (response.IsSuccessStatusCode && response.Content.Headers.ContentType?.MediaType == "application/json")
+                {
+                    return await response.Content.ReadFromJsonAsync<List<AgentTaskModel>>() ?? new();
+                }
+                
+                return new();
+            }
+            catch { return new(); }
+        }
     }
 
     public class MarketplaceScriptModel
@@ -149,6 +168,16 @@ namespace Syncro.Desktop.Services
         public int Stars { get; set; }
         public int Downloads { get; set; }
         public List<string> Platforms { get; set; } = new();
+    }
+
+    public class AgentTaskModel
+    {
+        public string Id { get; set; } = "";
+        public string Title { get; set; } = "";
+        public string ScopeDescription { get; set; } = "";
+        public string RepoUrl { get; set; } = "";
+        public string Status { get; set; } = "pending";
+        public DateTime Deadline { get; set; }
     }
 
     public class UserProfileModel

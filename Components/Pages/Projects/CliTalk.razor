@@ -1,0 +1,544 @@
+@page "/clitalk"
+@using System
+@using System.Collections.Generic
+@using System.Linq
+@using System.Net.Http
+@using Syncro.Desktop.Services.SyncroCLI
+@using Syncro.Desktop.Services.SyncroCLI.Commands
+@using Syncro.Desktop.Services.AgentCli.Loop
+@using Syncro.Desktop.Services.AgentCli.Models
+@using Syncro.Desktop.Services.AST
+@using Syncro.Desktop.Services.AST.Models
+@inject SyncroCLIService Cli
+@inject TaskStore Tasks
+@implements IDisposable
+
+<div class="vcli-root">
+
+    <!-- ═══════════════════ STATUS RIBBON ═══════════════════ -->
+    <div class="vcli-ribbon">
+        <div class="vcli-ribbon-brand">
+            <span class="vcli-logo">⚡</span>
+            <span class="vcli-title">VIKING CLI</span>
+            <span class="vcli-subtitle">Command Center</span>
+        </div>
+        <div class="vcli-ribbon-status">
+            <div class="vcli-status-pill @(_llmOnline ? "st-online" : "st-offline")">
+                <span class="vcli-dot"></span>
+                LLM :3020 @(_llmOnline ? "ON" : "OFF")
+            </div>
+            <div class="vcli-status-pill @(_monitorOnline ? "st-online" : "st-offline")">
+                <span class="vcli-dot"></span>
+                Monitor :3030 @(_monitorOnline ? "ON" : "OFF")
+            </div>
+        </div>
+        <div class="vcli-ribbon-meta">
+            <MudChip T="string" Size="Size.Small" Color="Color.Info" Style="font-size:11px;">@_log.Count lines</MudChip>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ MAIN PANELS ═══════════════════ -->
+    <div class="vcli-panels">
+
+        <!-- ── LEFT: Terminal ── -->
+        <div class="vcli-terminal-panel">
+            <div class="vcli-term-header">
+                <span class="vcli-term-title"><i class="bi bi-terminal-fill"></i> Terminal</span>
+                <div style="flex:1"></div>
+                <MudIconButton Icon="@Icons.Material.Filled.DeleteSweep" Size="Size.Small" Color="Color.Default"
+                               OnClick="@(() => { _log.Clear(); StateHasChanged(); })" Title="Clear" />
+            </div>
+            <div class="vcli-term" @ref="_termRef">
+                @if (_log.Count == 0)
+                {
+                    <div class="vcli-welcome-msg">
+                        <div class="vcli-welcome-icon">⚡</div>
+                        <div class="vcli-welcome-title">Viking CLI Ready</div>
+                        <div class="vcli-welcome-sub">
+                            Type <b>help</b> to see commands · <b>status</b> to check services · <b>scan .</b> to analyze code
+                        </div>
+                    </div>
+                }
+                @foreach (var line in _log)
+                {
+                    <div class="vcli-line @(line.Contains("> ") && _log.IndexOf(line) >= 0 && line.StartsWith("[") && line.Contains("> ") ? "" : "") @(IsInputLine(line) ? "vcli-in" : "") @(line.Contains("[✓]") ? "vcli-ok" : "") @(line.Contains("[✗]") ? "vcli-err" : "") @(line.Contains("══") ? "vcli-box" : "")">@line</div>
+                }
+            </div>
+            <div class="vcli-input-bar">
+                <MudTextField @bind-Value="_input" Placeholder="viking command…" Variant="Variant.Outlined"
+                              Margin="Margin.Dense" Immediate="true" OnKeyDown="OnKey" Class="flex-grow-1"
+                              Style="font-family:'JetBrains Mono',monospace; font-size:13px;" />
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="Send" Disabled="_busy"
+                           Style="border-radius:8px; min-width:80px; font-weight:700;">Run</MudButton>
+            </div>
+            <div class="vcli-quick-bar">
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => Quick("help"))">help</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => Quick("doctor"))">doctor</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => Quick("status"))">status</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => Quick("scan ."))">scan .</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => Quick("ide"))">ide</MudButton>
+                <MudButton Size="Size.Small" Variant="Variant.Text" OnClick="@(() => Quick("monitor"))">monitor</MudButton>
+                <MudSpacer />
+                <MudButton Size="Size.Small" Variant="Variant.Text" StartIcon="@Icons.Material.Filled.Refresh"
+                           OnClick="RefreshTasks">refresh</MudButton>
+            </div>
+        </div>
+
+        <!-- ── RIGHT: Tabbed Sidebar ── -->
+        <div class="vcli-sidebar">
+            <div class="vcli-tab-bar">
+                <button class="vcli-tab @(_activeTab == 0 ? "active" : "")" @onclick="() => _activeTab = 0">
+                    <i class="bi bi-activity"></i> Status
+                </button>
+                <button class="vcli-tab @(_activeTab == 1 ? "active" : "")" @onclick="() => _activeTab = 1">
+                    <i class="bi bi-list-task"></i> Tasks
+                </button>
+                <button class="vcli-tab @(_activeTab == 2 ? "active" : "")" @onclick="() => _activeTab = 2">
+                    <i class="bi bi-search"></i> Scan
+                </button>
+            </div>
+
+            <div class="vcli-tab-body">
+
+                @* ═══ STATUS TAB ═══ *@
+                @if (_activeTab == 0)
+                {
+                    <div class="vcli-section-title">Service Health</div>
+                    <div class="vcli-status-grid">
+                        <div class="vcli-health-card @(_llmOnline ? "hc-on" : "hc-off")">
+                            <div class="hc-icon"><i class="bi bi-cpu"></i></div>
+                            <div class="hc-label">LLM Express</div>
+                            <div class="hc-port">:3020</div>
+                            <div class="hc-badge">@(_llmOnline ? "ONLINE" : "OFFLINE")</div>
+                        </div>
+                        <div class="vcli-health-card @(_monitorOnline ? "hc-on" : "hc-off")">
+                            <div class="hc-icon"><i class="bi bi-speedometer2"></i></div>
+                            <div class="hc-label">Monitor</div>
+                            <div class="hc-port">:3030</div>
+                            <div class="hc-badge">@(_monitorOnline ? "ONLINE" : "OFFLINE")</div>
+                        </div>
+                    </div>
+
+                    <div class="vcli-section-title" style="margin-top:16px;">Quick Actions</div>
+                    <div class="vcli-actions-grid">
+                        <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true"
+                                   StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="@(() => Quick("doctor"))"
+                                   Style="border-radius:8px; text-transform:none; justify-content:flex-start;">
+                            Run Doctor
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" FullWidth="true"
+                                   StartIcon="@Icons.Material.Filled.Code" OnClick="@(() => Quick("ide"))"
+                                   Style="border-radius:8px; text-transform:none; justify-content:flex-start;">
+                            Open Viking IDE
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Info" FullWidth="true"
+                                   StartIcon="@Icons.Material.Filled.OpenInBrowser" OnClick="@(() => Quick("monitor"))"
+                                   Style="border-radius:8px; text-transform:none; justify-content:flex-start;">
+                            Open Monitor
+                        </MudButton>
+                    </div>
+
+                    <div class="vcli-section-title" style="margin-top:16px;">Commands</div>
+                    <div class="vcli-cmd-list">
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">help</span><span class="vcli-cmd-desc">List all commands</span></div>
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">doctor</span><span class="vcli-cmd-desc">Environment health check</span></div>
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">status</span><span class="vcli-cmd-desc">Service status probe</span></div>
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">scan [path]</span><span class="vcli-cmd-desc">AST codebase scan</span></div>
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">ide [path]</span><span class="vcli-cmd-desc">Open Viking IDE</span></div>
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">monitor</span><span class="vcli-cmd-desc">Open diagnostics browser</span></div>
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">init [stack]</span><span class="vcli-cmd-desc">Scaffold a project</span></div>
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">git [sub]</span><span class="vcli-cmd-desc">Git operations</span></div>
+                        <div class="vcli-cmd-row"><span class="vcli-cmd-name">ast [path]</span><span class="vcli-cmd-desc">Full AST analysis</span></div>
+                    </div>
+                }
+
+                @* ═══ TASKS TAB ═══ *@
+                @if (_activeTab == 1)
+                {
+                    <div class="vcli-section-title">Task Model Inspector</div>
+                    <MudSelect T="string" Value="_selectedId" ValueChanged="SelectTask" Label="Task"
+                               Dense="true" Variant="Variant.Outlined" Style="margin-bottom:12px;">
+                        @foreach (var t in _recentTasks)
+                        {
+                            <MudSelectItem T="string" Value="@t.TaskId">@t.Title (@t.Status)</MudSelectItem>
+                        }
+                    </MudSelect>
+
+                    @if (_selected != null)
+                    {
+                        <table class="kv">
+                            <tr><td>task_id</td><td>@_selected.TaskId</td></tr>
+                            <tr><td>project_id</td><td>@_selected.ProjectId</td></tr>
+                            <tr><td>title</td><td>@_selected.Title</td></tr>
+                            <tr><td>intent</td><td>@_selected.Intent</td></tr>
+                            <tr><td>script_id</td><td>@(_selected.ScriptId ?? "—")</td></tr>
+                            <tr><td>template_executed</td><td>@_selected.TemplateScriptExecuted</td></tr>
+                            <tr><td>status</td><td><b>@_selected.Status</b></td></tr>
+                            <tr><td>error</td><td>@_selected.Error</td></tr>
+                            <tr><td>error_count</td><td>@_selected.ErrorCount</td></tr>
+                            <tr><td>source</td><td>@(_selected.Source ?? "—")</td></tr>
+                            <tr><td>error_type</td><td>@(_selected.ErrorType ?? "—")</td></tr>
+                            <tr><td>solution</td><td>@(_selected.Solution ?? "—")</td></tr>
+                            <tr><td>next_action</td><td>@(_selected.NextAction ?? "—")</td></tr>
+                            <tr><td>llm_involved</td><td>@_selected.LlmInvolved</td></tr>
+                            <tr><td>attempts</td><td>@_selected.Attempts / @_selected.MaxAttempts</td></tr>
+                            <tr><td>needs_approval</td><td>@_selected.NeedsApproval</td></tr>
+                            <tr><td>created_at</td><td>@_selected.CreatedAt.ToString("u")</td></tr>
+                            <tr><td>updated_at</td><td>@_selected.UpdatedAt.ToString("u")</td></tr>
+                            <tr><td>history</td><td>@_selected.History.Count events</td></tr>
+                        </table>
+                    }
+                    else
+                    {
+                        <div class="vcli-empty">
+                            <i class="bi bi-inbox" style="font-size:28px; opacity:.3;"></i>
+                            <div>No tasks yet. Run <code>agent</code> or <code>scan</code> to create tasks.</div>
+                        </div>
+                    }
+                }
+
+                @* ═══ SCAN TAB ═══ *@
+                @if (_activeTab == 2)
+                {
+                    <div class="vcli-section-title">Codebase Scan Results</div>
+
+                    @if (_lastScan != null)
+                    {
+                        <div class="vcli-scan-summary">
+                            <div class="scan-stat">
+                                <div class="scan-stat-val">@_lastScan.ProjectName</div>
+                                <div class="scan-stat-lbl">Project</div>
+                            </div>
+                            <div class="scan-stat">
+                                <div class="scan-stat-val">@_lastScan.Language</div>
+                                <div class="scan-stat-lbl">Language</div>
+                            </div>
+                            <div class="scan-stat">
+                                <div class="scan-stat-val">@_lastScan.Framework</div>
+                                <div class="scan-stat-lbl">Framework</div>
+                            </div>
+                        </div>
+                        <div class="vcli-scan-metrics">
+                            <div class="scan-metric">
+                                <i class="bi bi-diagram-3-fill"></i>
+                                <span class="sm-val">@_lastScan.Nodes.Count</span>
+                                <span class="sm-lbl">AST Nodes</span>
+                            </div>
+                            <div class="scan-metric">
+                                <i class="bi bi-globe"></i>
+                                <span class="sm-val">@_lastScan.Endpoints.Count</span>
+                                <span class="sm-lbl">Endpoints</span>
+                            </div>
+                            <div class="scan-metric">
+                                <i class="bi bi-box"></i>
+                                <span class="sm-val">@_lastScan.Dtos.Count</span>
+                                <span class="sm-lbl">DTOs</span>
+                            </div>
+                            <div class="scan-metric">
+                                <i class="bi bi-hdd-network"></i>
+                                <span class="sm-val">@_lastScan.Ports.Count</span>
+                                <span class="sm-lbl">Ports</span>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="vcli-empty">
+                            <i class="bi bi-search" style="font-size:28px; opacity:.3;"></i>
+                            <div>No scan yet. Type <code>scan .</code> to analyze.</div>
+                        </div>
+                    }
+
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                               StartIcon="@Icons.Material.Filled.Search" OnClick="@(() => Quick("scan ."))"
+                               Style="margin-top:16px; border-radius:8px; text-transform:none; font-weight:700;">
+                        Scan Current Directory
+                    </MudButton>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════════ STYLES ═══════════════════ -->
+<style>
+    /* ── Root ── */
+    .vcli-root { display:flex; flex-direction:column; height:calc(100vh - 80px); background:#06090f;
+        font-family:'Inter',-apple-system,sans-serif; color:#c8d6f0; overflow:hidden; border-radius:12px;
+        border:1px solid rgba(255,255,255,.06); }
+
+    /* ── Ribbon ── */
+    .vcli-ribbon { display:flex; align-items:center; gap:16px; padding:12px 20px; 
+        background:linear-gradient(135deg, rgba(108,99,255,.12) 0%, rgba(0,212,255,.06) 100%);
+        border-bottom:1px solid rgba(255,255,255,.08); backdrop-filter:blur(20px); }
+    .vcli-ribbon-brand { display:flex; align-items:center; gap:10px; }
+    .vcli-logo { font-size:22px; }
+    .vcli-title { font-size:16px; font-weight:900; letter-spacing:.5px;
+        background:linear-gradient(135deg,#fff,#a89dff 60%,#00d4ff);
+        -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+    .vcli-subtitle { font-size:11px; color:#64748b; letter-spacing:.05em; }
+    .vcli-ribbon-status { display:flex; gap:10px; margin-left:auto; }
+    .vcli-ribbon-meta { margin-left:8px; }
+
+    /* Status pills */
+    .vcli-status-pill { display:flex; align-items:center; gap:6px; padding:4px 12px; border-radius:100px;
+        font-size:11px; font-weight:600; letter-spacing:.03em; border:1px solid rgba(255,255,255,.08);
+        background:rgba(10,16,32,.7); }
+    .vcli-dot { width:8px; height:8px; border-radius:50%; }
+    .st-online .vcli-dot { background:#10b981; box-shadow:0 0 8px #10b981; animation:pulse-dot 2s infinite; }
+    .st-offline .vcli-dot { background:#ef4444; box-shadow:0 0 6px rgba(239,68,68,.4); }
+    .st-online { color:#10b981; border-color:rgba(16,185,129,.25); }
+    .st-offline { color:#ef4444; border-color:rgba(239,68,68,.2); }
+
+    @@keyframes pulse-dot { 0%,100% { opacity:1; } 50% { opacity:.5; } }
+
+    /* ── Panels layout ── */
+    .vcli-panels { flex:1; display:flex; min-height:0; gap:0; }
+
+    /* ── Terminal ── */
+    .vcli-terminal-panel { flex:6; display:flex; flex-direction:column; border-right:1px solid rgba(255,255,255,.06); }
+    .vcli-term-header { display:flex; align-items:center; gap:8px; padding:8px 16px;
+        border-bottom:1px solid rgba(255,255,255,.06); color:#8892a4; font-size:12px; }
+    .vcli-term-title { font-weight:600; display:flex; align-items:center; gap:6px; }
+    .vcli-term { flex:1; overflow-y:auto; padding:16px; background:#080b12;
+        font-family:'JetBrains Mono','Cascadia Code',monospace; font-size:12.5px; line-height:1.65; }
+    .vcli-line { white-space:pre-wrap; padding:1px 0; }
+    .vcli-in { color:#00e5a0; }
+    .vcli-ok { color:#10b981; }
+    .vcli-err { color:#f87171; }
+    .vcli-box { color:#6366f1; font-weight:600; }
+    .vcli-input-bar { display:flex; gap:8px; padding:10px 16px; border-top:1px solid rgba(255,255,255,.06);
+        background:rgba(10,16,32,.5); }
+    .vcli-quick-bar { display:flex; gap:4px; padding:4px 12px 8px; flex-wrap:wrap; align-items:center; }
+
+    /* Welcome */
+    .vcli-welcome-msg { display:flex; flex-direction:column; align-items:center; justify-content:center;
+        height:100%; text-align:center; gap:10px; opacity:.6; }
+    .vcli-welcome-icon { font-size:40px; }
+    .vcli-welcome-title { font-size:18px; font-weight:800; 
+        background:linear-gradient(135deg,#fff,#a89dff 60%,#00d4ff);
+        -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+    .vcli-welcome-sub { color:#64748b; font-size:12px; max-width:400px; line-height:1.6; }
+
+    /* ── Sidebar ── */
+    .vcli-sidebar { flex:4; display:flex; flex-direction:column; min-width:0; background:#0a0d16; }
+    .vcli-tab-bar { display:flex; border-bottom:1px solid rgba(255,255,255,.06); }
+    .vcli-tab { flex:1; padding:10px 8px; text-align:center; font-size:11px; font-weight:600;
+        letter-spacing:.04em; color:#64748b; background:transparent; border:0; cursor:pointer;
+        transition:all .15s; display:flex; align-items:center; justify-content:center; gap:6px; }
+    .vcli-tab:hover { color:#c8d6f0; background:rgba(255,255,255,.03); }
+    .vcli-tab.active { color:#fff; box-shadow:inset 0 -2px 0 #6c63ff; background:rgba(108,99,255,.08); }
+    .vcli-tab-body { flex:1; overflow-y:auto; padding:16px; }
+
+    /* Section titles */
+    .vcli-section-title { font-size:10px; letter-spacing:.14em; color:#5b6478; font-weight:700; margin-bottom:10px; text-transform:uppercase; }
+
+    /* Health cards */
+    .vcli-status-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .vcli-health-card { padding:14px; border-radius:10px; border:1px solid rgba(255,255,255,.06);
+        background:rgba(10,16,32,.6); text-align:center; transition:all .2s; }
+    .vcli-health-card:hover { transform:translateY(-2px); }
+    .hc-on { border-color:rgba(16,185,129,.25); }
+    .hc-off { border-color:rgba(239,68,68,.15); }
+    .hc-icon { font-size:22px; margin-bottom:6px; }
+    .hc-on .hc-icon { color:#10b981; }
+    .hc-off .hc-icon { color:#ef4444; }
+    .hc-label { font-size:12px; font-weight:600; }
+    .hc-port { font-size:10px; color:#64748b; font-family:'JetBrains Mono',monospace; }
+    .hc-badge { display:inline-block; margin-top:8px; padding:2px 10px; border-radius:100px; font-size:9px;
+        font-weight:700; letter-spacing:.1em; }
+    .hc-on .hc-badge { background:rgba(16,185,129,.15); color:#10b981; }
+    .hc-off .hc-badge { background:rgba(239,68,68,.12); color:#ef4444; }
+
+    /* Actions grid */
+    .vcli-actions-grid { display:flex; flex-direction:column; gap:6px; }
+
+    /* Command list */
+    .vcli-cmd-list { display:flex; flex-direction:column; gap:2px; }
+    .vcli-cmd-row { display:flex; gap:8px; padding:5px 8px; border-radius:6px; font-size:12px; }
+    .vcli-cmd-row:hover { background:rgba(108,99,255,.08); }
+    .vcli-cmd-name { font-family:'JetBrains Mono',monospace; color:#6c63ff; font-weight:600; min-width:100px; }
+    .vcli-cmd-desc { color:#8892a4; }
+
+    /* Task KV table */
+    table.kv { width:100%; font-size:11.5px; border-collapse:collapse; }
+    table.kv td { padding:4px 6px; border-bottom:1px solid rgba(255,255,255,.04); vertical-align:top; }
+    table.kv td:first-child { color:#6366f1; font-family:'JetBrains Mono',monospace; white-space:nowrap; width:38%; font-size:11px; }
+
+    /* Empty state */
+    .vcli-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px;
+        padding:40px 16px; color:#5b6478; font-size:12px; text-align:center; }
+
+    /* Scan results */
+    .vcli-scan-summary { display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+    .scan-stat { padding:10px 12px; border-radius:8px; background:rgba(108,99,255,.06); border:1px solid rgba(108,99,255,.12); }
+    .scan-stat-val { font-size:14px; font-weight:700; color:#fff; }
+    .scan-stat-lbl { font-size:10px; color:#64748b; letter-spacing:.08em; text-transform:uppercase; }
+
+    .vcli-scan-metrics { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .scan-metric { display:flex; align-items:center; gap:8px; padding:10px; border-radius:8px;
+        background:rgba(10,16,32,.6); border:1px solid rgba(255,255,255,.05); }
+    .scan-metric i { font-size:18px; color:#6c63ff; }
+    .sm-val { font-size:16px; font-weight:800; color:#fff; }
+    .sm-lbl { font-size:10px; color:#64748b; }
+
+    /* Scrollbar */
+    .vcli-term::-webkit-scrollbar, .vcli-tab-body::-webkit-scrollbar { width:6px; }
+    .vcli-term::-webkit-scrollbar-thumb, .vcli-tab-body::-webkit-scrollbar-thumb { background:rgba(108,99,255,.25); border-radius:3px; }
+    .vcli-term::-webkit-scrollbar-track, .vcli-tab-body::-webkit-scrollbar-track { background:transparent; }
+</style>
+
+@code {
+    // ── State ──
+    private string _input = "";
+    private string? _selectedId;
+    private readonly List<string> _log = new();
+    private readonly List<string> _history = new();
+    private int _historyIndex = -1;
+    private List<TaskRecord> _recentTasks = new();
+    private TaskRecord? _selected;
+    private bool _busy;
+    private int _activeTab = 0;
+
+    // Service health
+    private bool _llmOnline;
+    private bool _monitorOnline;
+    private DateTime _lastProbe;
+    private static readonly HttpClient _probeHttp = new() { Timeout = TimeSpan.FromSeconds(2) };
+
+    // Scan
+    private AstProjectMap? _lastScan;
+
+    // DOM ref for auto-scroll
+    private Microsoft.AspNetCore.Components.ElementReference _termRef;
+
+    // ── Lifecycle ──
+    protected override async Task OnInitializedAsync()
+    {
+        Cli.OnLog += AppendLog;
+
+        // Subscribe to scan-complete events
+        if (Cli.ScanCmd != null)
+        {
+            Cli.ScanCmd.OnScanComplete += OnScanDone;
+            _lastScan = Cli.ScanCmd.LastScan;
+        }
+
+        await RefreshTasks();
+        await ProbeServices();
+    }
+
+    // ── Service probing ──
+    private async Task ProbeServices()
+    {
+        _llmOnline = await Probe("http://localhost:3020/");
+        _monitorOnline = await Probe("http://localhost:3030/");
+        _lastProbe = DateTime.UtcNow;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static async Task<bool> Probe(string url)
+    {
+        try { var r = await _probeHttp.GetAsync(url); return r.IsSuccessStatusCode; }
+        catch { return false; }
+    }
+
+    // ── Log handling ──
+    private void AppendLog(string msg)
+    {
+        _log.Add(msg);
+        if (_log.Count > 500) _log.RemoveAt(0);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private static bool IsInputLine(string line)
+    {
+        // Lines that start with a timestamp and "> " pattern
+        var idx = line.IndexOf("> ");
+        return idx >= 0 && idx < 15;
+    }
+
+    // ── Input handling ──
+    private async Task OnKey(Microsoft.AspNetCore.Components.Web.KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Send();
+        else if (e.Key == "ArrowUp" && _history.Count > 0)
+        {
+            _historyIndex = Math.Max(0, _historyIndex - 1);
+            _input = _history[_historyIndex];
+        }
+        else if (e.Key == "ArrowDown" && _history.Count > 0)
+        {
+            _historyIndex = Math.Min(_history.Count - 1, _historyIndex + 1);
+            _input = _history[_historyIndex];
+        }
+    }
+
+    private async Task Send()
+    {
+        var cmd = (_input ?? "").Trim();
+        if (string.IsNullOrEmpty(cmd) || _busy) return;
+        _busy = true;
+        _history.Add(cmd);
+        _historyIndex = _history.Count;
+        _input = "";
+        _log.Add($"> {cmd}");
+        StateHasChanged();
+
+        try { await Cli.ExecuteCommand(cmd); }
+        catch (Exception ex) { _log.Add($"[error] {ex.Message}"); }
+        finally
+        {
+            _busy = false;
+            await RefreshTasks();
+            // Re-probe services after any command in case status changed
+            if (DateTime.UtcNow - _lastProbe > TimeSpan.FromSeconds(5))
+                await ProbeServices();
+        }
+    }
+
+    private async Task Quick(string cmd) { _input = cmd; await Send(); }
+
+    // ── Tasks ──
+    private async Task RefreshTasks()
+    {
+        try
+        {
+            var all = await Tasks.AllAsync();
+            _recentTasks = all.OrderByDescending(t => t.UpdatedAt).Take(20).ToList();
+            if (_selectedId == null || !_recentTasks.Any(t => t.TaskId == _selectedId))
+            {
+                _selected = _recentTasks.FirstOrDefault();
+                _selectedId = _selected?.TaskId;
+            }
+            else
+            {
+                _selected = _recentTasks.First(t => t.TaskId == _selectedId);
+            }
+        }
+        catch { }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectTask(string id)
+    {
+        _selectedId = id;
+        _selected = _recentTasks.FirstOrDefault(t => t.TaskId == id);
+    }
+
+    // ── Scan event ──
+    private void OnScanDone(AstProjectMap map)
+    {
+        _lastScan = map;
+        _activeTab = 2; // Switch to Scan tab
+        InvokeAsync(StateHasChanged);
+    }
+
+    // ── Cleanup ──
+    public void Dispose()
+    {
+        Cli.OnLog -= AppendLog;
+        if (Cli.ScanCmd != null)
+            Cli.ScanCmd.OnScanComplete -= OnScanDone;
+    }
+}

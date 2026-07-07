@@ -1,0 +1,56 @@
+@namespace Syncro.Desktop.SyncroUI
+
+@* Maps a file name → a colored Bootstrap-Icons filetype glyph. Reusable in the explorer,
+   tabs, search results, breadcrumbs — anywhere a file is shown. *@
+<i class="bi @_icon sui-fileicon" style="color:@_color"></i>
+
+@code {
+    [Parameter] public string FileName { get; set; } = "";
+
+    private string _icon = "bi-file-earmark";
+    private string _color = "var(--text-muted)";
+
+    protected override void OnParametersSet()
+    {
+        var name = System.IO.Path.GetFileName(FileName).ToLowerInvariant();
+        var ext = System.IO.Path.GetExtension(name).TrimStart('.');
+
+        (_icon, _color) = ext switch
+        {
+            "cs" or "razor" => ("bi-filetype-cs", "#9b6dd6"),
+            "js" or "mjs" or "cjs" => ("bi-filetype-js", "#e3c543"),
+            "jsx" => ("bi-filetype-jsx", "#5bc8f5"),
+            "ts" => ("bi-filetype-tsx", "#4a8fe0"),
+            "tsx" => ("bi-filetype-tsx", "#4a8fe0"),
+            "py" => ("bi-filetype-py", "#5a9fd4"),
+            "java" => ("bi-filetype-java", "#e0744a"),
+            "json" => ("bi-filetype-json", "#c9a14a"),
+            "html" or "htm" or "cshtml" => ("bi-filetype-html", "#e0744a"),
+            "css" => ("bi-filetype-css", "#4a8fe0"),
+            "scss" or "sass" => ("bi-filetype-scss", "#cf6e9c"),
+            "md" or "markdown" => ("bi-filetype-md", "#8a9bb0"),
+            "xml" or "csproj" or "xaml" or "props" => ("bi-filetype-xml", "#e0744a"),
+            "yml" or "yaml" => ("bi-filetype-yml", "#cf6e9c"),
+            "sh" or "bash" or "zsh" => ("bi-filetype-sh", "#89d185"),
+            "php" => ("bi-filetype-php", "#8b7dd6"),
+            "rb" => ("bi-filetype-rb", "#d6534a"),
+            "go" => ("bi-filetype-go", "#5bc8f5"),
+            "sql" => ("bi-filetype-sql", "#c9a14a"),
+            "txt" or "log" => ("bi-filetype-txt", "#8a9bb0"),
+            "png" or "jpg" or "jpeg" or "gif" or "webp" or "bmp" or "ico" => ("bi-filetype-png", "#89d185"),
+            "svg" => ("bi-filetype-svg", "#cf6e9c"),
+            "csv" => ("bi-filetype-csv", "#89d185"),
+            "pdf" => ("bi-filetype-pdf", "#d6534a"),
+            "doc" or "docx" => ("bi-filetype-docx", "#4a8fe0"),
+            "xls" or "xlsx" => ("bi-filetype-xlsx", "#89d185"),
+            "bat" or "cmd" or "exe" => ("bi-filetype-exe", "#89d185"),
+            _ => ("bi-file-earmark-code", "var(--text-muted)")
+        };
+
+        // Well-known dotfiles / no-extension files
+        if (name is ".gitignore" or ".gitattributes") { _icon = "bi-git"; _color = "#e0744a"; }
+        else if (name == "dockerfile") { _icon = "bi-box"; _color = "#5bc8f5"; }
+        else if (name is ".env" or ".env.local") { _icon = "bi-gear"; _color = "#c9a14a"; }
+        else if (string.IsNullOrEmpty(ext)) { _icon = "bi-file-earmark"; _color = "var(--text-muted)"; }
+    }
+}

@@ -1,0 +1,310 @@
+@page "/hindsight"
+@page "/hindsight/{ProjectPathBase64}"
+@using System
+@using System.Linq
+@using System.Collections.Generic
+@using System.IO
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.AST
+@using Syncro.Desktop.Services.AST.Hindsight
+@inject ProjectService ProjService
+@inject AstService AstService
+@inject HindsightVectorStore VectorStore
+@inject HindsightQueryService HindsightQuery
+@inject ISnackbar Snackbar
+@inject Syncro.Desktop.Services.VSTools.VscodeLauncherService VscodeService
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-4">
+
+    <div class="d-flex align-center justify-space-between mb-2">
+        <MudText Typo="Typo.h5" Class="font-weight-bold">KNOWLEDGE</MudText>
+        @if (_llmOnline)
+        {
+            <MudChip T="string" Color="Color.Success" Icon="@Icons.Material.Filled.CloudDone">LLM Online (3020)</MudChip>
+        }
+        else
+        {
+            <MudChip T="string" Color="Color.Default" Icon="@Icons.Material.Filled.CloudOff">LLM Offline</MudChip>
+        }
+    </div>
+    <MudText Typo="Typo.body2" Class="mb-4" Style="color:var(--text-muted,#64748b);">
+        Left = deterministic local search (works offline, instant).
+        Right = AI-synthesized explanation based on the retrieved context.
+    </MudText>
+
+    <!-- Controls -->
+    <MudPaper Elevation="0" Class="pa-4 mb-4" Style="border:1px solid var(--border-subtle,#e5e7eb);">
+        <MudGrid Spacing="2" Class="align-center">
+            <MudItem xs="12" md="7">
+                <MudSelect T="string" Value="_selectedPath" ValueChanged="OnProjectChanged" Label="Project"
+                           Variant="Variant.Outlined" Dense="true">
+                    @foreach (var p in _projects)
+                    {
+                        <MudSelectItem T="string" Value="@p.Path">@p.Name (@p.Type)</MudSelectItem>
+                    }
+                </MudSelect>
+            </MudItem>
+            <MudItem xs="12" md="5" Class="d-flex align-center gap-2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Memory"
+                           OnClick="BuildIndex" Disabled="_busyIndex">
+                    @(_busyIndex ? "Indexing…" : "Build Knowledge Index")
+                </MudButton>
+                @if (_busyIndex)
+                {
+                    <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+                }
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Code"
+                           OnClick="OpenProjectInVscode" Disabled="string.IsNullOrEmpty(_selectedPath)">
+                    Open in VS Code
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+
+        @if (_stats != null)
+        {
+            <div class="d-flex flex-wrap gap-2 align-center mt-3">
+                <MudChip T="string" Color="Color.Info" Size="Size.Small">@_stats.VectorCount vectors</MudChip>
+                <MudChip T="string" Size="Size.Small">@_stats.FileCount files</MudChip>
+                @foreach (var kv in _stats.ByType.OrderByDescending(k => k.Value))
+                {
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined">@kv.Key: @kv.Value</MudChip>
+                }
+                @if (!_stats.Indexed)
+                {
+                    <MudText Typo="Typo.caption" Style="color:var(--text-muted,#64748b);">No vectors yet — click “Build / Refresh Index”.</MudText>
+                }
+            </div>
+        }
+    </MudPaper>
+
+    <!-- Query -->
+    <div class="d-flex gap-2 mb-4 align-center">
+        <MudTextField @bind-Value="_query" Label="Ask about this project (e.g. 'where is auth handled?')"
+                      Variant="Variant.Outlined" Immediate="true" Class="flex-grow-1" />
+        <MudButton Variant="Variant.Filled" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Compare"
+                   OnClick="RunComparison" Disabled="_busyQuery" Style="min-width:170px;height:56px;">
+            @(_busyQuery ? "Running…" : "Run Comparison")
+        </MudButton>
+    </div>
+
+    <!-- Results -->
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="0" Class="pa-4" Style="border:1px solid var(--border-subtle,#e5e7eb);min-height:240px;">
+                <div class="d-flex align-center gap-2 mb-2">
+                    <MudIcon Icon="@Icons.Material.Filled.Storage" Color="Color.Info" />
+                    <MudText Typo="Typo.h6">Local Search</MudText>
+                </div>
+                @if (_busyQuery && _left == null)
+                {
+                    <div class="d-flex justify-center pa-6"><MudProgressCircular Indeterminate="true" /></div>
+                }
+                else if (_left != null)
+                {
+                    <MudText Typo="Typo.caption" Style="color:var(--text-muted,#64748b);">⚡ @_left.ElapsedMs ms · deterministic · offline</MudText>
+                    <div style="white-space:pre-wrap;font-size:13px;margin-top:6px;">@_left.Text</div>
+                    @RenderChunks(_left.Chunks)
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Style="color:var(--text-muted,#64748b);">Run a comparison to see results.</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+
+        <MudItem xs="12" md="6">
+            <MudPaper Elevation="0" Class="pa-4" Style="border:1px solid var(--border-subtle,#e5e7eb);min-height:240px;">
+                <div class="d-flex align-center gap-2 mb-2">
+                    <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Color="Color.Secondary" />
+                    <MudText Typo="Typo.h6">AI Assistant</MudText>
+                </div>
+                @if (_busyQuery && _right == null)
+                {
+                    <div class="d-flex justify-center pa-6"><MudProgressCircular Indeterminate="true" /></div>
+                }
+                else if (_right != null)
+                {
+                    <MudText Typo="Typo.caption" Style="color:var(--text-muted,#64748b);">
+                        ⏱ @_right.ElapsedMs ms · @(_right.LlmUsed ? "LLM synthesized" : "LLM not used")
+                    </MudText>
+                    @if (!string.IsNullOrEmpty(_right.Note))
+                    {
+                        <MudAlert Severity="Severity.Warning" Dense="true" Class="my-2">@_right.Note</MudAlert>
+                    }
+                    <div style="white-space:pre-wrap;font-size:13px;margin-top:6px;">@_right.Text</div>
+                    @RenderChunks(_right.Chunks)
+                }
+                else
+                {
+                    <MudText Typo="Typo.body2" Style="color:var(--text-muted,#64748b);">Run a comparison to see results.</MudText>
+                }
+            </MudPaper>
+        </MudItem>
+    </MudGrid>
+@if (!string.IsNullOrEmpty(_mermaidGraph))
+{
+    <MudCard Elevation="0" Class="pa-4 mt-4" Style="border:1px solid var(--border-subtle,#e5e7eb); background:rgba(10,15,30,0.4); backdrop-filter:blur(10px);">
+        <MudCardHeader>
+            <CardHeaderContent>
+                <MudText Typo="Typo.h6" Class="font-weight-bold d-flex align-center gap-2" Style="color:white; font-family:'Orbitron',sans-serif;">
+                    <MudIcon Icon="@Icons.Material.Filled.Schema" Color="Color.Primary" />
+                    Dependency Graph
+                </MudText>
+            </CardHeaderContent>
+        </MudCardHeader>
+        <MudCardContent>
+            <div class="mermaid-diagram-box" style="font-family:'JetBrains Mono', monospace; font-size:12.5px; background:#04060c; color:#cbd5e1; padding:20px; border-radius:12px; white-space:pre-wrap; overflow-x:auto; border:1px solid rgba(255,255,255,0.05); max-height: 400px;">
+                @_mermaidGraph
+            </div>
+        </MudCardContent>
+    </MudCard>
+}
+</MudContainer>
+
+<style>
+    .chunk { display:flex; align-items:center; gap:8px; padding:4px 0; border-top:1px solid var(--border-subtle,#eef0f4); font-size:12px; }
+    .chunk .sym { font-weight:700; }
+    .chunk .loc { color:var(--text-muted,#64748b); font-family:'JetBrains Mono',monospace; }
+    .chunk .score { margin-left:auto; color:#6366f1; font-weight:700; }
+    .chunks-title { font-size:10px; letter-spacing:.08em; color:var(--text-muted,#64748b); margin-top:12px; text-transform:uppercase; }
+</style>
+
+@code {
+    [Parameter]
+    public string? ProjectPathBase64 { get; set; }
+
+    private List<ProjectModel> _projects = new();
+    private string? _selectedPath;
+    private HindsightStats? _stats;
+    private string _query = "";
+    private HindsightAnswer? _left;
+    private HindsightAnswer? _right;
+    private bool _busyIndex;
+    private bool _busyQuery;
+    private bool _llmOnline;
+    private string? _mermaidGraph;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _projects = ProjService.GetProjects();
+        
+        if (!string.IsNullOrEmpty(ProjectPathBase64))
+        {
+            try
+            {
+                var bytes = Convert.FromBase64String(ProjectPathBase64);
+                var decodedPath = System.Text.Encoding.UTF8.GetString(bytes);
+                _selectedPath = _projects.FirstOrDefault(p => p.Path.Equals(decodedPath, StringComparison.OrdinalIgnoreCase))?.Path ?? decodedPath;
+            }
+            catch
+            {
+                _selectedPath = _projects.FirstOrDefault()?.Path;
+            }
+        }
+        else
+        {
+            _selectedPath = _projects.FirstOrDefault()?.Path;
+        }
+
+        _llmOnline = await HindsightQuery.IsLlmAvailableAsync();
+        if (!string.IsNullOrEmpty(_selectedPath))
+        {
+            _stats = await VectorStore.StatsAsync(_selectedPath);
+            LoadMermaidGraph(_selectedPath);
+        }
+    }
+
+    private async Task OnProjectChanged(string path)
+    {
+        _selectedPath = path;
+        _left = null;
+        _right = null;
+        _stats = string.IsNullOrEmpty(path) ? null : await VectorStore.StatsAsync(path);
+        if (!string.IsNullOrEmpty(path)) LoadMermaidGraph(path);
+        else _mermaidGraph = null;
+    }
+
+    private async Task BuildIndex()
+    {
+        if (string.IsNullOrEmpty(_selectedPath)) { Snackbar.Add("Pick a project first.", Severity.Warning); return; }
+        _busyIndex = true;
+        try
+        {
+            var map = await AstService.ScanProjectAsync(_selectedPath);
+            await AstService.TokenizeProjectAsync(map);
+            _stats = await VectorStore.StatsAsync(_selectedPath);
+            LoadMermaidGraph(_selectedPath);
+            Snackbar.Add($"Hindsight index built: {_stats.VectorCount} vectors across {_stats.FileCount} files.", Severity.Success);
+        }
+        catch (Exception ex) { Snackbar.Add($"Index failed: {ex.Message}", Severity.Error); }
+        finally { _busyIndex = false; }
+    }
+
+    private void LoadMermaidGraph(string projectPath)
+    {
+        _mermaidGraph = null;
+        try
+        {
+            string dbRoot = Path.Combine(projectPath, ".syncro_db");
+            if (Directory.Exists(dbRoot))
+            {
+                string graphDir = Path.Combine(dbRoot, "Graphs");
+                if (Directory.Exists(graphDir))
+                {
+                    var file = Directory.EnumerateFiles(graphDir, "deps.mermaid", SearchOption.AllDirectories).FirstOrDefault();
+                    if (file != null)
+                    {
+                        _mermaidGraph = File.ReadAllText(file);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error loading Mermaid graph: {ex.Message}");
+        }
+    }
+
+    private async Task RunComparison()
+    {
+        if (string.IsNullOrEmpty(_selectedPath) || string.IsNullOrWhiteSpace(_query))
+        {
+            Snackbar.Add("Pick a project and enter a question.", Severity.Warning);
+            return;
+        }
+        _busyQuery = true;
+        _left = null;
+        _right = null;
+        try
+        {
+            _left = await HindsightQuery.AnswerWithoutLlmAsync(_selectedPath, _query);
+            _right = await HindsightQuery.AnswerWithLlmAsync(_selectedPath, _query);
+            _llmOnline = _right.LlmAvailable;
+        }
+        catch (Exception ex) { Snackbar.Add($"Query failed: {ex.Message}", Severity.Error); }
+        finally { _busyQuery = false; }
+    }
+
+    private RenderFragment RenderChunks(List<RetrievedChunk> chunks) =>@<text>
+        @if (chunks.Count > 0)
+        {
+            <div class="chunks-title">Grounding · @chunks.Count retrieved</div>
+            @foreach (var c in chunks)
+            {
+                <div class="chunk">
+                    <MudChip T="string" Size="Size.Small" Color="Color.Primary">@c.Entry.NodeType</MudChip>
+                    <span class="sym">@c.Entry.SymbolName</span>
+                    <span class="loc">@System.IO.Path.GetFileName(c.Entry.FilePath):@c.Entry.LineStart</span>
+                    <span class="score">@c.Score.ToString("0.00")</span>
+                </div>
+            }
+        }
+    </text>;
+    private async Task OpenProjectInVscode()
+    {
+        if (!string.IsNullOrEmpty(_selectedPath))
+        {
+            await VscodeService.LaunchAsync(_selectedPath);
+        }
+    }
+}

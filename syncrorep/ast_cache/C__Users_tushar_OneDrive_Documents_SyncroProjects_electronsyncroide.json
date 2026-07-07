@@ -1,0 +1,316 @@
+{
+  "ProjectPath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide",
+  "ProjectName": "electronsyncroide",
+  "Language": "JavaScript",
+  "Framework": "Express/Node",
+  "Nodes": [
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::project",
+      "Type": 0,
+      "Name": "electronsyncroide",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "version": "1.0.0"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm Package: electronsyncroide v1.0.0",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::dependency::express",
+      "Type": 9,
+      "Name": "express",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "version": "^4.19.0",
+        "dependencyType": "npm"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm dependency: express (^4.19.0)",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::dependency::cors",
+      "Type": 9,
+      "Name": "cors",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "version": "^2.8.5",
+        "dependencyType": "npm"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm dependency: cors (^2.8.5)",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::script::start",
+      "Type": 8,
+      "Name": "start",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "command": "node server.js"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm script command: start -> node server.js",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::script::dev",
+      "Type": 8,
+      "Name": "dev",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "command": "node server.js"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm script command: dev -> node server.js",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js::GET::/",
+      "Type": 6,
+      "Name": "GET /",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js",
+      "LineNumber": 9,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {},
+      "HttpMethods": [
+        "GET"
+      ],
+      "Route": "/",
+      "Summary": "Express/Node route definition: GET /",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js::GET::/api/health",
+      "Type": 6,
+      "Name": "GET /api/health",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js",
+      "LineNumber": 13,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {},
+      "HttpMethods": [
+        "GET"
+      ],
+      "Route": "/api/health",
+      "Summary": "Express/Node route definition: GET /api/health",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js::require::express",
+      "Type": 9,
+      "Name": "express",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {},
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "CommonJS dependency: require('express')",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js::require::cors",
+      "Type": 9,
+      "Name": "cors",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js",
+      "LineNumber": 2,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {},
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "CommonJS dependency: require('cors')",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::project",
+      "Type": 0,
+      "Name": "electronsyncroide",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "version": "1.0.0"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm Package: electronsyncroide v1.0.0",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::dependency::express",
+      "Type": 9,
+      "Name": "express",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "version": "^4.19.0",
+        "dependencyType": "npm"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm dependency: express (^4.19.0)",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::dependency::cors",
+      "Type": 9,
+      "Name": "cors",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "version": "^2.8.5",
+        "dependencyType": "npm"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm dependency: cors (^2.8.5)",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::script::start",
+      "Type": 8,
+      "Name": "start",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "command": "node server.js"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm script command: start -> node server.js",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::script::dev",
+      "Type": 8,
+      "Name": "dev",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+      "LineNumber": 1,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "command": "node server.js"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "npm script command: dev -> node server.js",
+      "IsExternalOrBoilerplate": false
+    }
+  ],
+  "Endpoints": [
+    {
+      "Method": "GET",
+      "Path": "/",
+      "Parameters": [],
+      "RequestDto": null,
+      "ResponseDto": null,
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js",
+      "LineNumber": 9,
+      "ControllerName": "server",
+      "HandlerMethod": "GET /"
+    },
+    {
+      "Method": "GET",
+      "Path": "/api/health",
+      "Parameters": [],
+      "RequestDto": null,
+      "ResponseDto": null,
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js",
+      "LineNumber": 13,
+      "ControllerName": "server",
+      "HandlerMethod": "GET /api/health"
+    }
+  ],
+  "Dtos": [],
+  "Dependencies": [
+    {
+      "Name": "express",
+      "Version": "^4.19.0",
+      "Type": "npm",
+      "IsTransitive": false
+    },
+    {
+      "Name": "cors",
+      "Version": "^2.8.5",
+      "Type": "npm",
+      "IsTransitive": false
+    }
+  ],
+  "Ports": [
+    {
+      "Port": 3306,
+      "State": "Open",
+      "Service": "MySQL DB",
+      "Type": "Scanned"
+    }
+  ],
+  "SwaggerSpecs": [],
+  "ConfigFiles": {
+    "package.json": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json",
+    "__cache_signature__": "36706CD437DA4DE128024C19282C7B4A85FA8C28980FE6CC3386E87C75994AF2"
+  },
+  "Errors": [],
+  "DependencyGraphDot": "digraph AstGraph {\r\n  rankdir=LR;\r\n  node [shape=box, style=filled, fillcolor=lightblue];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::project\" [label=\"electronsyncroide\\n(Project)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::dependency::express\" [label=\"express\\n(Module)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::dependency::cors\" [label=\"cors\\n(Module)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::script::start\" [label=\"start\\n(Config)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json::script::dev\" [label=\"dev\\n(Config)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js::GET::/\" [label=\"GET /\\n(Route)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js::GET::/api/health\" [label=\"GET /api/health\\n(Route)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js::require::express\" [label=\"express\\n(Module)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\server.js::require::cors\" [label=\"cors\\n(Module)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json\" [label=\"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json\\n(Module)\"];\r\n  \"express\" [label=\"express\\n(Module)\"];\r\n  \"cors\" [label=\"cors\\n(Module)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json\" -> \"express\" [label=\"depends_on\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json\" -> \"cors\" [label=\"depends_on\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json\" -> \"express\" [label=\"depends_on\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json\" -> \"cors\" [label=\"depends_on\"];\r\n}\r\n",
+  "CallGraphDot": "digraph AstGraph {\r\n  rankdir=LR;\r\n  node [shape=box, style=filled, fillcolor=lightblue];\r\n}\r\n",
+  "DagFlowchartMermaid": "graph TD\r\n    subgraph Layer_0 [\"Level 0\"]\r\n        C__Users_tushar_OneDrive_Documents_SyncroProjects_electronsyncroide_package_json[\"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\electronsyncroide\\package.json\"]\r\n    end\r\n    subgraph Layer_1 [\"Level 1\"]\r\n        express[\"express\"]\r\n        cors[\"cors\"]\r\n    end\r\n    C__Users_tushar_OneDrive_Documents_SyncroProjects_electronsyncroide_package_json --> express\r\n    C__Users_tushar_OneDrive_Documents_SyncroProjects_electronsyncroide_package_json --> cors\r\n    C__Users_tushar_OneDrive_Documents_SyncroProjects_electronsyncroide_package_json --> express\r\n    C__Users_tushar_OneDrive_Documents_SyncroProjects_electronsyncroide_package_json --> cors\r\n"
+}

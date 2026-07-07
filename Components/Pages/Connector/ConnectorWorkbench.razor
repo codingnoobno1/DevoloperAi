@@ -1,0 +1,332 @@
+@page "/connector"
+@using Syncro.Desktop.Services.Connector.Backend
+@using Syncro.Desktop.Services.Connector.Frontend
+@using Syncro.Desktop.Services.Connector.Matching
+@using Syncro.Desktop.Services.Connector.Storage
+@using Syncro.Desktop.Services.Connector.Models
+@using Syncro.Desktop.Services.Engine.Tools.FileSystem
+@using Syncro.Desktop.Components.Pages.Connector.Sections
+@inject IBackendContractResolver Resolver
+@inject IFrontendContractResolver FrontendResolver
+@inject IBackendGenerator Generator
+@inject IConnectorProjectStore Store
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+
+    <ConnectorHeader />
+
+    <ConnectorTargetSelector 
+        @bind-BackendPath="_backendPath"
+        @bind-FrontendPath="_frontendPath"
+        @bind-ProjectRoot="_projectRoot"
+        PickBackendFolder="PickBackendFolder"
+        PickFrontendFolder="PickFrontendFolder"
+        PickProjectFolder="PickProjectFolder"
+        IsResolving="_resolving"
+        IsMapping="_mapping"
+        OnResolveClick="ResolveAsync"
+        OnMapClick="MapAsync" />
+
+    @if (_resolving)
+    {
+        <MudPaper Elevation="0" Class="panel pa-12 d-flex flex-column align-center justify-center">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Class="mb-4" />
+            <MudText Typo="Typo.body2" Class="text-muted">Detecting stack and resolving routes…</MudText>
+        </MudPaper>
+    }
+    else if (_resolveError != null)
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-4">@_resolveError</MudAlert>
+    }
+    else if (_contract == null)
+    {
+        <MudPaper Elevation="0" Class="panel pa-12 d-flex flex-column align-center justify-center" Style="min-height: 320px;">
+            <MudIcon Icon="@Icons.Material.Filled.TravelExplore" Style="font-size: 64px;" Class="mb-4 text-muted" />
+            <MudText Typo="Typo.h6" Class="text-muted">No backend resolved yet</MudText>
+            <MudText Typo="Typo.body2" Class="text-muted">Point at a backend repo and hit <b>Resolve</b> to map its endpoints.</MudText>
+        </MudPaper>
+    }
+    else
+    {
+        @if (_report != null)
+        {
+            <ConnectorGraphReport Report="_report" FrontendContract="_frontendContract" BackendContract="_contract" OnDraftFromMissing="DraftFromMissing" />
+        }
+
+        <MudGrid Spacing="4">
+
+            <!-- ── LEFT: backend API surface ── -->
+            <MudItem xs="12" md="7">
+                <ConnectorApiSurface Contract="_contract" />
+            </MudItem>
+
+            <!-- ── RIGHT: AI drafting + persistence + Live Preview ── -->
+            <MudItem xs="12" md="5">
+                <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pt-4">
+                    <MudTabPanel Text="AI Drafter" Icon="@Icons.Material.Filled.AutoAwesome">
+                        <ConnectorAiDrafter 
+                            @bind-Method="_genMethod"
+                            @bind-Path="_genPath"
+                            @bind-Description="_genDescription"
+                            IsGenerating="_generating"
+                            GenerateError="@_genError"
+                            GenerateResult="_genResult"
+                            IsApplying="_applying"
+                            OnGenerateClick="GenerateAsync"
+                            OnApplyClick="ApplyGeneratedAsync" />
+
+                        <ConnectorSavePanel 
+                            FrontendContract="_frontendContract"
+                            BackendContract="_contract"
+                            IsSaving="_saving"
+                            SavedPath="@_savedPath"
+                            OnSaveClick="SyncContractAsync" />
+                    </MudTabPanel>
+
+                    <MudTabPanel Text="Live Preview" Icon="@Icons.Material.Filled.Smartphone">
+                        <MudPaper Elevation="0" Class="panel pa-4" Style="height: calc(100vh - 200px); display: flex; flex-direction: column;">
+                            @if (_frontendContract != null)
+                            {
+                                <Syncro.Desktop.Components.Shared.LivePreviewPane FrontendPath="@_frontendPath" FrontendStack="@_frontendContract.Stack.ToString()" />
+                            }
+                            else
+                            {
+                                <div class="text-center pa-6">
+                                    <MudIcon Icon="@Icons.Material.Filled.Info" Size="Size.Large" Class="mb-3 text-muted" />
+                                    <MudText Typo="Typo.body2" Class="text-muted">Map a frontend first to use the live preview.</MudText>
+                                </div>
+                            }
+                        </MudPaper>
+                    </MudTabPanel>
+                </MudTabs>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+@code {
+    private string _backendPath = "";
+    private string _frontendPath = "";
+    private string _projectRoot = "";
+    private bool _resolving;
+    private string? _resolveError;
+    private BackendContract? _contract;
+
+    // mapping
+    private bool _mapping;
+    private FrontendContract? _frontendContract;
+    private ConnectionReport? _report;
+
+    // AI drafting
+    private HttpVerb _genMethod = HttpVerb.Post;
+    private string _genPath = "";
+    private string _genDescription = "";
+    private bool _generating;
+    private string? _genError;
+    private BackendGenerationResult? _genResult;
+    private bool _applying;
+
+    // persistence
+    private bool _saving;
+    private string? _savedPath;
+
+    private async Task ResolveAsync()
+    {
+        _resolving = true;
+        _resolveError = null;
+        _contract = null;
+        _genResult = null;
+        _savedPath = null;
+        StateHasChanged();
+
+        try
+        {
+            _contract = await Resolver.ResolveAsync(_backendPath);
+            if (string.IsNullOrWhiteSpace(_projectRoot))
+                _projectRoot = _backendPath;
+        }
+        catch (Exception ex)
+        {
+            _resolveError = ex.Message;
+        }
+        finally
+        {
+            _resolving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task MapAsync()
+    {
+        _mapping = true;
+        _resolveError = null;
+        StateHasChanged();
+
+        try
+        {
+            // Resolve the backend if it hasn't been resolved yet (or the path changed).
+            if (_contract == null || _contract.BackendPath != _backendPath)
+                _contract = await Resolver.ResolveAsync(_backendPath);
+
+            _frontendContract = await FrontendResolver.ResolveAsync(_frontendPath);
+            _report = ContractMatcher.Match(_frontendContract.Calls, _contract.Routes);
+
+            if (string.IsNullOrWhiteSpace(_projectRoot))
+                _projectRoot = _backendPath;
+        }
+        catch (Exception ex)
+        {
+            _resolveError = ex.Message;
+        }
+        finally
+        {
+            _mapping = false;
+            StateHasChanged();
+        }
+    }
+
+    private void DraftFromMissing(ConnectionEdge edge)
+    {
+        _genMethod = edge.Call.Method;
+        _genPath = edge.Call.PathTemplate;
+        _genDescription = $"Implement {edge.Call.Method.ToString().ToUpperInvariant()} {edge.Call.PathTemplate} to satisfy the frontend call.";
+        Snackbar.Add("Prefilled the AI drafter — review and click Draft.", Severity.Info);
+        StateHasChanged();
+    }
+
+    private async Task GenerateAsync()
+    {
+        if (_contract == null) return;
+        _generating = true;
+        _genError = null;
+        _genResult = null;
+        StateHasChanged();
+
+        try
+        {
+            var request = new BackendGenerationRequest
+            {
+                BackendPath = _contract.BackendPath,
+                Stack = _contract.Stack,
+                ExistingRoutes = _contract.Routes,
+                Endpoints = new List<EndpointSpec>
+                {
+                    new()
+                    {
+                        Method = _genMethod,
+                        PathTemplate = _genPath,
+                        Description = _genDescription
+                    }
+                }
+            };
+
+            _genResult = await Generator.GenerateAsync(request);
+            if (!_genResult.Success)
+                _genError = _genResult.Error ?? "Generation failed.";
+        }
+        catch (Exception ex)
+        {
+            _genError = ex.Message;
+        }
+        finally
+        {
+            _generating = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ApplyGeneratedAsync()
+    {
+        if (_contract == null || _genResult is not { Success: true }) return;
+        _applying = true;
+        StateHasChanged();
+
+        try
+        {
+            var ops = _genResult.Files.Select(f => new BatchFileOp
+            {
+                Type = f.Action == "modify" ? BatchOpType.Modify : BatchOpType.Create,
+                Path = f.Path,
+                Content = f.Content
+            }).ToList();
+
+            var result = await Task.Run(() => BatchFileOperations.Apply(_contract.BackendPath, ops));
+
+            if (result.Success)
+            {
+                Snackbar.Add($"Applied {result.Applied.Count} file(s). Re-resolving…", Severity.Success);
+                await ResolveAsync();
+            }
+            else
+            {
+                Snackbar.Add(result.FailureReason ?? "Apply failed.", Severity.Error);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Apply failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _applying = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SyncContractAsync()
+    {
+        if (_contract == null) return;
+        _saving = true;
+        _savedPath = null;
+        StateHasChanged();
+
+        try
+        {
+            var root = string.IsNullOrWhiteSpace(_projectRoot) ? _contract.BackendPath : _projectRoot;
+            await Store.UpsertBackendAsync(root, _contract);
+            _savedPath = System.IO.Path.Combine(root, "connector.json");
+            Snackbar.Add("connector.json + connector.md written.", Severity.Success);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Save failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _saving = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task PickBackendFolder()
+    {
+        var path = await PickFolderAsync();
+        if (path != null) { _backendPath = path; StateHasChanged(); }
+    }
+
+    private async Task PickFrontendFolder()
+    {
+        var path = await PickFolderAsync();
+        if (path != null) { _frontendPath = path; StateHasChanged(); }
+    }
+
+    private async Task PickProjectFolder()
+    {
+        var path = await PickFolderAsync();
+        if (path != null) { _projectRoot = path; StateHasChanged(); }
+    }
+
+    private static async Task<string?> PickFolderAsync()
+    {
+        try
+        {
+            var result = await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync(
+                () => CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync());
+            if (result.IsSuccessful && result.Folder != null && !string.IsNullOrEmpty(result.Folder.Path))
+                return result.Folder.Path;
+        }
+        catch { }
+        return null;
+    }
+}

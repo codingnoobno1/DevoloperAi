@@ -5,19 +5,20 @@ namespace Syncro.Desktop.Services.AST.Core;
 
 public class AstNode : IAstNode
 {
-    public string Id { get; init; } = "";
-    public AstNodeType Type { get; init; }
-    public string Name { get; init; } = "";
-    public string FilePath { get; init; } = "";
-    public int LineNumber { get; init; }
-    public string? Namespace { get; init; }
-    public string? ReturnType { get; init; }
-    public List<string> Parameters { get; init; } = new();
-    public List<string> Children { get; init; } = new();
-    public Dictionary<string, object> Metadata { get; init; } = new();
-    public List<string> HttpMethods { get; init; } = new();   // e.g. GET, POST
-    public string? Route { get; init; }                        // e.g. "/api/users"
-    public string? Summary { get; init; }                      // XML documentation or python docstrings
+    public string Id { get; set; } = "";
+    public AstNodeType Type { get; set; }
+    public string Name { get; set; } = "";
+    public string FilePath { get; set; } = "";
+    public int LineNumber { get; set; }
+    public string? Namespace { get; set; }
+    public string? ReturnType { get; set; }
+    public List<string> Parameters { get; set; } = new();
+    public List<string> Children { get; set; } = new();
+    public Dictionary<string, object> Metadata { get; set; } = new();
+    public List<string> HttpMethods { get; set; } = new();   // e.g. GET, POST
+    public string? Route { get; set; }                        // e.g. "/api/users"
+    public string? Summary { get; set; }                      // XML documentation or python docstrings
+    public bool IsExternalOrBoilerplate { get; set; }
 
     // Implement IAstNode explicitly or implicitly
     IReadOnlyList<string> IAstNode.Children => Children.AsReadOnly();

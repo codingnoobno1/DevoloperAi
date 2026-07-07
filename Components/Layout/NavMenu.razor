@@ -1,92 +1,57 @@
 @using Syncro.Desktop.Components.Shared
 @inject IDialogService DialogService
 @inject NavigationManager Nav
+@inject Syncro.Desktop.Services.Ide.IdeWindowService IdeWin
 
-<div class="sidebar-container">
-    <div class="sidebar-logo">
-        <img src="images/syncro.jpg" alt="Syncro Logo" class="brand-logo" />
-        <span class="brand-text">SYNCRO</span>
+<div class="sidebar-logo px-4 py-4 d-flex align-items-center gap-3">
+    <div class="brand-icon" style="width: 32px; height: 32px; border-radius: 8px; background: var(--mud-palette-primary); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(14, 165, 233, 0.4);">
+        <MudIcon Icon="@Icons.Material.Filled.DeveloperBoard" Color="Color.Surface" Size="Size.Small" />
     </div>
+    <span style="font-weight: 700; font-size: 16px; letter-spacing: -0.01em; color: var(--mud-palette-text-primary);">SYNCRO AI</span>
+</div>
 
-    <div class="px-4 py-4">
-        <MudButton Variant="Variant.Filled" 
-                   Color="Color.Primary" 
-                   FullWidth="true" 
-                   StartIcon="@Icons.Material.Filled.Add" 
-                   OnClick="CreateNewProject"
-                   Style="border-radius: 8px; height: 44px; font-weight: 700; text-transform: none;">
-            New Project
-        </MudButton>
-    </div>
+<div class="px-4 py-2 mb-2">
+    <MudButton Variant="Variant.Filled" 
+               Color="Color.Primary" 
+               FullWidth="true" 
+               StartIcon="@Icons.Material.Filled.Add" 
+               OnClick="CreateNewProject"
+               Style="font-weight: 600; text-transform: none; border-radius: 8px; box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);">
+        New Project
+    </MudButton>
+</div>
 
-    <nav class="flex-column px-2">
-        <div class="nav-item">
-            <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
-                <span class="nav-icon"><i class="bi bi-grid-fill"></i></span>
-                <span class="nav-text">Dashboard</span>
-            </NavLink>
-        </div>
+<div class="nav-scroll-area" style="overflow-y: auto; height: calc(100vh - 160px);">
+    <MudNavMenu Color="Color.Primary" Bordered="false" Margin="Margin.Normal">
+        
+        <MudNavGroup Title="WORKSPACE" Expanded="true" Icon="@Icons.Material.Filled.Workspaces">
+            <MudNavLink Href="" Match="NavLinkMatch.All" Icon="@Icons.Material.Filled.Dashboard">Dashboard</MudNavLink>
+            <MudNavLink Href="agent-tasks" Icon="@Icons.Material.Filled.AssignmentInd">AI Tasks</MudNavLink>
+            <MudNavLink Href="myprojects" Icon="@Icons.Material.Filled.Folder">Projects</MudNavLink>
+            <MudNavLink Href="gitmanager" Icon="@Icons.Material.Filled.Source">Repository</MudNavLink>
+        </MudNavGroup>
 
-        <div class="nav-item">
-            <NavLink class="nav-link" href="myprojects">
-                <span class="nav-icon"><i class="bi bi-folder-fill"></i></span>
-                <span class="nav-text">My Projects</span>
-            </NavLink>
-        </div>
+        <MudNavGroup Title="DEVELOPMENT" Expanded="false" Icon="@Icons.Material.Filled.DeveloperMode">
+            <MudNavLink OnClick="OpenSyncroIde" Icon="@Icons.Material.Filled.Code">Editor</MudNavLink>
+            <MudNavLink Href="clitalk" Icon="@Icons.Material.Filled.Terminal">Terminal</MudNavLink>
+            <MudNavLink Href="universe-connector" Icon="@Icons.Material.Filled.Hub">Connector</MudNavLink>
+            <MudNavLink Href="runtime" Icon="@Icons.Material.Filled.MonitorHeart">Runtime</MudNavLink>
+            <MudNavLink OnClick="OpenMobileStore" Icon="@Icons.Material.Filled.PhoneAndroid">Mobile Toolkit</MudNavLink>
+        </MudNavGroup>
 
-        <div class="nav-item">
-            <NavLink class="nav-link" href="gitmanager">
-                <span class="nav-icon"><i class="bi bi-gear-wide-connected"></i></span>
-                <span class="nav-text">Git Manager</span>
-            </NavLink>
-        </div>
+        <MudNavGroup Title="INTELLIGENCE" Expanded="false" Icon="@Icons.Material.Filled.Psychology">
+            <MudNavLink Href="ast-dashboard" Icon="@Icons.Material.Filled.AccountTree">Architecture</MudNavLink>
+            <MudNavLink Href="hindsight" Icon="@Icons.Material.Filled.MenuBook">Knowledge</MudNavLink>
+            <MudNavLink OnClick="OpenAnalysis" Icon="@Icons.Material.Filled.Analytics">Insights</MudNavLink>
+        </MudNavGroup>
 
-        <div class="nav-item">
-            <NavLink class="nav-link" href="meetingsandtarget">
-                <span class="nav-icon"><i class="bi bi-calendar-event-fill"></i></span>
-                <span class="nav-text">Targets</span>
-            </NavLink>
-        </div>
+        <MudNavGroup Title="ECOSYSTEM" Expanded="false" Icon="@Icons.Material.Filled.Language">
+            <MudNavLink Href="meetingsandtarget" Icon="@Icons.Material.Filled.CalendarMonth">Planning</MudNavLink>
+            <MudNavLink Href="social" Icon="@Icons.Material.Filled.People">Community</MudNavLink>
+            <MudNavLink Href="marketplace" Icon="@Icons.Material.Filled.Extension">Extensions</MudNavLink>
+        </MudNavGroup>
 
-        <div class="px-4 py-2">
-            <MudText Typo="Typo.caption" Style="color: #94A3B8; font-weight: 800; letter-spacing: 0.1em;">SANKALP</MudText>
-        </div>
-
-        <div class="nav-item">
-            <NavLink class="nav-link" href="profile">
-                <span class="nav-icon"><i class="bi bi-person-fill"></i></span>
-                <span class="nav-text">My Profile</span>
-            </NavLink>
-        </div>
-
-        <div class="nav-item">
-            <NavLink class="nav-link" href="myproposals">
-                <span class="nav-icon"><i class="bi bi-file-earmark-text-fill"></i></span>
-                <span class="nav-text">My Proposals</span>
-            </NavLink>
-        </div>
-
-        <div class="nav-item">
-            <NavLink class="nav-link" href="social">
-                <span class="nav-icon"><i class="bi bi-people-fill"></i></span>
-                <span class="nav-text">Social Feed</span>
-            </NavLink>
-        </div>
-
-        <div class="nav-item marketplace-link">
-            <NavLink class="nav-link" href="marketplace">
-                <span class="nav-icon"><i class="bi bi-lightning-charge-fill"></i></span>
-                <span class="nav-text">Marketplace</span>
-            </NavLink>
-        </div>
-
-        <div class="nav-item mobile-store-link">
-            <button class="nav-link-btn" @onclick="OpenMobileStore">
-                <span class="nav-icon"><i class="bi bi-phone-fill"></i></span>
-                <span class="nav-text">Mobile Store</span>
-            </button>
-        </div>
-    </nav>
+    </MudNavMenu>
 </div>
 
 @code {
@@ -102,6 +67,10 @@
         }
     }
 
+    private void OpenSyncroIde() => IdeWin.Open();
+
+    private void OpenAnalysis() => IdeWin.OpenAnalysis();
+
     private void OpenMobileStore()
     {
         MainThread.BeginInvokeOnMainThread(() => {
@@ -109,7 +78,7 @@
             {
                 var storeWindow = new Window(new MobileMarketplacePage()) 
                 { 
-                    Title = "Syncro Mobile Store",
+                    Title = "Mobile Toolkit",
                     Width = 1200,
                     Height = 850
                 };
@@ -118,3 +87,27 @@
         });
     }
 }
+
+<style>
+    /* Clean Enterprise Sidebar Styling */
+    .nav-scroll-area::-webkit-scrollbar {
+        width: 6px;
+    }
+    .nav-scroll-area::-webkit-scrollbar-track {
+        background: transparent;
+    }
+    .nav-scroll-area::-webkit-scrollbar-thumb {
+        background: rgba(0,0,0,0.1);
+        border-radius: 10px;
+    }
+    .nav-scroll-area::-webkit-scrollbar-thumb:hover {
+        background: rgba(0,0,0,0.2);
+    }
+
+    /* Customize MudNavGroup padding for a tighter enterprise feel */
+    .mud-nav-group > .mud-nav-link {
+        font-weight: 600 !important;
+        font-size: 13px !important;
+        color: var(--mud-palette-text-secondary) !important;
+    }
+</style>

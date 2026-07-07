@@ -1,0 +1,240 @@
+@page "/agent-tasks"
+@using Syncro.Desktop.Services
+@using Syncro.Desktop.Services.Git
+@using Syncro.Desktop.Services.Mcp
+@inject PixelService PixelSvc
+@inject GitAutomationService GitSvc
+@inject LocalMcpServer McpSvc
+
+<div class="agent-dashboard">
+    <div class="header-section">
+        <h2>Developer AI: Incoming Scopes</h2>
+        <p class="text-muted">Review tasks assigned by your Project Manager and let Syncro auto-configure your environment.</p>
+    </div>
+
+    @if (_isLoading)
+    {
+        <div class="d-flex align-items-center mt-5">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Class="me-3" />
+            <span>Fetching assignments from Pixel Platform...</span>
+        </div>
+    }
+    else if (_tasks == null || _tasks.Count == 0)
+    {
+        <MudAlert Severity="Severity.Info" Class="mt-5">No tasks assigned to you right now. You are all caught up!</MudAlert>
+    }
+    else
+    {
+        <div class="task-grid mt-4">
+            <!-- Left Side: Incoming Tasks -->
+            <div class="tasks-list">
+                @foreach (var task in _tasks)
+                {
+                    <MudCard Elevation="2" Class="@(_selectedTask?.Id == task.Id ? "task-card selected" : "task-card")" @onclick="() => SelectTask(task)">
+                        <MudCardContent>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <h5>@task.Title</h5>
+                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">@task.Status</MudChip>
+                            </div>
+                            <p class="text-muted small mt-2 mb-0">Due: @task.Deadline.ToString("MMM dd, yyyy")</p>
+                        </MudCardContent>
+                    </MudCard>
+                }
+            </div>
+
+            <!-- Right Side: AI Setup & Methodology -->
+            <div class="task-details">
+                @if (_selectedTask != null)
+                {
+                    <MudPaper Elevation="0" Outlined="true" Class="p-4 detail-panel">
+                        <div class="d-flex justify-content-between align-items-start mb-4">
+                            <div>
+                                <h3>@_selectedTask.Title</h3>
+                                <p class="text-muted">Repository: <code>@_selectedTask.RepoUrl</code></p>
+                            </div>
+                            
+                            @if (_isSetupComplete)
+                            {
+                                <MudChip T="string" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">Setup Complete</MudChip>
+                            }
+                            else if (_isSettingUp)
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="true">
+                                    <MudProgressCircular Size="Size.Small" Color="Color.Default" Indeterminate="true" Class="me-2"/>
+                                    Setting up...
+                                </MudButton>
+                            }
+                            else
+                            {
+                                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AcceptAndSetup" StartIcon="@Icons.Material.Filled.AutoAwesome">
+                                    Accept & Auto-Setup
+                                </MudButton>
+                            }
+                        </div>
+
+                        <MudText Typo="Typo.subtitle2" Class="mb-2 font-weight-bold">Scope / Assignment:</MudText>
+                        <MudPaper Elevation="0" Class="p-3 bg-light mb-4 rounded">
+                            @_selectedTask.ScopeDescription
+                        </MudPaper>
+
+                        @if (_methodology != null)
+                        {
+                            <MudDivider Class="my-4" />
+                            
+                            <h4 class="mb-3 d-flex align-items-center">
+                                <MudIcon Icon="@Icons.Material.Filled.Lightbulb" Color="Color.Warning" Class="me-2" />
+                                AI Proposed Methodology
+                            </h4>
+                            <MudPaper Elevation="0" Class="p-4 bg-dark text-white rounded mb-4" Style="font-family: 'Consolas', monospace; font-size: 14px;">
+                                <pre style="white-space: pre-wrap;">@_methodology.Methodology</pre>
+                            </MudPaper>
+
+                            <h5 class="text-danger d-flex align-items-center mb-2">
+                                <MudIcon Icon="@Icons.Material.Filled.Lock" Class="me-2" />
+                                Restricted File Scope
+                            </h5>
+                            <p class="text-muted small">To prevent merge conflicts with other developers, please only modify these files:</p>
+                            <MudList T="string" Clickable="false" Dense="true" Class="bg-light rounded p-2">
+                                @foreach(var file in _methodology.RestrictedFiles)
+                                {
+                                    <MudListItem T="string" Icon="@Icons.Material.Filled.Code">@file</MudListItem>
+                                }
+                            </MudList>
+                        }
+                    </MudPaper>
+                }
+                else
+                {
+                    <div class="empty-state">
+                        <MudIcon Icon="@Icons.Material.Filled.Assignment" Style="font-size: 64px; color: #E2E8F0;" />
+                        <h4 class="mt-3 text-muted">Select a task to view details</h4>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private bool _isLoading = true;
+    private List<AgentTaskModel> _tasks = new();
+    private AgentTaskModel? _selectedTask;
+    
+    private bool _isSettingUp = false;
+    private bool _isSetupComplete = false;
+    private LocalMcpServer.MethodologyResponse? _methodology;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _tasks = await PixelSvc.GetAssignedTasksAsync();
+        _isLoading = false;
+    }
+
+    private void SelectTask(AgentTaskModel task)
+    {
+        _selectedTask = task;
+        _isSetupComplete = false;
+        _methodology = null;
+    }
+
+    private async Task AcceptAndSetup()
+    {
+        if (_selectedTask == null) return;
+        
+        _isSettingUp = true;
+        StateHasChanged();
+
+        try
+        {
+            // 1. Auto Clone Repo using GitAutomationService
+            string targetDir = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), 
+                "SyncroWorkspaces", 
+                _selectedTask.Id);
+                
+            bool cloned = await GitSvc.CloneRepositoryAsync(_selectedTask.RepoUrl, targetDir);
+
+            // 2. Invoke Local MCP Server to analyze codebase and provide methodology
+            _methodology = await McpSvc.GenerateMethodologyAsync(targetDir, _selectedTask.ScopeDescription);
+
+            _isSetupComplete = true;
+        }
+        catch
+        {
+            // Handle error in real app
+        }
+        finally
+        {
+            _isSettingUp = false;
+            StateHasChanged();
+        }
+    }
+}
+
+<style>
+    .agent-dashboard {
+        padding: 24px;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    
+    .header-section h2 {
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        margin-bottom: 8px;
+    }
+    
+    .task-grid {
+        display: grid;
+        grid-template-columns: 350px 1fr;
+        gap: 24px;
+        flex: 1;
+        overflow: hidden;
+    }
+    
+    .tasks-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        overflow-y: auto;
+        padding-right: 8px;
+    }
+    
+    .task-card {
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: 2px solid transparent;
+    }
+    
+    .task-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+    }
+    
+    .task-card.selected {
+        border-color: var(--mud-palette-primary);
+        background-color: rgba(14, 165, 233, 0.05);
+    }
+    
+    .task-details {
+        overflow-y: auto;
+        height: 100%;
+    }
+    
+    .detail-panel {
+        min-height: 100%;
+        border-radius: 12px;
+    }
+    
+    .empty-state {
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255,255,255,0.5);
+        border-radius: 12px;
+        border: 2px dashed #E2E8F0;
+    }
+</style>

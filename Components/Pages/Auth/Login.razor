@@ -2,212 +2,561 @@
 @using Syncro.Desktop.Services.Auth
 @inject AuthService AuthService
 
-<div class="auth-container">
-    <div class="auth-card">
-        <div class="auth-header">
-            <h2 class="title">Syncro</h2>
-            <p class="subtitle">@(IsRegisterMode ? "Create your account" : "Welcome back")</p>
+<div class="login-wrapper">
+    <!-- Left Side: Graphic & Brand -->
+    <div class="login-left">
+        <!-- We will use CSS for the background image -->
+        <div class="left-content">
+            <h1 class="brand-title">AI-Powered Development</h1>
+            <p class="brand-subtitle">Build smarter. Ship faster. Scale effortlessly.</p>
+            
+            <div class="features-grid">
+                <div class="feature-item">
+                    <MudIcon Icon="@Icons.Material.Filled.GpsFixed" Class="feature-icon" />
+                    <span>Intelligent Code<br/>Analysis</span>
+                </div>
+                <div class="feature-item">
+                    <MudIcon Icon="@Icons.Material.Filled.Settings" Class="feature-icon" />
+                    <span>Smart<br/>Automation</span>
+                </div>
+                <div class="feature-item">
+                    <MudIcon Icon="@Icons.Material.Filled.DonutSmall" Class="feature-icon" />
+                    <span>Real-time<br/>Insights</span>
+                </div>
+                <div class="feature-item">
+                    <MudIcon Icon="@Icons.Material.Filled.VerifiedUser" Class="feature-icon" />
+                    <span>Secure &amp;<br/>Scalable</span>
+                </div>
+            </div>
         </div>
+    </div>
 
-        <div class="auth-tabs">
-            <button class="tab-btn @(!IsRegisterMode ? "active" : "")" @onclick="() => IsRegisterMode = false">Login</button>
-            <button class="tab-btn @(IsRegisterMode ? "active" : "")" @onclick="() => IsRegisterMode = true">Register</button>
-        </div>
+    <!-- Right Side: Auth Form -->
+    <div class="login-right">
+        <div class="auth-card">
+            <div class="auth-header">
+                <div class="logo-row">
+                    <img src="images/syncro.jpg" alt="Syncro AI Logo" class="login-logo" />
+                    <span class="logo-text">syncro <span class="text-accent">AI</span></span>
+                </div>
+                <p class="logo-sub">Your AI Development Partner</p>
+                
+                <h2 class="welcome-title">@(IsRegisterMode ? "Create your account" : "Welcome back")</h2>
+                <p class="welcome-sub">@(IsRegisterMode ? "Sign up to continue to your workspace" : "Sign in to continue to your workspace")</p>
+            </div>
 
-        <div class="auth-body">
-            @if (!IsRegisterMode)
-            {
-                <div class="form-group">
-                    <label>Email</label>
-                    <input type="email" @bind="Email" placeholder="Enter your email" />
-                </div>
-                <div class="form-group">
-                    <label>Password</label>
-                    <input type="password" @bind="Password" placeholder="Enter your password" />
-                </div>
-                <button class="btn-primary" @onclick="PerformLogin" disabled="@IsLoading">
-                    @(IsLoading ? "Signing in..." : "Sign In")
+            <div class="auth-tabs">
+                <button class="tab-btn @(!IsRegisterMode ? "active" : "")" @onclick="() => IsRegisterMode = false">
+                    <MudIcon Icon="@Icons.Material.Filled.Person" Size="Size.Small" Class="mr-2 mb-n1" /> Login
                 </button>
-            }
-            else
-            {
-                <div class="form-grid">
-                    <div class="form-group">
-                        <label>Name</label>
-                        <input type="text" @bind="RegModel.Name" placeholder="Full Name" />
-                    </div>
-                    <div class="form-group">
-                        <label>Email</label>
-                        <input type="email" @bind="RegModel.Email" placeholder="Email Address" />
-                    </div>
-                    <div class="form-group">
-                        <label>University</label>
-                        <input type="text" @bind="RegModel.UniversityName" placeholder="University Name" />
-                    </div>
-                    <div class="form-group">
-                        <label>Enrollment #</label>
-                        <input type="text" @bind="RegModel.EnrollmentNumber" placeholder="Enrollment Number" />
-                    </div>
-                    <div class="form-group">
-                        <label>Tech Preference</label>
-                        <select @bind="RegModel.TechStackPreference" class="form-select">
-                            <option value="">Select Stack</option>
-                            <option value="MERN">MERN</option>
-                            <option value="Python">Python</option>
-                            <option value="Java">Java</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Password</label>
-                        <input type="password" @bind="RegModel.Password" placeholder="Create Password" />
-                    </div>
-                </div>
-                <button class="btn-primary mt-3" @onclick="PerformRegister" disabled="@IsLoading">
-                    @(IsLoading ? "Creating account..." : "Register")
+                <button class="tab-btn @(IsRegisterMode ? "active" : "")" @onclick="() => IsRegisterMode = true">
+                    <MudIcon Icon="@Icons.Material.Filled.PersonAddAlt" Size="Size.Small" Class="mr-2 mb-n1" /> Register
                 </button>
-            }
+            </div>
 
-            @if (!string.IsNullOrEmpty(Message))
-            {
-                <div class="alert @(IsError ? "alert-error" : "alert-success") mt-3">
-                    @Message
+            <div class="auth-body">
+                @if (!IsRegisterMode)
+                {
+                    <div class="form-group">
+                        <label>EMAIL</label>
+                        <div class="input-wrapper">
+                            <MudIcon Icon="@Icons.Material.Filled.Person" Class="input-icon" />
+                            <input type="email" @bind="Email" placeholder="Enter your email" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>PASSWORD</label>
+                        <div class="input-wrapper">
+                            <MudIcon Icon="@Icons.Material.Filled.Lock" Class="input-icon" />
+                            <input type="password" @bind="Password" placeholder="Enter your password" />
+                            <MudIcon Icon="@Icons.Material.Filled.Visibility" Class="input-icon right" />
+                        </div>
+                    </div>
+                    
+                    <div class="forgot-password">
+                        <a href="#">Forgot password?</a>
+                    </div>
+
+                    <button class="btn-primary" @onclick="PerformLogin" disabled="@IsLoading">
+                        @(IsLoading ? "Signing in..." : "Sign In") <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" Class="ml-1 mb-n1" />
+                    </button>
+                }
+                else
+                {
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>NAME</label>
+                            <div class="input-wrapper">
+                                <input type="text" @bind="RegModel.Name" placeholder="Full Name" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>EMAIL</label>
+                            <div class="input-wrapper">
+                                <input type="email" @bind="RegModel.Email" placeholder="Email Address" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>UNIVERSITY</label>
+                            <div class="input-wrapper">
+                                <input type="text" @bind="RegModel.UniversityName" placeholder="University Name" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>ENROLLMENT #</label>
+                            <div class="input-wrapper">
+                                <input type="text" @bind="RegModel.EnrollmentNumber" placeholder="Enrollment Number" />
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>TECH PREFERENCE</label>
+                            <div class="input-wrapper">
+                                <select @bind="RegModel.TechStackPreference" class="form-select">
+                                    <option value="">Select Stack</option>
+                                    <option value="MERN">MERN</option>
+                                    <option value="Python">Python</option>
+                                    <option value="Java">Java</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>PASSWORD</label>
+                            <div class="input-wrapper">
+                                <input type="password" @bind="RegModel.Password" placeholder="Create Password" />
+                            </div>
+                        </div>
+                    </div>
+                    <button class="btn-primary mt-3" @onclick="PerformRegister" disabled="@IsLoading">
+                        @(IsLoading ? "Creating account..." : "Register") <MudIcon Icon="@Icons.Material.Filled.ArrowForward" Size="Size.Small" Class="ml-1 mb-n1" />
+                    </button>
+                }
+
+                @if (!string.IsNullOrEmpty(Message))
+                {
+                    <div class="alert @(IsError ? "alert-error" : "alert-success") mt-3">
+                        @Message
+                    </div>
+                }
+
+                <div class="divider">
+                    <span>Or continue with</span>
                 </div>
-            }
+
+                <div class="social-login">
+                    <button class="social-btn"><i class="bi bi-github"></i></button>
+                    <button class="social-btn">
+                        <svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/></svg>
+                    </button>
+                    <button class="social-btn">
+                        <svg viewBox="0 0 21 21" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path d="M10 0H0v10h10V0z" fill="#f25022"/><path d="M21 0H11v10h10V0z" fill="#7fba00"/><path d="M10 11H0v10h10V11z" fill="#00a4ef"/><path d="M21 11H11v10h10V11z" fill="#ffb900"/></svg>
+                    </button>
+                    <button class="social-btn">
+                        <svg viewBox="0 0 24 24" width="16" height="16" xmlns="http://www.w3.org/2000/svg" fill="white"><path d="M22.64 8.76l-1.44-4.47c-.24-.76-.92-1.3-1.72-1.37-.8-.06-1.57.36-1.95 1.07l-2.06 3.84H8.53L6.47 4.03c-.38-.71-1.15-1.13-1.95-1.07-.8.07-1.48.61-1.72 1.37L1.36 8.76c-.2.62-.05 1.3.4 1.78l9.64 10.3c.33.35.79.55 1.27.55h.66c.48 0 .94-.2 1.27-.55l9.64-10.3c.45-.48.6-1.16.4-1.78z"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <div class="auth-footer">
+                <MudIcon Icon="@Icons.Material.Filled.VerifiedUser" Size="Size.Small" Class="mr-2 mb-n1" Style="color: #64748b;" />
+                <span>Enterprise-grade security | Your data is always protected</span>
+            </div>
         </div>
     </div>
 </div>
 
 <style>
-    .auth-container {
+    /* Premium, self-contained sizing so the page fits the window at 100% (no manual zoom).
+       Everything is expressed in rem against a fixed 15px root so the layout scales down
+       gracefully on shorter windows via the height media queries below. */
+    .login-wrapper {
+        --accent: #6366F1;
+        --accent-2: #0EA5E9;
+        font-size: 15px;
         display: flex;
-        justify-content: center;
+        height: 100vh;
+        overflow: hidden;
+        background:
+            radial-gradient(1200px 600px at 15% 20%, rgba(99,102,241,0.10), transparent 60%),
+            radial-gradient(1000px 700px at 85% 90%, rgba(14,165,233,0.10), transparent 60%),
+            url('images/syncro_login_bg.png') no-repeat center center,
+            linear-gradient(135deg, #eef2ff 0%, #f8fafc 50%, #ecfeff 100%);
+        background-size: auto, auto, cover, auto;
+        font-family: 'Inter', system-ui, sans-serif;
+        color: #0F172A;
+    }
+
+    /* --- Left Panel --- */
+    .login-left {
+        flex: 1.05;
+        position: relative;
+        display: flex;
         align-items: center;
-        min-height: 100vh;
-        background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-        font-family: 'Inter', sans-serif;
+        padding: 3.5rem;
+        min-width: 0;
+    }
+
+    .left-content {
+        position: relative;
+        z-index: 2;
+        width: 100%;
+        max-width: 34rem;
+    }
+
+    .brand-title {
+        font-family: 'Orbitron', 'Inter', sans-serif;
+        font-size: 2.6rem;
+        line-height: 1.1;
+        font-weight: 800;
+        margin: 0;
+        letter-spacing: -0.02em;
+        background: linear-gradient(90deg, #0EA5E9 0%, #6366F1 50%, #A855F7 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .brand-subtitle {
+        color: #475569;
+        font-size: 1.05rem;
+        margin: 0.75rem 0 2.25rem;
+        font-weight: 500;
+    }
+
+    .features-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.85rem;
+        max-width: 26rem;
+    }
+
+    .feature-item {
+        background: rgba(255, 255, 255, 0.65);
+        border: 1px solid rgba(255,255,255,0.9);
+        border-radius: 14px;
+        padding: 1rem 0.9rem;
+        display: flex;
+        align-items: center;
+        gap: 0.7rem;
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        box-shadow: 0 6px 18px rgba(30, 41, 59, 0.06);
+    }
+
+    .feature-item:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 12px 28px rgba(30, 41, 59, 0.10);
+    }
+
+    .feature-icon {
+        color: var(--accent);
+        font-size: 22px !important;
+        flex: none;
+    }
+
+    .feature-item span {
+        display: block;
+        font-size: 0.78rem;
+        color: #334155;
+        line-height: 1.25;
+        font-weight: 600;
+        text-align: left;
+    }
+
+    /* --- Right Panel --- */
+    .login-right {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.5rem;
+        min-width: 0;
+        overflow-y: auto;
     }
 
     .auth-card {
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(10px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 16px;
-        padding: 40px;
+        background: rgba(255, 255, 255, 0.82);
+        backdrop-filter: blur(26px);
+        -webkit-backdrop-filter: blur(26px);
+        border: 1px solid rgba(255, 255, 255, 0.9);
+        border-radius: 22px;
+        padding: 2.25rem 2.25rem;
         width: 100%;
-        max-width: 450px;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        max-width: 27rem;
+        max-height: calc(100vh - 3rem);
+        overflow-y: auto;
+        box-shadow:
+            0 30px 60px -20px rgba(30, 41, 59, 0.22),
+            0 0 0 1px rgba(255,255,255,0.6) inset;
     }
+    .auth-card::-webkit-scrollbar { width: 6px; }
+    .auth-card::-webkit-scrollbar-thumb { background: rgba(100,116,139,0.3); border-radius: 3px; }
 
     .auth-header {
         text-align: center;
-        margin-bottom: 30px;
+        margin-bottom: 1.25rem;
     }
 
-    .title {
-        color: white;
-        font-size: 2.5rem;
-        font-weight: 800;
+    .logo-row {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.7rem;
+        margin-bottom: 0.15rem;
+    }
+
+    .login-logo {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        box-shadow: 0 4px 14px rgba(14, 165, 233, 0.25);
+    }
+
+    .logo-text {
+        font-family: 'Orbitron', 'Inter', sans-serif;
+        font-size: 1.6rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        color: #0F172A;
+    }
+
+    .text-accent { color: var(--accent); }
+
+    .logo-sub {
+        color: #64748B;
+        font-size: 0.75rem;
+        letter-spacing: 0.4px;
+        margin: 0 0 1.1rem;
+        font-weight: 500;
+    }
+
+    .welcome-title {
+        font-size: 1.4rem;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        margin: 0 0 0.25rem;
+        color: #0F172A;
+    }
+
+    .welcome-sub {
+        color: #64748B;
+        font-size: 0.86rem;
         margin: 0;
-        letter-spacing: -1px;
     }
 
-    .subtitle {
-        color: #94a3b8;
-        font-size: 1rem;
-        margin-top: 8px;
-    }
-
+    /* --- Tabs --- */
     .auth-tabs {
         display: flex;
-        background: rgba(0, 0, 0, 0.2);
+        background: rgba(241, 245, 249, 0.85);
         padding: 4px;
-        border-radius: 8px;
-        margin-bottom: 24px;
+        border-radius: 12px;
+        margin-bottom: 1.25rem;
+        border: 1px solid rgba(15, 23, 42, 0.05);
     }
 
     .tab-btn {
         flex: 1;
-        padding: 8px;
+        padding: 0.6rem;
         border: none;
         background: transparent;
-        color: #94a3b8;
+        color: #64748B;
+        font-size: 0.86rem;
         font-weight: 600;
         cursor: pointer;
-        border-radius: 6px;
-        transition: all 0.2s;
+        border-radius: 9px;
+        transition: all 0.2s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 
     .tab-btn.active {
-        background: rgba(255, 255, 255, 0.1);
-        color: white;
+        background: #FFFFFF;
+        color: #0F172A;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
     }
 
-    .form-group {
-        margin-bottom: 16px;
-        display: flex;
-        flex-direction: column;
-    }
+    /* --- Forms --- */
+    .form-group { margin-bottom: 0.85rem; }
 
     .form-group label {
-        color: #cbd5e1;
-        font-size: 0.875rem;
-        margin-bottom: 6px;
+        display: block;
+        color: #475569;
+        font-size: 0.68rem;
+        font-weight: 700;
+        margin-bottom: 0.35rem;
+        letter-spacing: 0.5px;
+    }
+
+    .input-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .input-icon {
+        position: absolute;
+        left: 13px;
+        color: #94A3B8;
+        font-size: 19px !important;
+    }
+
+    .input-icon.right {
+        left: auto;
+        right: 13px;
+        cursor: pointer;
+    }
+
+    .input-icon.right:hover { color: #334155; }
+
+    .input-wrapper input, .form-select {
+        width: 100%;
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 11px;
+        padding: 0.7rem 0.85rem 0.7rem 2.6rem;
+        color: #0F172A;
+        font-size: 0.9rem;
+        transition: border-color 0.18s, box-shadow 0.18s;
+    }
+
+    .form-select { padding-left: 0.85rem; }
+
+    .input-wrapper input::placeholder { color: #94A3B8; }
+
+    .input-wrapper input:focus, .form-select:focus {
+        outline: none;
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+    }
+
+    .forgot-password {
+        text-align: right;
+        margin: -0.1rem 0 1rem;
+    }
+
+    .forgot-password a {
+        color: var(--accent);
+        font-size: 0.78rem;
+        text-decoration: none;
+        font-weight: 600;
+        transition: color 0.2s;
+    }
+
+    .forgot-password a:hover { color: #4F46E5; }
+
+    /* --- Buttons --- */
+    .btn-primary {
+        width: 100%;
+        padding: 0.8rem;
+        background: linear-gradient(90deg, #0EA5E9 0%, #6366F1 100%);
+        color: white;
+        border: none;
+        border-radius: 11px;
+        font-weight: 600;
+        font-size: 0.95rem;
+        cursor: pointer;
+        transition: transform 0.18s, box-shadow 0.18s, filter 0.18s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 8px 20px -6px rgba(99, 102, 241, 0.5);
+    }
+
+    .btn-primary:hover { transform: translateY(-1px); filter: brightness(1.05); box-shadow: 0 10px 26px -6px rgba(99, 102, 241, 0.6); }
+    .btn-primary:active { transform: translateY(0); }
+    .btn-primary:disabled { opacity: 0.7; cursor: default; transform: none; }
+
+    /* --- Social Login --- */
+    .divider {
+        display: flex;
+        align-items: center;
+        text-align: center;
+        margin: 1.1rem 0 0.9rem;
+        color: #94A3B8;
+        font-size: 0.78rem;
         font-weight: 500;
     }
+    .divider::before, .divider::after {
+        content: '';
+        flex: 1;
+        border-bottom: 1px solid #E2E8F0;
+    }
+    .divider span { padding: 0 0.7rem; }
 
-    .form-group input, .form-select {
-        background: rgba(0, 0, 0, 0.2);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 8px;
-        padding: 12px;
-        color: white;
-        outline: none;
-        transition: border-color 0.2s;
+    .social-login {
+        display: flex;
+        justify-content: center;
+        gap: 0.7rem;
+        margin-bottom: 1.1rem;
     }
 
-    .form-group input:focus {
-        border-color: #6366f1;
+    .social-btn {
+        width: 44px;
+        height: 44px;
+        border-radius: 11px;
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        transition: background 0.2s, transform 0.2s, border-color 0.2s;
+        color: #334155;
+        font-size: 1.15rem;
+    }
+
+    .social-btn:hover {
+        background: #F8FAFC;
+        border-color: #CBD5E1;
+        transform: translateY(-2px);
+    }
+
+    .social-btn svg { fill: #334155; }
+
+    /* --- Footer --- */
+    .auth-footer {
+        border-top: 1px solid #E2E8F0;
+        padding-top: 1rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #64748B;
+        font-size: 0.72rem;
+        font-weight: 500;
+        text-align: center;
+    }
+
+    .alert {
+        padding: 0.7rem;
+        border-radius: 9px;
+        font-size: 0.82rem;
+        text-align: center;
+    }
+    .alert-error {
+        background: #FEF2F2;
+        color: #EF4444;
+        border: 1px solid #FCA5A5;
+    }
+    .alert-success {
+        background: #F0FDF4;
+        color: #22C55E;
+        border: 1px solid #86EFAC;
     }
 
     .form-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 16px;
+        gap: 0.5rem 0.9rem;
     }
 
-    .btn-primary {
-        width: 100%;
-        padding: 12px;
-        background: #6366f1;
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: background 0.2s;
-    }
+    /* Fit shorter windows without forcing the user to zoom out. */
+    @@media (max-height: 820px) { .login-wrapper { font-size: 14px; } }
+    @@media (max-height: 720px) { .login-wrapper { font-size: 13px; } .auth-card { padding: 1.75rem; } }
 
-    .btn-primary:hover {
-        background: #4f46e5;
-    }
-
-    .alert {
-        padding: 12px;
-        border-radius: 8px;
-        font-size: 0.875rem;
-        text-align: center;
-    }
-
-    .alert-error {
-        background: rgba(239, 68, 68, 0.1);
-        color: #fca5a5;
-        border: 1px solid rgba(239, 68, 68, 0.2);
-    }
-
-    .alert-success {
-        background: rgba(34, 197, 94, 0.1);
-        color: #86efac;
-        border: 1px solid rgba(34, 197, 94, 0.2);
+    @@media (max-width: 960px) {
+        .login-left { display: none; }
+        .login-right { flex: 1; }
     }
 </style>
 
@@ -271,3 +620,4 @@
         });
     }
 }
+

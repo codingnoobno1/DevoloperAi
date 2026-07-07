@@ -1,10 +1,16 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 
 namespace Syncro.Desktop.Services
 {
+    public record FlutterDevice(string Id, string Name, string Platform, bool IsEmulator);
+
     public class FlutterService
     {
         private Process? _activeProcess;
@@ -13,7 +19,6 @@ namespace Syncro.Desktop.Services
 
         public async Task<bool> CreateProject(string name, string path)
         {
-            // ... (keep create logic)
             try
             {
                 var startInfo = new ProcessStartInfo
@@ -30,7 +35,14 @@ namespace Syncro.Desktop.Services
                 using var process = new Process { StartInfo = startInfo };
                 process.Start();
                 await process.WaitForExitAsync();
-                return process.ExitCode == 0;
+                if (process.ExitCode != 0) return false;
+
+                // FB0: impose BLoC architecture on the freshly-created project (flutter-bloc-aimapper.md).
+                var projectRoot = Path.Combine(path, name);
+                var scaffolder = new Syncro.Desktop.Services.Flutter.FlutterBlocScaffolder();
+                await scaffolder.ScaffoldBlocAsync(projectRoot, name, msg => OnOutput?.Invoke(msg));
+
+                return true;
             }
             catch { return false; }
         }
@@ -38,7 +50,7 @@ namespace Syncro.Desktop.Services
         public async Task<string?> RunProject(string projectPath, string mode)
         {
             await Task.Yield();
-            KillExistingProcesses();
+            KillActive();   // clear only a previously-tracked run, not every flutter.exe
 
             string arguments;
             string? url = null;
@@ -120,30 +132,63 @@ namespace Syncro.Desktop.Services
             }
         }
 
-        public void StopProject()
-        {
-            if (_activeProcess != null && !_activeProcess.HasExited)
-            {
-                _activeProcess.Kill(true);
-            }
-            KillExistingProcesses();
-        }
+        public void StopProject() => KillActive();
 
-        private void KillExistingProcesses()
+        /// <summary>
+        /// Kill ONLY this run's process tree (F3). The old implementation ran
+        /// <c>taskkill /F /IM flutter.exe /T</c>, which killed every Flutter process on the
+        /// machine — including unrelated apps the user was running.
+        /// </summary>
+        private void KillActive()
         {
-            // ... (keep existing kill logic)
             try
             {
-                var killInfo = new ProcessStartInfo
-                {
-                    FileName = "taskkill",
-                    Arguments = "/F /IM flutter.exe /T",
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                };
-                Process.Start(killInfo)?.WaitForExit();
+                if (_activeProcess != null && !_activeProcess.HasExited)
+                    _activeProcess.Kill(entireProcessTree: true);
             }
             catch { }
+            finally { _activeProcess = null; }
+        }
+
+        /// <summary>Enumerate connected devices/emulators (F4) via <c>flutter devices --machine</c>.</summary>
+        public async Task<List<FlutterDevice>> GetDevicesAsync()
+        {
+            var devices = new List<FlutterDevice>();
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "cmd.exe",
+                    Arguments = "/c flutter devices --machine",
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                using var p = new Process { StartInfo = psi };
+                var sb = new StringBuilder();
+                p.OutputDataReceived += (_, e) => { if (e.Data != null) sb.AppendLine(e.Data); };
+                p.Start();
+                p.BeginOutputReadLine();
+                await p.WaitForExitAsync();
+
+                var text = sb.ToString();
+                int start = text.IndexOf('['), end = text.LastIndexOf(']');
+                if (start >= 0 && end > start)
+                {
+                    var arr = JArray.Parse(text.Substring(start, end - start + 1));
+                    foreach (var d in arr)
+                    {
+                        devices.Add(new FlutterDevice(
+                            (string?)d["id"] ?? "",
+                            (string?)d["name"] ?? "",
+                            (string?)d["targetPlatform"] ?? "",
+                            (bool?)d["emulator"] ?? false));
+                    }
+                }
+            }
+            catch (Exception ex) { OnOutput?.Invoke($"[devices] {ex.Message}"); }
+            return devices;
         }
 
         public async Task CleanProject(string projectPath)

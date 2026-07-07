@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SyncroDB — Vector Database Architecture | Syncro Docs</title>
+  <meta name="description" content="Complete architecture of SyncroDB: multi-project Vector DB with AST, Graphs, Memory, Templates, and Archetype namespaces.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #080c10;
+      --surface: #0e1318;
+      --surface2: #131a22;
+      --border: #1a2232;
+      --accent: #00d4ff;
+      --accent2: #7c3aed;
+      --accent3: #10b981;
+      --orange: #f59e0b;
+      --red: #ef4444;
+      --text: #d4e0f0;
+      --text-dim: #7a90a8;
+      --text-bright: #ffffff;
+      --sidebar-w: 280px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+    html { scroll-behavior: smooth; }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-w); min-height: 100vh; background: var(--surface);
+      border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      position: sticky; top: 0; height: 100vh; overflow-y: auto;
+    }
+    .sidebar-brand { padding: 24px 20px 20px; border-bottom: 1px solid var(--border); }
+    .brand-logo {
+      font-size: 22px; font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .brand-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
+    .sidebar nav { padding: 16px 12px; flex: 1; }
+    .nav-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--text-dim); padding: 8px 8px 4px; margin-top: 12px; }
+    .nav-link { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; font-size: 13.5px; color: var(--text-dim); text-decoration: none; transition: all 0.2s; margin-bottom: 2px; }
+    .nav-link:hover, .nav-link.active { background: linear-gradient(135deg, rgba(0,212,255,0.12), rgba(124,58,237,0.08)); color: var(--text-bright); border-left: 2px solid var(--accent); padding-left: 10px; }
+    .nav-link .icon { font-size: 16px; width: 20px; text-align: center; }
+
+    /* Main */
+    .main { flex: 1; overflow-y: auto; max-width: calc(100vw - var(--sidebar-w)); }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(135deg, #080d1a 0%, #0d1625 60%, #060a10 100%);
+      border-bottom: 1px solid var(--border); padding: 60px 64px 48px;
+      position: relative; overflow: hidden;
+    }
+    .hero::before {
+      content: ''; position: absolute; top: -80px; right: -80px;
+      width: 500px; height: 500px;
+      background: radial-gradient(circle, rgba(0,212,255,0.08) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero::after {
+      content: ''; position: absolute; bottom: -60px; left: 200px;
+      width: 300px; height: 300px;
+      background: radial-gradient(circle, rgba(124,58,237,0.06) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .hero-badge { display: inline-flex; align-items: center; gap: 6px; background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.3); border-radius: 100px; padding: 4px 14px; font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 20px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .hero h1 { font-size: 48px; font-weight: 800; background: linear-gradient(135deg, #fff 0%, var(--accent) 60%, #a855f7 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; line-height: 1.1; margin-bottom: 16px; }
+    .hero-desc { font-size: 17px; color: var(--text-dim); max-width: 620px; line-height: 1.7; }
+    .hero-stats { display: flex; gap: 32px; margin-top: 36px; flex-wrap: wrap; }
+    .stat { display: flex; flex-direction: column; gap: 2px; }
+    .stat-num { font-size: 28px; font-weight: 800; background: linear-gradient(135deg, var(--accent), #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .stat-label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* Content */
+    .content { padding: 48px 64px; }
+    .section { margin-bottom: 64px; }
+
+    h2.section-title { font-size: 28px; font-weight: 700; color: var(--text-bright); margin-bottom: 8px; display: flex; align-items: center; gap: 12px; }
+    .tag { font-size: 11px; padding: 3px 10px; border-radius: 100px; font-weight: 600; letter-spacing: 0.5px; }
+    .tag-ns { background: rgba(0,212,255,0.12); color: var(--accent); border: 1px solid rgba(0,212,255,0.3); }
+    .tag-schema { background: rgba(124,58,237,0.15); color: #c084fc; border: 1px solid rgba(124,58,237,0.35); }
+    .tag-query { background: rgba(16,185,129,0.12); color: var(--accent3); border: 1px solid rgba(16,185,129,0.3); }
+    .tag-arch { background: rgba(245,158,11,0.12); color: var(--orange); border: 1px solid rgba(245,158,11,0.3); }
+
+    .section-sub { font-size: 15px; color: var(--text-dim); margin-bottom: 28px; line-height: 1.6; }
+
+    /* Tree Box */
+    .tree-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+    .tree-header { background: linear-gradient(135deg, rgba(0,212,255,0.08), rgba(124,58,237,0.05)); border-bottom: 1px solid var(--border); padding: 12px 20px; display: flex; align-items: center; gap: 8px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; } .dot-y { background: #febc2e; } .dot-g { background: #28c840; }
+    .tree-title { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-dim); margin-left: 8px; }
+    pre.tree { font-family: 'JetBrains Mono', monospace; font-size: 13.5px; color: #c0d8f0; padding: 24px 28px; line-height: 1.8; overflow-x: auto; }
+    pre.tree .kw { color: var(--accent); } pre.tree .val { color: var(--accent3); } pre.tree .comment { color: var(--text-dim); font-style: italic; } pre.tree .warn { color: var(--orange); }
+
+    /* Namespace Cards */
+    .ns-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+    .ns-card { background: var(--surface2); border: 1px solid var(--border); border-radius: 14px; padding: 22px; position: relative; overflow: hidden; transition: all 0.2s; }
+    .ns-card:hover { border-color: rgba(0,212,255,0.4); transform: translateY(-2px); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+    .ns-card::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; border-radius: 14px 14px 0 0; }
+    .ns-ast::after { background: linear-gradient(90deg, var(--accent), #4fc3f7); }
+    .ns-graph::after { background: linear-gradient(90deg, #7c3aed, #a855f7); }
+    .ns-vec::after { background: linear-gradient(90deg, var(--accent3), #34d399); }
+    .ns-mem::after { background: linear-gradient(90deg, var(--orange), #fbbf24); }
+    .ns-err::after { background: linear-gradient(90deg, var(--red), #f87171); }
+    .ns-tpl::after { background: linear-gradient(90deg, #6366f1, #818cf8); }
+    .ns-fw::after { background: linear-gradient(90deg, #0891b2, var(--accent)); }
+    .ns-arch::after { background: linear-gradient(90deg, #9333ea, #c084fc); }
+    .ns-ag::after { background: linear-gradient(90deg, #059669, var(--accent3)); }
+    .ns-proj::after { background: linear-gradient(90deg, #d97706, var(--orange)); }
+    .ns-grp::after { background: linear-gradient(90deg, #db2777, #f472b6); }
+    .ns-icon { font-size: 28px; margin-bottom: 10px; }
+    .ns-name { font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+    .ns-path { font-size: 11px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; margin-bottom: 10px; }
+    .ns-desc { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+
+    /* Code Block */
+    .code-block { background: #060910; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin: 16px 0; }
+    .code-header { background: var(--surface2); border-bottom: 1px solid var(--border); padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; }
+    .code-lang { font-size: 12px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; }
+    .code-dots { display: flex; gap: 6px; }
+    .code-dot { width: 10px; height: 10px; border-radius: 50%; }
+    pre.code { font-family: 'JetBrains Mono', monospace; font-size: 13.5px; padding: 22px 24px; line-height: 1.75; overflow-x: auto; color: #c8d6f0; }
+    .j-key { color: #9cdcfe; } .j-str { color: #ce9178; } .j-num { color: #b5cea8; } .j-bool { color: #569cd6; } .j-null { color: #569cd6; } .j-comment { color: #6a9955; font-style: italic; }
+    .cs-kw { color: #569cd6; } .cs-type { color: #4ec9b0; } .cs-str { color: #ce9178; } .cs-comment { color: #6a9955; font-style: italic; } .cs-num { color: #b5cea8; }
+
+    /* Flow */
+    .flow-vert { display: flex; flex-direction: column; gap: 0; }
+    .flow-step { display: flex; align-items: flex-start; gap: 20px; padding: 16px 0; }
+    .flow-step:not(:last-child) { border-bottom: 1px solid var(--border); }
+    .flow-num { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; flex-shrink: 0; }
+    .fn-cyan { background: rgba(0,212,255,0.2); color: var(--accent); border: 2px solid rgba(0,212,255,0.4); }
+    .fn-purple { background: rgba(124,58,237,0.2); color: #a855f7; border: 2px solid rgba(124,58,237,0.4); }
+    .fn-green { background: rgba(16,185,129,0.2); color: var(--accent3); border: 2px solid rgba(16,185,129,0.4); }
+    .fn-orange { background: rgba(245,158,11,0.2); color: var(--orange); border: 2px solid rgba(245,158,11,0.4); }
+    .flow-body { flex: 1; }
+    .flow-title { font-size: 15px; font-weight: 700; color: var(--text-bright); margin-bottom: 4px; }
+    .flow-detail { font-size: 13px; color: var(--text-dim); line-height: 1.6; }
+    .flow-detail code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: rgba(0,212,255,0.08); padding: 1px 6px; border-radius: 4px; color: var(--accent); }
+
+    /* Alert */
+    .alert { border-radius: 10px; padding: 16px 20px; margin: 16px 0; border-left: 4px solid; font-size: 14px; line-height: 1.6; }
+    .alert-info { background: rgba(0,212,255,0.07); border-color: var(--accent); color: #88d8f0; }
+    .alert-success { background: rgba(16,185,129,0.07); border-color: var(--accent3); color: #6ee7c0; }
+    .alert-warn { background: rgba(245,158,11,0.07); border-color: var(--orange); color: #f0d080; }
+    .alert strong { font-weight: 700; }
+
+    /* Table */
+    .table-wrap { overflow-x: auto; margin: 16px 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+    th { background: var(--surface2); padding: 12px 16px; text-align: left; font-weight: 700; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; font-size: 11px; border-bottom: 1px solid var(--border); }
+    td { padding: 12px 16px; border-bottom: 1px solid rgba(26,34,50,0.5); color: var(--text); vertical-align: top; }
+    tr:hover td { background: rgba(0,212,255,0.03); }
+    td code { font-family: 'JetBrains Mono', monospace; font-size: 12px; background: rgba(0,212,255,0.08); padding: 2px 8px; border-radius: 4px; color: var(--accent); }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0,212,255,0.4); }
+
+    @media (max-width: 900px) {
+      .sidebar { display: none; } .main { max-width: 100vw; }
+      .hero { padding: 40px 24px 32px; } .content { padding: 32px 24px; }
+      .hero h1 { font-size: 32px; }
+    }
+  </style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-logo">🗄️ SyncroDB</div>
+    <div class="brand-sub">Vector DB Architecture</div>
+  </div>
+  <nav>
+    <div class="nav-section-title">Overview</div>
+    <a href="#overview" class="nav-link active"><span class="icon">🏠</span> Introduction</a>
+    <a href="#layout" class="nav-link"><span class="icon">📂</span> Storage Layout</a>
+    <a href="#namespaces" class="nav-link"><span class="icon">🗂️</span> Namespaces (11)</a>
+
+    <div class="nav-section-title">Schemas</div>
+    <a href="#schema-project" class="nav-link"><span class="icon">📋</span> Project Index</a>
+    <a href="#schema-group" class="nav-link"><span class="icon">🔗</span> Group / Combo Schema</a>
+    <a href="#schema-vector" class="nav-link"><span class="icon">🧮</span> Vector Record Schema</a>
+    <a href="#schema-memory" class="nav-link"><span class="icon">🧠</span> Memory Schema</a>
+    <a href="#schema-archetype" class="nav-link"><span class="icon">🏛️</span> Archetype Schema</a>
+
+    <div class="nav-section-title">Querying</div>
+    <a href="#query" class="nav-link"><span class="icon">🔍</span> Hybrid Search</a>
+    <a href="#indexing" class="nav-link"><span class="icon">⚡</span> Indexing Strategy</a>
+    <a href="#combos" class="nav-link"><span class="icon">🧩</span> Project Combos</a>
+
+    <div class="nav-section-title">Navigation</div>
+    <a href="index.html" class="nav-link"><span class="icon">↩</span> Back to Home</a>
+    <a href="cli.html" class="nav-link"><span class="icon">⚡</span> CLI Docs</a>
+    <a href="rag.html" class="nav-link"><span class="icon">🧠</span> RAG & Memory</a>
+  </nav>
+</aside>
+
+<main class="main">
+
+  <section class="hero">
+    <div class="hero-badge">🗄 Multi-Project · Vectorized · Context-Aware</div>
+    <h1>SyncroDB</h1>
+    <p class="hero-desc">
+      The embedded, filesystem-native vector database powering Syncro's AI context engine.
+      Stores AST nodes, semantic code embeddings, execution memory, knowledge graphs, templates,
+      and multi-project group configs — all queryable in milliseconds with hybrid search.
+    </p>
+    <div class="hero-stats">
+      <div class="stat"><span class="stat-num">11</span><span class="stat-label">Namespaces</span></div>
+      <div class="stat"><span class="stat-num">3</span><span class="stat-label">Query Modes</span></div>
+      <div class="stat"><span class="stat-num">∞</span><span class="stat-label">Projects</span></div>
+      <div class="stat"><span class="stat-num">RAG</span><span class="stat-label">Powered Retrieval</span></div>
+    </div>
+  </section>
+
+  <div class="content">
+
+    <!-- Overview -->
+    <section class="section" id="overview">
+      <h2 class="section-title">Introduction <span class="tag tag-ns">Embedded DB</span></h2>
+      <p class="section-sub">
+        SyncroDB is not a remote database service — it is a <strong>local, filesystem-native database</strong> that lives
+        inside the user's configured Syncro workspace directory (<code>.syncro_db/</code>). It requires no Docker,
+        no server process, and no network — it's just fast, structured JSON + flat binary vector files,
+        managed by the Syncro Desktop agent and CLI.
+      </p>
+      <div class="alert alert-info">
+        <strong>📍 Location:</strong> SyncroDB lives at <code>&lt;workspace&gt;/.syncro_db/</code>.
+        For example: <code>D:/DeveloperAI/DEVOLOPER/.syncro_db/</code>.
+        It is automatically initialized by <code>syncro init</code> or the first AST scan.
+      </div>
+      <div class="alert alert-success">
+        <strong>🔍 Design Philosophy:</strong> Every file in SyncroDB is human-readable JSON.
+        The vector embeddings are stored as compact float arrays in <code>.vec</code> binary files, indexed by
+        a JSON sidecar. This makes the DB inspectable, debuggable, and trivially exportable.
+      </div>
+    </section>
+
+    <!-- Storage Layout -->
+    <section class="section" id="layout">
+      <h2 class="section-title">Storage Layout <span class="tag tag-ns">Filesystem</span></h2>
+      <p class="section-sub">Complete directory structure of SyncroDB with file descriptions for every namespace.</p>
+      <div class="tree-box">
+        <div class="tree-header">
+          <div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div>
+          <span class="tree-title">.syncro_db/ — Complete Storage Layout</span>
+        </div>
+<pre class="tree">
+.syncro_db/
+├── <span class="kw">AST/</span>                        <span class="comment"># Parsed AST node maps per project</span>
+│   ├── &lt;project_id&gt;/
+│   │   ├── <span class="val">ast_index.json</span>      <span class="comment"># Symbol → file/line/type lookup table</span>
+│   │   ├── <span class="val">nodes.jsonl</span>         <span class="comment"># All AST node records (streaming JSON)</span>
+│   │   └── <span class="val">filtered.json</span>       <span class="comment"># Source-only nodes (build artifacts removed)</span>
+│
+├── <span class="kw">Graphs/</span>                     <span class="comment"># Kahn DAGs and dependency maps</span>
+│   ├── &lt;project_id&gt;/
+│   │   ├── <span class="val">calls.dot</span>           <span class="comment"># Function call graph in DOT format</span>
+│   │   ├── <span class="val">deps.mermaid</span>        <span class="comment"># Dependency graph in Mermaid format</span>
+│   │   └── <span class="val">cross_project.json</span>  <span class="comment"># Cross-project edges for combo stacks</span>
+│
+├── <span class="kw">Vectors/</span>                    <span class="comment"># Semantic embedding store</span>
+│   ├── &lt;project_id&gt;/
+│   │   ├── <span class="val">index.json</span>          <span class="comment"># Vector metadata (id, symbol, file, hash)</span>
+│   │   └── <span class="val">embeddings.vec</span>      <span class="comment"># Binary float32 arrays (dim=768 or 1536)</span>
+│
+├── <span class="kw">Memory/</span>                     <span class="comment"># Agent hindsight learning store</span>
+│   ├── <span class="val">memory.jsonl</span>            <span class="comment"># Append-only log of generations + outcomes</span>
+│   └── <span class="val">index.json</span>              <span class="comment"># Prompt hash → memory record lookup</span>
+│
+├── <span class="kw">Errors/</span>                     <span class="comment"># Compilation and parser failure logs</span>
+│   ├── <span class="val">build_errors.jsonl</span>      <span class="comment"># MSBuild / npm / python errors</span>
+│   └── <span class="val">ast_errors.jsonl</span>        <span class="comment"># Parse failures with file/line context</span>
+│
+├── <span class="kw">Templates/</span>                  <span class="comment"># Code scaffolding blueprints</span>
+│   ├── <span class="val">jwt-auth/</span>               <span class="comment"># JWT authentication template</span>
+│   ├── <span class="val">mongodb-connector/</span>
+│   ├── <span class="val">stripe-checkout/</span>
+│   ├── <span class="val">redis-cache/</span>
+│   └── <span class="val">index.json</span>              <span class="comment"># Template registry with keywords</span>
+│
+├── <span class="kw">Frameworks/</span>                 <span class="comment"># Static framework knowledge base</span>
+│   ├── <span class="val">nextjs.json</span>             <span class="comment"># Next.js conventions, file patterns</span>
+│   ├── <span class="val">django.json</span>
+│   ├── <span class="val">flutter.json</span>
+│   └── <span class="val">... 30+ frameworks</span>
+│
+├── <span class="kw">Architectures/</span>              <span class="comment"># Discovered arch patterns per project</span>
+│   └── &lt;project_id&gt;/
+│       └── <span class="val">detected.json</span>       <span class="comment"># MVC, Clean, Onion, Hexagonal layers</span>
+│
+├── <span class="kw">Agents/</span>                     <span class="comment"># Subagent checkpoint and audit logs</span>
+│   ├── <span class="val">tasks.jsonl</span>             <span class="comment"># Multi-step agent task history</span>
+│   └── <span class="val">audit.jsonl</span>             <span class="comment"># Elevated operation audit trail</span>
+│
+├── <span class="kw">Projects/</span>                   <span class="comment"># Project registry and metadata</span>
+│   └── <span class="val">projects.json</span>           <span class="comment"># All registered project index entries</span>
+│
+└── <span class="kw">Groups/</span>                     <span class="comment"># Multi-project combo configurations</span>
+    └── <span class="val">groups.json</span>             <span class="comment"># Stack combos: MERN, Flutter+Next, etc.</span>
+</pre>
+      </div>
+    </section>
+
+    <!-- Namespaces -->
+    <section class="section" id="namespaces">
+      <h2 class="section-title">Namespace Catalog <span class="tag tag-ns">11 Namespaces</span></h2>
+      <p class="section-sub">Each namespace is a dedicated directory with a clearly defined schema and access pattern.</p>
+      <div class="ns-grid">
+        <div class="ns-card ns-ast">
+          <div class="ns-icon">🌳</div>
+          <div class="ns-name">AST/</div>
+          <div class="ns-path">.syncro_db/AST/&lt;project_id&gt;/</div>
+          <div class="ns-desc">Stores parsed AST node maps: classes, functions, imports, REST routes. Context-filtered to exclude build artifacts (<code>.next/</code>, <code>bin/</code>, <code>node_modules/</code>). Supports O(1) symbol lookup via <code>ast_index.json</code>.</div>
+        </div>
+        <div class="ns-card ns-graph">
+          <div class="ns-icon">🕸️</div>
+          <div class="ns-name">Graphs/</div>
+          <div class="ns-path">.syncro_db/Graphs/&lt;project_id&gt;/</div>
+          <div class="ns-desc">Kahn topological sort DAGs and call graphs. Exports to DOT and Mermaid. Supports cross-project edges for combo stacks (e.g. Next.js frontend → Express API → MongoDB).</div>
+        </div>
+        <div class="ns-card ns-vec">
+          <div class="ns-icon">🧮</div>
+          <div class="ns-name">Vectors/</div>
+          <div class="ns-path">.syncro_db/Vectors/&lt;project_id&gt;/</div>
+          <div class="ns-desc">Semantic embeddings for functions, classes, REST endpoints, and database schemas. Stored as binary float32 arrays (768 or 1536 dimensions). Queried via cosine similarity for RAG retrieval.</div>
+        </div>
+        <div class="ns-card ns-mem">
+          <div class="ns-icon">🧠</div>
+          <div class="ns-name">Memory/</div>
+          <div class="ns-path">.syncro_db/Memory/</div>
+          <div class="ns-desc">Agent hindsight learning store. Every code generation is logged with its outcome (<code>success: true/false</code>), iteration count, and compiler errors. Guides future RAG-based few-shot injection.</div>
+        </div>
+        <div class="ns-card ns-err">
+          <div class="ns-icon">💥</div>
+          <div class="ns-name">Errors/</div>
+          <div class="ns-path">.syncro_db/Errors/</div>
+          <div class="ns-desc">Compiler error logs from all build attempts (<code>dotnet build</code>, <code>npm run build</code>, <code>flutter build</code>). Used by <code>syncro patch</code> to locate the last failure and apply AI auto-fix.</div>
+        </div>
+        <div class="ns-card ns-tpl">
+          <div class="ns-icon">📐</div>
+          <div class="ns-name">Templates/</div>
+          <div class="ns-path">.syncro_db/Templates/</div>
+          <div class="ns-desc">Reusable micro-architecture templates. Each template contains boilerplate files for a specific concern (JWT Auth, Stripe Checkout, MongoDB Connector). Applied via <code>syncro template apply</code>.</div>
+        </div>
+        <div class="ns-card ns-fw">
+          <div class="ns-icon">📚</div>
+          <div class="ns-name">Frameworks/</div>
+          <div class="ns-path">.syncro_db/Frameworks/</div>
+          <div class="ns-desc">Static framework knowledge base: file naming conventions, standard directories, CLI commands, and common patterns for 30+ languages and frameworks. Powers the <code>FrameworkKnowledgeStore</code>.</div>
+        </div>
+        <div class="ns-card ns-arch">
+          <div class="ns-icon">🏛️</div>
+          <div class="ns-name">Architectures/</div>
+          <div class="ns-path">.syncro_db/Architectures/&lt;project_id&gt;/</div>
+          <div class="ns-desc">Discovered architectural patterns per project. The AST engine detects MVC, Clean Architecture, Onion, Hexagonal, and Microservice patterns and stores layer maps here.</div>
+        </div>
+        <div class="ns-card ns-ag">
+          <div class="ns-icon">🤖</div>
+          <div class="ns-name">Agents/</div>
+          <div class="ns-path">.syncro_db/Agents/</div>
+          <div class="ns-desc">Checkpoint logs and audit trails for multi-step agent tasks. Every elevated CLI operation (PATH install, service registration) is logged to <code>audit.jsonl</code> for security review.</div>
+        </div>
+        <div class="ns-card ns-proj">
+          <div class="ns-icon">📁</div>
+          <div class="ns-name">Projects/</div>
+          <div class="ns-path">.syncro_db/Projects/</div>
+          <div class="ns-desc">Master registry of all Syncro-managed projects. Stores path, language, framework, detected architecture, and linked group IDs. The primary lookup table for all cross-namespace queries.</div>
+        </div>
+        <div class="ns-card ns-grp">
+          <div class="ns-icon">🔗</div>
+          <div class="ns-name">Groups/</div>
+          <div class="ns-path">.syncro_db/Groups/</div>
+          <div class="ns-desc">Multi-project combo configurations. Links frontend + backend + database projects into a named stack (e.g. "MERN", "Flutter + Next.js", "Rust + Flutter"). Enables cross-project graph queries.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Schema: Project -->
+    <section class="section" id="schema-project">
+      <h2 class="section-title">Project Index Schema <span class="tag tag-schema">JSON Schema</span></h2>
+      <p class="section-sub">Every project registered with <code>syncro init</code> or <code>syncro project add</code> gets a record in <code>projects.json</code>.</p>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-lang">JSON — projects.json record</span>
+          <div class="code-dots"><div class="code-dot" style="background:#ff5f57"></div><div class="code-dot" style="background:#febc2e"></div><div class="code-dot" style="background:#28c840"></div></div>
+        </div>
+<pre class="code">{
+  <span class="j-key">"project_id"</span>: <span class="j-str">"viking-backend-002"</span>,
+  <span class="j-key">"name"</span>: <span class="j-str">"Viking Backend"</span>,
+  <span class="j-key">"path"</span>: <span class="j-str">"D:/Workspaces/viking/backend"</span>,
+  <span class="j-key">"language"</span>: <span class="j-str">"TypeScript"</span>,
+  <span class="j-key">"framework"</span>: <span class="j-str">"Next.js"</span>,
+  <span class="j-key">"packageManager"</span>: <span class="j-str">"npm"</span>,
+  <span class="j-key">"entryPoint"</span>: <span class="j-str">"src/index.ts"</span>,
+  <span class="j-key">"architecture"</span>: <span class="j-str">"Clean"</span>,
+  <span class="j-key">"databases"</span>: [<span class="j-str">"MongoDB"</span>, <span class="j-str">"Redis"</span>],
+  <span class="j-key">"hasVenv"</span>: <span class="j-bool">false</span>,
+  <span class="j-key">"requiresDocker"</span>: <span class="j-bool">true</span>,
+  <span class="j-key">"groupIds"</span>: [<span class="j-str">"grp-mern-001"</span>],
+  <span class="j-key">"lastScanned"</span>: <span class="j-str">"2026-06-05T23:00:00Z"</span>,
+  <span class="j-key">"astNodeCount"</span>: <span class="j-num">2847</span>,
+  <span class="j-key">"vectorCount"</span>: <span class="j-num">412</span>,
+  <span class="j-key">"tags"</span>: [<span class="j-str">"rest-api"</span>, <span class="j-str">"auth"</span>, <span class="j-str">"file-upload"</span>]
+}</pre>
+      </div>
+    </section>
+
+    <!-- Schema: Group -->
+    <section class="section" id="schema-group">
+      <h2 class="section-title">Project Group / Combo Schema <span class="tag tag-schema">JSON Schema</span></h2>
+      <p class="section-sub">
+        Groups allow Syncro to reason about multi-project stacks as a single unit. Dependency edges between projects
+        in a group are stored in <code>Graphs/cross_project.json</code>.
+      </p>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-lang">JSON — groups.json record</span>
+          <div class="code-dots"><div class="code-dot" style="background:#ff5f57"></div><div class="code-dot" style="background:#febc2e"></div><div class="code-dot" style="background:#28c840"></div></div>
+        </div>
+<pre class="code">{
+  <span class="j-key">"group_id"</span>: <span class="j-str">"grp-mern-001"</span>,
+  <span class="j-key">"name"</span>: <span class="j-str">"MERN Stack — Viking Platform"</span>,
+  <span class="j-key">"archetype"</span>: <span class="j-str">"MERN"</span>,
+  <span class="j-key">"projects"</span>: [
+    {
+      <span class="j-key">"project_id"</span>: <span class="j-str">"viking-frontend-001"</span>,
+      <span class="j-key">"role"</span>: <span class="j-str">"frontend"</span>,
+      <span class="j-key">"framework"</span>: <span class="j-str">"Next.js"</span>,
+      <span class="j-key">"port"</span>: <span class="j-num">3000</span>
+    },
+    {
+      <span class="j-key">"project_id"</span>: <span class="j-str">"viking-backend-002"</span>,
+      <span class="j-key">"role"</span>: <span class="j-str">"api"</span>,
+      <span class="j-key">"framework"</span>: <span class="j-str">"Express"</span>,
+      <span class="j-key">"port"</span>: <span class="j-num">5000</span>
+    },
+    {
+      <span class="j-key">"project_id"</span>: <span class="j-str">"viking-db-003"</span>,
+      <span class="j-key">"role"</span>: <span class="j-str">"database"</span>,
+      <span class="j-key">"framework"</span>: <span class="j-str">"MongoDB"</span>,
+      <span class="j-key">"connectionString"</span>: <span class="j-str">"mongodb://localhost:27017/viking"</span>
+    }
+  ],
+  <span class="j-key">"startOrder"</span>: [<span class="j-str">"viking-db-003"</span>, <span class="j-str">"viking-backend-002"</span>, <span class="j-str">"viking-frontend-001"</span>],
+  <span class="j-key">"envFile"</span>: <span class="j-str">".env.group"</span>,
+  <span class="j-key">"created"</span>: <span class="j-str">"2026-06-01T10:00:00Z"</span>
+}</pre>
+      </div>
+
+      <h3 style="color:var(--text-bright);margin:28px 0 12px;font-size:16px;">Supported Archetype Combos</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Archetype</th><th>Components</th><th>Languages</th></tr></thead>
+          <tbody>
+            <tr><td><code>MERN</code></td><td>MongoDB + Express + React + Node.js</td><td>JavaScript / TypeScript</td></tr>
+            <tr><td><code>Flutter+Next</code></td><td>Flutter Mobile + Next.js Web + API</td><td>Dart + TypeScript</td></tr>
+            <tr><td><code>Rust+Flutter</code></td><td>Rust Backend + Flutter Frontend</td><td>Rust + Dart</td></tr>
+            <tr><td><code>GoLang+React</code></td><td>Go HTTP Server + React SPA</td><td>Go + TypeScript</td></tr>
+            <tr><td><code>Django+React</code></td><td>Django REST + React Frontend</td><td>Python + JavaScript</td></tr>
+            <tr><td><code>MAUI+API</code></td><td>.NET MAUI Desktop/Mobile + ASP.NET Core API</td><td>C#</td></tr>
+            <tr><td><code>NestMongo</code></td><td>NestJS + MongoDB + Next.js</td><td>TypeScript</td></tr>
+            <tr><td><code>SpringReact</code></td><td>Spring Boot + React + PostgreSQL</td><td>Java + TypeScript</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Schema: Vector -->
+    <section class="section" id="schema-vector">
+      <h2 class="section-title">Vector Record Schema <span class="tag tag-schema">Embedding</span></h2>
+      <p class="section-sub">
+        Each semantic embedding in <code>Vectors/&lt;project_id&gt;/index.json</code> maps a symbol
+        to its binary embedding in <code>embeddings.vec</code>, along with rich metadata for filtering.
+      </p>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-lang">JSON — Vector Index Record</span>
+          <div class="code-dots"><div class="code-dot" style="background:#ff5f57"></div><div class="code-dot" style="background:#febc2e"></div><div class="code-dot" style="background:#28c840"></div></div>
+        </div>
+<pre class="code">{
+  <span class="j-key">"vector_id"</span>: <span class="j-str">"vec-meth-0912"</span>,
+  <span class="j-key">"project_id"</span>: <span class="j-str">"viking-backend-002"</span>,
+  <span class="j-key">"group_id"</span>: <span class="j-str">"grp-mern-001"</span>,
+  <span class="j-key">"file_path"</span>: <span class="j-str">"src/controllers/auth.ts"</span>,
+  <span class="j-key">"symbol_name"</span>: <span class="j-str">"loginUser"</span>,
+  <span class="j-key">"node_type"</span>: <span class="j-str">"Method"</span>,
+  <span class="j-key">"language"</span>: <span class="j-str">"TypeScript"</span>,
+  <span class="j-key">"framework"</span>: <span class="j-str">"Express"</span>,
+  <span class="j-key">"tags"</span>: [<span class="j-str">"auth"</span>, <span class="j-str">"jwt"</span>, <span class="j-str">"controller"</span>],
+  <span class="j-key">"embedding_offset"</span>: <span class="j-num">4096</span>,      <span class="j-comment">// byte offset in embeddings.vec</span>
+  <span class="j-key">"embedding_dim"</span>: <span class="j-num">768</span>,          <span class="j-comment">// float32 dimensions</span>
+  <span class="j-key">"embedding_hash"</span>: <span class="j-str">"2F4E91A3..."</span>,
+  <span class="j-key">"code_snippet"</span>: <span class="j-str">"export async function loginUser(req, res) { ... }"</span>,
+  <span class="j-key">"line_start"</span>: <span class="j-num">42</span>,
+  <span class="j-key">"line_end"</span>: <span class="j-num">87</span>,
+  <span class="j-key">"last_indexed"</span>: <span class="j-str">"2026-06-05T22:00:00Z"</span>
+}</pre>
+      </div>
+    </section>
+
+    <!-- Schema: Memory -->
+    <section class="section" id="schema-memory">
+      <h2 class="section-title">Memory Record Schema <span class="tag tag-schema">Hindsight</span></h2>
+      <p class="section-sub">
+        Append-only records in <code>Memory/memory.jsonl</code>. Each record captures a complete
+        code generation event, its outcome, and errors encountered — forming the hindsight learning dataset.
+      </p>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-lang">JSON — memory.jsonl record</span>
+          <div class="code-dots"><div class="code-dot" style="background:#ff5f57"></div><div class="code-dot" style="background:#febc2e"></div><div class="code-dot" style="background:#28c840"></div></div>
+        </div>
+<pre class="code">{
+  <span class="j-key">"memory_id"</span>: <span class="j-str">"mem-gen-2047"</span>,
+  <span class="j-key">"prompt_hash"</span>: <span class="j-str">"sha256:a3f9c2..."</span>,  <span class="j-comment">// SHA256 of the original prompt</span>
+  <span class="j-key">"prompt"</span>: <span class="j-str">"Generate PostgreSQL database connector module for Node.js"</span>,
+  <span class="j-key">"generated_code"</span>: <span class="j-str">"const { Pool } = require('pg'); ..."</span>,
+  <span class="j-key">"target_framework"</span>: <span class="j-str">"Express"</span>,
+  <span class="j-key">"language"</span>: <span class="j-str">"JavaScript"</span>,
+  <span class="j-key">"project_id"</span>: <span class="j-str">"viking-backend-002"</span>,
+  <span class="j-key">"build_command"</span>: <span class="j-str">"npm run build"</span>,
+  <span class="j-key">"success"</span>: <span class="j-bool">true</span>,
+  <span class="j-key">"errors_encountered"</span>: [],
+  <span class="j-key">"iterations_count"</span>: <span class="j-num">1</span>,
+  <span class="j-key">"patch_applied"</span>: <span class="j-bool">false</span>,
+  <span class="j-key">"duration_ms"</span>: <span class="j-num">3240</span>,
+  <span class="j-key">"llm_model"</span>: <span class="j-str">"gemini-2.5-pro"</span>,
+  <span class="j-key">"timestamp"</span>: <span class="j-str">"2026-06-05T23:20:45Z"</span>
+}</pre>
+      </div>
+    </section>
+
+    <!-- Schema: Archetype -->
+    <section class="section" id="schema-archetype">
+      <h2 class="section-title">Archetype / Framework Schema <span class="tag tag-arch">Framework KB</span></h2>
+      <p class="section-sub">
+        Framework knowledge base records in <code>Frameworks/</code> power the <code>FrameworkKnowledgeStore</code>
+        and the environment bootstrapper. They define how Syncro detects, configures, and runs each stack.
+      </p>
+      <div class="code-block">
+        <div class="code-header">
+          <span class="code-lang">JSON — Frameworks/nextjs.json</span>
+          <div class="code-dots"><div class="code-dot" style="background:#ff5f57"></div><div class="code-dot" style="background:#febc2e"></div><div class="code-dot" style="background:#28c840"></div></div>
+        </div>
+<pre class="code">{
+  <span class="j-key">"id"</span>: <span class="j-str">"nextjs"</span>,
+  <span class="j-key">"displayName"</span>: <span class="j-str">"Next.js"</span>,
+  <span class="j-key">"language"</span>: <span class="j-str">"TypeScript"</span>,
+  <span class="j-key">"ecosystem"</span>: <span class="j-str">"Node.js"</span>,
+  <span class="j-key">"detectionSignals"</span>: {
+    <span class="j-key">"fileExists"</span>: [<span class="j-str">"next.config.js"</span>, <span class="j-str">"next.config.mjs"</span>, <span class="j-str">"next.config.ts"</span>],
+    <span class="j-key">"packageJsonDeps"</span>: [<span class="j-str">"next"</span>]
+  },
+  <span class="j-key">"excludeDirs"</span>: [<span class="j-str">".next"</span>, <span class="j-str">"node_modules"</span>, <span class="j-str">".vercel"</span>],
+  <span class="j-key">"sourceRoots"</span>: [<span class="j-str">"src/"</span>, <span class="j-str">"app/"</span>, <span class="j-str">"pages/"</span>, <span class="j-str">"components/"</span>],
+  <span class="j-key">"entryPattern"</span>: <span class="j-str">"app/layout.tsx|pages/_app.tsx"</span>,
+  <span class="j-key">"devCommand"</span>: <span class="j-str">"npm run dev"</span>,
+  <span class="j-key">"buildCommand"</span>: <span class="j-str">"npm run build"</span>,
+  <span class="j-key">"defaultPort"</span>: <span class="j-num">3000</span>,
+  <span class="j-key">"envFile"</span>: <span class="j-str">".env.local"</span>,
+  <span class="j-key">"requiresNodeModules"</span>: <span class="j-bool">true</span>,
+  <span class="j-key">"requiresVenv"</span>: <span class="j-bool">false</span>,
+  <span class="j-key">"typicalArchitecture"</span>: <span class="j-str">"App Router MVC"</span>,
+  <span class="j-key">"conventionalPaths"</span>: {
+    <span class="j-key">"controllers"</span>: <span class="j-str">"app/api/"</span>,
+    <span class="j-key">"components"</span>: <span class="j-str">"components/"</span>,
+    <span class="j-key">"services"</span>: <span class="j-str">"lib/"</span>,
+    <span class="j-key">"models"</span>: <span class="j-str">"models/"</span>
+  }
+}</pre>
+      </div>
+      <div class="alert alert-warn">
+        <strong>📦 30+ Framework Configs:</strong> Syncro ships with built-in configs for Next.js, NestJS, Vite,
+        Django, Flask, FastAPI, Flutter, React Native, Spring Boot, ASP.NET Core, MAUI,
+        Laravel, Ruby on Rails, Go Fiber, Rust Axum, and more.
+        Community configs can be added via <code>syncro kb add --type framework</code>.
+      </div>
+    </section>
+
+    <!-- Query Architecture -->
+    <section class="section" id="query">
+      <h2 class="section-title">Hybrid Search Architecture <span class="tag tag-query">3-Mode Query</span></h2>
+      <p class="section-sub">
+        SyncroDB implements a three-stage hybrid search pipeline. All three modes can be composed in a single query.
+      </p>
+      <div class="flow-vert" style="background:var(--surface2);border:1px solid var(--border);border-radius:14px;padding:8px 24px;">
+        <div class="flow-step">
+          <div class="flow-num fn-cyan">1</div>
+          <div class="flow-body">
+            <div class="flow-title">Exact Symbol Search (O(1))</div>
+            <div class="flow-detail">Direct lookup via <code>AST/&lt;project_id&gt;/ast_index.json</code>. Finds classes, methods, routes, and imports by exact name. Used by <code>syncro ast find</code> and <code>syncro ai explain</code>. Sub-millisecond response.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num fn-purple">2</div>
+          <div class="flow-body">
+            <div class="flow-title">Metadata Filter Query</div>
+            <div class="flow-detail">Filter vector records by structured metadata: <code>project_id</code>, <code>framework</code>, <code>language</code>, <code>node_type</code>, or <code>tags</code>. Narrows the search space before running cosine similarity. Implemented as in-memory JSON predicate evaluation.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num fn-green">3</div>
+          <div class="flow-body">
+            <div class="flow-title">Cosine Similarity Search (Semantic)</div>
+            <div class="flow-detail">Embeds the query string, then scans filtered <code>embeddings.vec</code> binary files for the top-K nearest vectors using cosine similarity. Supports cross-project search when a <code>group_id</code> filter is applied.</div>
+          </div>
+        </div>
+        <div class="flow-step">
+          <div class="flow-num fn-orange">4</div>
+          <div class="flow-body">
+            <div class="flow-title">Result Aggregation & Re-ranking</div>
+            <div class="flow-detail">Results from AST and vector search are merged, de-duplicated, and re-ranked using a combined score: <code>score = 0.6 × semantic_similarity + 0.4 × ast_proximity_score</code>. Top results are injected as RAG context into the LLM prompt.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Indexing -->
+    <section class="section" id="indexing">
+      <h2 class="section-title">Indexing Strategy <span class="tag tag-query">Performance</span></h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Namespace</th><th>Index Type</th><th>Key</th><th>Update Strategy</th></tr></thead>
+          <tbody>
+            <tr><td><code>AST/</code></td><td>Hash Map (JSON Object)</td><td>Symbol name → {file, line, type}</td><td>Full re-scan on <code>syncro scan</code></td></tr>
+            <tr><td><code>Vectors/</code></td><td>Binary flat file + JSON index</td><td>SHA256 hash of code snippet</td><td>Incremental: only re-embed changed files</td></tr>
+            <tr><td><code>Memory/</code></td><td>Append-only JSONL + hash index</td><td>SHA256 of prompt string</td><td>Append on every generation</td></tr>
+            <tr><td><code>Projects/</code></td><td>JSON Array</td><td><code>project_id</code> (UUID)</td><td>On <code>syncro init</code> / <code>syncro project add</code></td></tr>
+            <tr><td><code>Templates/</code></td><td>Directory + keyword index JSON</td><td>Template name slug</td><td>On template install / AI generation</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Combos -->
+    <section class="section" id="combos">
+      <h2 class="section-title">Project Combos & Cross-Project Queries <span class="tag tag-arch">Multi-Project</span></h2>
+      <p class="section-sub">
+        When projects are grouped into a combo, SyncroDB builds cross-project dependency edges.
+        The AI agent can then answer questions that span both frontend and backend boundaries.
+      </p>
+      <div class="alert alert-success">
+        <strong>Example Cross-Project Query:</strong> <em>"Which MongoDB collection is written to when the user submits the login form on the Next.js frontend?"</em>
+        <br><br>
+        SyncroDB traverses: <code>Next.js page handler → fetch POST /api/auth/login → Express route → loginUser() → MongoDB users.insertOne()</code> — across 3 separate project ASTs using the Group cross-project graph.
+      </div>
+    </section>
+
+  </div>
+</main>
+
+</body>
+</html>

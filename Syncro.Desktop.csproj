@@ -57,9 +57,42 @@
 
         <!-- Raw Assets (also remove the "Resources\Raw" prefix) -->
         <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
+        
+        <!-- Environment Variables -->
+        <None Update=".env">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+
+        <!-- Project scaffolding templates consumed by MarkdownTemplateEngine at runtime -->
+        <None Update="ProjectTemplates\**\*.md">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
     </ItemGroup>
 
     <ItemGroup>
+        <Compile Remove="Syncro.CLI\**" />
+        <Content Remove="Syncro.CLI\**" />
+        <None Remove="Syncro.CLI\**" />
+    </ItemGroup>
+
+    <!-- ide/repo is the vendoring STAGING area (npm-packed library sources). The runtime
+         files that actually ship live in wwwroot/lib. Keep the staging tree out of the build. -->
+    <ItemGroup>
+        <Compile Remove="ide\**" />
+        <Content Remove="ide\**" />
+        <None Remove="ide\**" />
+    </ItemGroup>
+
+    <!-- Exclude the Code-OSS source tree from the .NET build -->
+    <ItemGroup>
+        <Compile Remove="vscode-main\**" />
+        <Content Remove="vscode-main\**" />
+        <None Remove="vscode-main\**" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="CliWrap" Version="3.10.2" />
+        <PackageReference Include="LiteDB" Version="5.0.21" />
         <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.7" />
         <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
         <PackageReference Include="Microsoft.AspNetCore.Components.WebView.Maui" Version="$(MauiVersion)" />
@@ -90,8 +123,20 @@
         <PackageReference Include="OxyPlot.SkiaSharp" Version="2.2.0" />
 
         <!-- HTML templating & vectors -->
-        <PackageReference Include="Scriban" Version="5.12.1" />
+        <PackageReference Include="Scriban" Version="7.2.5" />
         <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     </ItemGroup>
+
+  <Target Name="BuildCLI" AfterTargets="Build">
+    <MSBuild Projects="Syncro.CLI/Syncro.CLI.csproj" Targets="Build" />
+    <Copy SourceFiles="Syncro.CLI/bin/$(Configuration)/net9.0/syncro-cli.exe" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" ContinueOnError="true" />
+    <Copy SourceFiles="Syncro.CLI/bin/$(Configuration)/net9.0/syncro-cli.dll" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" ContinueOnError="true" />
+    <Copy SourceFiles="Syncro.CLI/bin/$(Configuration)/net9.0/syncro-cli.runtimeconfig.json" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" ContinueOnError="true" />
+  </Target>
+
+  <Target Name="Tailwind" BeforeTargets="Build">
+    <Exec Command="npm run build:css" Condition="Exists('node_modules')" />
+  </Target>
+
 
 </Project>

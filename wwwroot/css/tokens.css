@@ -1,0 +1,331 @@
+/*
+ * Syncro.UI design tokens — the single source of color / space / type for the IDE surface.
+ * ide-professional-polish.md §6 / §10.3.
+ */
+
+:root {
+    /* Shared Shape / type / motion */
+    --radius:          4px;
+    --radius-lg:       6px;
+    --font-ui:         'Inter', -apple-system, system-ui, 'Segoe UI', sans-serif;
+    --font-mono:       'JetBrains Mono', 'Cascadia Code', 'Consolas', monospace;
+    --fs-ui:           13px;
+    --fs-sm:           11px;
+    --motion-fast:     .12s ease;
+    --motion:          .18s ease;
+}
+
+/* 1. Syncro Special (Premium Indigo & Electric Blue) */
+:root, :root.theme-syncro-special {
+    --bg-editor:       #0f121b;
+    --bg-panel:        #0f121b;
+    --bg-side:         #151924;
+    --bg-activity:     #1b202f;
+    --bg-title:        #12151f;
+    --bg-tab-active:   #0f121b;
+    --bg-tab-inactive: #12151f;
+    --bg-input:        #1f2438;
+    --hover:           #1f2438;
+    --hover-strong:    #2a304a;
+
+    --border:          #232a3f;
+    --border-soft:     #2f3752;
+
+    --text:            #e2e8f0;
+    --text-strong:     #ffffff;
+    --text-muted:      #94a3b8;
+    --text-faint:      #64748b;
+
+    --accent:          #5b6cff; /* Vibrant Indigo/Blue */
+    --accent-hover:    #7583ff;
+    --on-accent:       #ffffff;
+
+    --status-bg:       var(--accent);
+    --status-bg-empty: #151924;
+    --status-fg:       #ffffff;
+
+    --error:           #ef4444;
+    --warn:            #f59e0b;
+    --ok:              #10b981;
+    --info:            #3b82f6;
+    --git:             #fbbf24;
+}
+
+/* 2. Syncro Dark (VS Code Dark+) */
+:root.theme-syncro-dark {
+    --bg-editor:       #1e1e1e;
+    --bg-panel:        #1e1e1e;
+    --bg-side:         #252526;
+    --bg-activity:     #333333;
+    --bg-title:        #2d2d2d;
+    --bg-tab-active:   #1e1e1e;
+    --bg-tab-inactive: #2d2d2d;
+    --bg-input:        #3c3c3c;
+    --hover:           #2a2d2e;
+    --hover-strong:    #37373d;
+    --border:          #1b1b1b;
+    --border-soft:     #3c3c3c;
+    --text:            #cccccc;
+    --text-strong:     #ffffff;
+    --text-muted:      #858585;
+    --text-faint:      #6a6a6a;
+    --accent:          #3b82f6;
+    --accent-hover:    #5a95f5;
+    --on-accent:       #ffffff;
+    --status-bg:       var(--accent);
+    --status-bg-empty: #252526;
+    --status-fg:       #ffffff;
+    --error:           #f14c4c;
+    --warn:            #cca700;
+    --ok:              #89d185;
+    --info:            #3794ff;
+    --git:             #e2c08d;
+}
+
+/* 3. Syncro Light (VS Code Light+) */
+:root.theme-syncro-light {
+    --bg-editor:       #ffffff;
+    --bg-panel:        #ffffff;
+    --bg-side:         #f3f3f3;
+    --bg-activity:     #2c2c2c;
+    --bg-title:        #dddddd;
+    --bg-tab-active:   #ffffff;
+    --bg-tab-inactive: #ececec;
+    --bg-input:        #ffffff;
+    --hover:           #e8e8e8;
+    --hover-strong:    #d0d0d0;
+    --border:          #cccccc;
+    --border-soft:     #dddddd;
+    --text:            #333333;
+    --text-strong:     #000000;
+    --text-muted:      #666666;
+    --text-faint:      #999999;
+    --accent:          #007acc;
+    --accent-hover:    #005a9e;
+    --on-accent:       #ffffff;
+    --status-bg:       var(--accent);
+    --status-bg-empty: #2c2c2c; /* Activity bar color usually matches in empty state */
+    --status-fg:       #ffffff;
+    --error:           #e51400;
+    --warn:            #bf8803;
+    --ok:              #007e3a;
+    --info:            #007acc;
+    --git:             #895503;
+}
+
+/* 4. Midnight Blue */
+:root.theme-midnight {
+    --bg-editor:       #001122;
+    --bg-panel:        #001122;
+    --bg-side:         #001a33;
+    --bg-activity:     #002b55;
+    --bg-title:        #00182b;
+    --bg-tab-active:   #001122;
+    --bg-tab-inactive: #00182b;
+    --bg-input:        #002b55;
+    --hover:           #002244;
+    --hover-strong:    #003366;
+    --border:          #000a14;
+    --border-soft:     #002244;
+    --text:            #aaccff;
+    --text-strong:     #ffffff;
+    --text-muted:      #6688aa;
+    --text-faint:      #446688;
+    --accent:          #0088ff;
+    --accent-hover:    #33aaff;
+    --on-accent:       #ffffff;
+    --status-bg:       var(--accent);
+    --status-bg-empty: #001a33;
+    --status-fg:       #ffffff;
+    --error:           #ff4444;
+    --warn:            #ffaa00;
+    --ok:              #22cc22;
+    --info:            #0088ff;
+    --git:             #ffcc00;
+}
+
+/* 5. High Contrast Dark */
+:root.theme-hc-dark {
+    --bg-editor:       #000000;
+    --bg-panel:        #000000;
+    --bg-side:         #000000;
+    --bg-activity:     #000000;
+    --bg-title:        #000000;
+    --bg-tab-active:   #000000;
+    --bg-tab-inactive: #000000;
+    --bg-input:        #000000;
+    --hover:           #000000;
+    --hover-strong:    #000000;
+    --border:          #ffffff;
+    --border-soft:     #888888;
+    --text:            #ffffff;
+    --text-strong:     #ffffff;
+    --text-muted:      #cccccc;
+    --text-faint:      #aaaaaa;
+    --accent:          #ffffff;
+    --accent-hover:    #cccccc;
+    --on-accent:       #000000;
+    --status-bg:       #000000;
+    --status-bg-empty: #000000;
+    --status-fg:       #ffffff;
+    --error:           #ff0000;
+    --warn:            #ffff00;
+    --ok:              #00ff00;
+    --info:            #ffffff;
+    --git:             #ffff00;
+}
+
+/* 6. Solarized Dark */
+:root.theme-solarized-dark {
+    --bg-editor:       #002b36;
+    --bg-panel:        #002b36;
+    --bg-side:         #073642;
+    --bg-activity:     #00212b;
+    --bg-title:        #00212b;
+    --bg-tab-active:   #002b36;
+    --bg-tab-inactive: #00212b;
+    --bg-input:        #073642;
+    --hover:           #073642;
+    --hover-strong:    #586e75;
+    --border:          #00181e;
+    --border-soft:     #073642;
+    --text:            #839496;
+    --text-strong:     #93a1a1;
+    --text-muted:      #586e75;
+    --text-faint:      #4b5f65;
+    --accent:          #2aa198;
+    --accent-hover:    #2ec3b6;
+    --on-accent:       #ffffff;
+    --status-bg:       var(--accent);
+    --status-bg-empty: #073642;
+    --status-fg:       #fdf6e3;
+    --error:           #dc322f;
+    --warn:            #b58900;
+    --ok:              #859900;
+    --info:            #268bd2;
+    --git:             #cb4b16;
+}
+
+/* 7. Solarized Light */
+:root.theme-solarized-light {
+    --bg-editor:       #fdf6e3;
+    --bg-panel:        #fdf6e3;
+    --bg-side:         #eee8d5;
+    --bg-activity:     #dfd7c2;
+    --bg-title:        #dfd7c2;
+    --bg-tab-active:   #fdf6e3;
+    --bg-tab-inactive: #eee8d5;
+    --bg-input:        #eee8d5;
+    --hover:           #eee8d5;
+    --hover-strong:    #dfd7c2;
+    --border:          #d0c8b0;
+    --border-soft:     #dfd7c2;
+    --text:            #657b83;
+    --text-strong:     #586e75;
+    --text-muted:      #93a1a1;
+    --text-faint:      #a2b3b3;
+    --accent:          #2aa198;
+    --accent-hover:    #2ec3b6;
+    --on-accent:       #fdf6e3;
+    --status-bg:       var(--accent);
+    --status-bg-empty: #eee8d5;
+    --status-fg:       #fdf6e3;
+    --error:           #dc322f;
+    --warn:            #b58900;
+    --ok:              #859900;
+    --info:            #268bd2;
+    --git:             #cb4b16;
+}
+
+/* 8. Monokai Pro */
+:root.theme-monokai {
+    --bg-editor:       #2d2a2e;
+    --bg-panel:        #2d2a2e;
+    --bg-side:         #221f22;
+    --bg-activity:     #19181a;
+    --bg-title:        #221f22;
+    --bg-tab-active:   #2d2a2e;
+    --bg-tab-inactive: #221f22;
+    --bg-input:        #403e41;
+    --hover:           #3a373b;
+    --hover-strong:    #403e41;
+    --border:          #19181a;
+    --border-soft:     #3a373b;
+    --text:            #fcfcfa;
+    --text-strong:     #ffffff;
+    --text-muted:      #939293;
+    --text-faint:      #727072;
+    --accent:          #ffd866;
+    --accent-hover:    #ffe38f;
+    --on-accent:       #19181a;
+    --status-bg:       var(--accent);
+    --status-bg-empty: #221f22;
+    --status-fg:       #19181a;
+    --error:           #ff6188;
+    --warn:            #fc9867;
+    --ok:              #a9dc76;
+    --info:            #78dce8;
+    --git:             #fc9867;
+}
+
+/* 9. GitHub Dark */
+:root.theme-github-dark {
+    --bg-editor:       #0d1117;
+    --bg-panel:        #0d1117;
+    --bg-side:         #010409;
+    --bg-activity:     #010409;
+    --bg-title:        #010409;
+    --bg-tab-active:   #0d1117;
+    --bg-tab-inactive: #010409;
+    --bg-input:        #21262d;
+    --hover:           #161b22;
+    --hover-strong:    #21262d;
+    --border:          #30363d;
+    --border-soft:     #21262d;
+    --text:            #c9d1d9;
+    --text-strong:     #ffffff;
+    --text-muted:      #8b949e;
+    --text-faint:      #6e7681;
+    --accent:          #58a6ff;
+    --accent-hover:    #79c0ff;
+    --on-accent:       #ffffff;
+    --status-bg:       var(--accent);
+    --status-bg-empty: #010409;
+    --status-fg:       #ffffff;
+    --error:           #f85149;
+    --warn:            #d29922;
+    --ok:              #2ea043;
+    --info:            #58a6ff;
+    --git:             #d29922;
+}
+
+/* 10. Dracula */
+:root.theme-dracula {
+    --bg-editor:       #282a36;
+    --bg-panel:        #282a36;
+    --bg-side:         #21222c;
+    --bg-activity:     #191a21;
+    --bg-title:        #21222c;
+    --bg-tab-active:   #282a36;
+    --bg-tab-inactive: #21222c;
+    --bg-input:        #44475a;
+    --hover:           #44475a;
+    --hover-strong:    #6272a4;
+    --border:          #191a21;
+    --border-soft:     #44475a;
+    --text:            #f8f8f2;
+    --text-strong:     #ffffff;
+    --text-muted:      #6272a4;
+    --text-faint:      #4a5782;
+    --accent:          #bd93f9;
+    --accent-hover:    #cca8ff;
+    --on-accent:       #282a36;
+    --status-bg:       var(--accent);
+    --status-bg-empty: #21222c;
+    --status-fg:       #282a36;
+    --error:           #ff5555;
+    --warn:            #f1fa8c;
+    --ok:              #50fa7b;
+    --info:            #8be9fd;
+    --git:             #ffb86c;
+}

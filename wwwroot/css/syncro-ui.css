@@ -1,0 +1,44 @@
+/*
+ * syncro-ui.css — styles for Syncro.UI widgets that ui.js appends to <body>
+ * (tooltips, context menus, ripples) and shared utility classes. Token-driven.
+ */
+
+/* Tooltip */
+.sui-tooltip {
+    position: fixed; z-index: 9999; pointer-events: none;
+    background: var(--hover-strong); color: var(--text);
+    border: 1px solid var(--border-soft); border-radius: var(--radius);
+    padding: 4px 8px; font: 500 var(--fs-sm)/1.3 var(--font-ui);
+    box-shadow: 0 2px 8px rgba(0,0,0,.4);
+    opacity: 0; transform: translateY(-2px); transition: opacity var(--motion-fast), transform var(--motion-fast);
+}
+.sui-tooltip.is-in { opacity: 1; transform: translateY(0); }
+
+/* Ripple */
+.sui-ripple {
+    position: absolute; border-radius: 50%; pointer-events: none;
+    background: rgba(255,255,255,.18); transform: scale(0); animation: sui-ripple .5s ease-out;
+}
+@keyframes sui-ripple { to { transform: scale(2.2); opacity: 0; } }
+
+/* Context / dropdown menu */
+.sui-menu {
+    position: fixed; z-index: 9999; min-width: 180px;
+    background: var(--bg-side); border: 1px solid var(--border-soft); border-radius: var(--radius-lg);
+    padding: 4px; box-shadow: 0 6px 22px rgba(0,0,0,.5);
+    font: var(--fs-ui)/1 var(--font-ui); color: var(--text);
+}
+.sui-menu-item {
+    display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: var(--radius);
+    cursor: pointer; white-space: nowrap;
+}
+.sui-menu-item:hover { background: var(--accent); color: var(--on-accent); }
+.sui-menu-item.is-disabled { color: var(--text-faint); pointer-events: none; }
+.sui-menu-item i, .sui-menu-gap { width: 16px; display: inline-flex; justify-content: center; font-size: 13px; }
+.sui-menu-sep { height: 1px; background: var(--border-soft); margin: 4px 0; }
+
+/* Shared utilities */
+.sui-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+.sui-scroll::-webkit-scrollbar-thumb { background: #424242; border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }
+.sui-scroll::-webkit-scrollbar-thumb:hover { background: #4f4f4f; background-clip: content-box; }
+.sui-focusable:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }

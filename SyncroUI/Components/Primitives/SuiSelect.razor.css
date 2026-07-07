@@ -1,0 +1,54 @@
+.sui-select-container {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 8px;
+}
+
+.sui-select-label {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-muted, #858585);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+}
+
+.sui-select-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.sui-select {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    width: 100%;
+    background: var(--bg-input, var(--bg-editor, #1e1e1e));
+    color: var(--text, #cccccc);
+    border: 1px solid var(--border, #3c3c3c);
+    border-radius: 4px;
+    padding: 6px 30px 6px 10px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s ease;
+    cursor: pointer;
+}
+
+.sui-select:focus {
+    border-color: var(--accent, #007acc);
+}
+
+.sui-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.sui-select-icon {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--text-muted, #858585);
+    font-size: 12px;
+}

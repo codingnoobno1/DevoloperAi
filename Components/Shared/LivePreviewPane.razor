@@ -1,0 +1,300 @@
+@using MudBlazor
+@using Syncro.Desktop.Services.Connector.Frontend
+@inject IFrontendRunnerService RunnerService
+@implements IDisposable
+
+<div class="live-preview-container d-flex flex-column h-100">
+    <!-- Toolbar -->
+    <div class="d-flex align-center justify-space-between mb-2">
+        <div class="d-flex align-center gap-2">
+            @if (_isRunning && _isReady)
+            {
+                <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Filled">LIVE</MudChip>
+            }
+            else if (_isRunning)
+            {
+                <MudChip T="string" Color="Color.Warning" Size="Size.Small" Variant="Variant.Filled">STARTING</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Color="Color.Default" Size="Size.Small" Variant="Variant.Outlined">STOPPED</MudChip>
+            }
+            
+            <MudText Typo="Typo.caption" Class="text-muted">@(_previewUrl ?? "Waiting for localhost port...")</MudText>
+        </div>
+        
+        <div class="d-flex align-center gap-1">
+            <MudIconButton Icon="@Icons.Material.Filled.Bolt" Color="Color.Warning" Size="Size.Small" Title="Hot Reload" OnClick="TriggerHotReload" Disabled="!_isRunning" />
+            <MudIconButton Icon="@Icons.Material.Filled.Refresh" Color="Color.Primary" Size="Size.Small" Title="Hot Restart" OnClick="TriggerHotRestart" Disabled="!_isRunning" />
+            <MudIconButton Icon="@Icons.Material.Filled.Stop" Color="Color.Error" Size="Size.Small" Title="Stop" OnClick="StopPreview" Disabled="!_isRunning" />
+            <MudToggleIconButton @bind-Toggled="_isLandscape"
+                                Icon="@Icons.Material.Filled.StayCurrentPortrait"
+                                ToggledIcon="@Icons.Material.Filled.StayCurrentLandscape"
+                                Color="Color.Default"
+                                ToggledColor="Color.Primary"
+                                Size="Size.Small"
+                                Title="Portrait"
+                                ToggledTitle="Landscape" />
+        </div>
+    </div>
+
+    <!-- Device Frame -->
+    <div class="preview-area d-flex align-center justify-center flex-grow-1" style="background: #f1f5f9; border-radius: 8px; overflow: hidden; position: relative;">
+        @if (!_isRunning)
+        {
+            <div class="text-center pa-6">
+                <MudIcon Icon="@Icons.Material.Filled.PlayCircleOutline" Size="Size.Large" Class="mb-3 text-muted" />
+                <MudText Typo="Typo.body2" Class="text-muted">Click <b>Run Frontend</b> to start the preview.</MudText>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" Class="mt-3" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="StartPreviewAsync">Run Frontend</MudButton>
+            </div>
+        }
+        else if (!_isReady)
+        {
+            <div class="text-center pa-6">
+                <MudProgressCircular Color="Color.Primary" Indeterminate="true" Class="mb-4" />
+                <MudText Typo="Typo.subtitle2">Starting dev server...</MudText>
+                <MudText Typo="Typo.caption" Class="text-muted">Waiting for localhost binding...</MudText>
+            </div>
+        }
+        else
+        {
+            if (_deviceMode == DeviceMode.Mobile)
+            {
+                <div class="device-frame" style="@GetDeviceStyle()">
+                    <!-- Screen Content -->
+                    <div class="screen-content">
+                        <iframe src="@_previewUrl" class="preview-iframe"></iframe>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="browser-frame" style="@GetDesktopStyle()">
+                    <div class="browser-header d-flex align-center gap-2 px-3 py-2">
+                        <div class="browser-dots d-flex gap-1">
+                            <span class="dot red"></span>
+                            <span class="dot yellow"></span>
+                            <span class="dot green"></span>
+                        </div>
+                        <div class="browser-address-bar flex-grow-1 px-3 py-1 d-flex align-center gap-2">
+                            <MudIcon Icon="@Icons.Material.Filled.Lock" Size="Size.Small" Color="Color.Success" />
+                            <span class="address-text">@_previewUrl</span>
+                        </div>
+                    </div>
+                    <div class="browser-content">
+                        <iframe src="@_previewUrl" class="preview-iframe"></iframe>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+
+    <!-- Mini Terminal -->
+    <div class="terminal-pane mt-2">
+        <div class="d-flex align-center justify-space-between terminal-header px-2 py-1">
+            <MudText Typo="Typo.caption" Style="font-family: 'Cascadia Code', monospace; color: #10b981;">Dev Server Logs</MudText>
+            <MudIconButton Icon="@Icons.Material.Filled.ClearAll" Size="Size.Small" OnClick="() => _logs.Clear()" />
+        </div>
+        <div class="terminal-body px-2 py-1">
+            @foreach (var log in _logs)
+            {
+                <div class="log-entry">@log</div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .device-frame {
+        background: #0f172a;
+        border-radius: 36px;
+        padding: 10px;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        display: flex;
+        flex-direction: column;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 6px solid #334155;
+    }
+
+    .screen-content {
+        flex: 1;
+        background: white;
+        border-radius: 24px;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .preview-iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+    }
+
+    .browser-frame {
+        background: #f8fafc;
+        border-radius: 12px;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #cbd5e1;
+        overflow: hidden;
+        transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+        margin: 16px;
+    }
+    .browser-header {
+        background: #e2e8f0;
+        border-bottom: 1px solid #cbd5e1;
+    }
+    .browser-dots .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .browser-dots .red { background: #ff5f56; }
+    .browser-dots .yellow { background: #ffbd2e; }
+    .browser-dots .green { background: #27c93f; }
+    .browser-address-bar {
+        background: #ffffff;
+        border-radius: 6px;
+        font-family: 'Inter', sans-serif;
+        font-size: 12px;
+        color: #334155;
+    }
+    .browser-content {
+        flex: 1;
+        background: white;
+        position: relative;
+    }
+
+    .terminal-pane {
+        height: 150px;
+        background: #0f172a;
+        border-radius: 8px;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .terminal-header {
+        background: #1e293b;
+        border-bottom: 1px solid #334155;
+    }
+
+    .terminal-body {
+        flex: 1;
+        overflow-y: auto;
+        font-family: 'Cascadia Code', 'Fira Code', monospace;
+        font-size: 11px;
+        color: #e2e8f0;
+    }
+
+    .log-entry {
+        margin-bottom: 2px;
+        white-space: pre-wrap;
+    }
+</style>
+
+@code {
+    [Parameter] public string FrontendPath { get; set; } = "";
+    [Parameter] public string FrontendStack { get; set; } = "";
+
+    private enum DeviceMode { Mobile, Desktop }
+    private DeviceMode _deviceMode = DeviceMode.Mobile;
+    private bool _isLandscape = false;
+    private bool _isRunning = false;
+    private bool _isReady = false;
+    private string? _previewUrl;
+    private List<string> _logs = new();
+
+    protected override void OnInitialized()
+    {
+        // Detect mode
+        if (FrontendStack.Contains("NextJs", StringComparison.OrdinalIgnoreCase) || 
+            FrontendStack.Contains("React", StringComparison.OrdinalIgnoreCase) || 
+            FrontendStack.Contains("Blazor", StringComparison.OrdinalIgnoreCase) ||
+            FrontendStack.Contains("Express", StringComparison.OrdinalIgnoreCase))
+        {
+            _deviceMode = DeviceMode.Desktop;
+        }
+        else
+        {
+            _deviceMode = DeviceMode.Mobile;
+        }
+
+        RunnerService.OnOutput += HandleOutput;
+        RunnerService.OnReady += HandleReady;
+    }
+
+    public async Task StartPreviewAsync()
+    {
+        if (string.IsNullOrWhiteSpace(FrontendPath) || string.IsNullOrWhiteSpace(FrontendStack)) return;
+        
+        _isRunning = true;
+        _isReady = false;
+        _previewUrl = null;
+        _logs.Clear();
+        StateHasChanged();
+
+        bool success = await RunnerService.StartAsync(FrontendPath, FrontendStack);
+        if (!success)
+        {
+            _isRunning = false;
+            StateHasChanged();
+        }
+    }
+
+    public async Task StopPreview()
+    {
+        await RunnerService.StopAsync();
+        _isRunning = false;
+        _isReady = false;
+        StateHasChanged();
+    }
+
+    private void HandleOutput(string msg)
+    {
+        InvokeAsync(() =>
+        {
+            _logs.Add(msg);
+            if (_logs.Count > 100) _logs.RemoveAt(0);
+            StateHasChanged();
+        });
+    }
+
+    private void HandleReady(string url)
+    {
+        InvokeAsync(() =>
+        {
+            _previewUrl = url;
+            _isReady = true;
+            StateHasChanged();
+        });
+    }
+
+    private async Task TriggerHotReload() => await RunnerService.ReloadAsync();
+    private async Task TriggerHotRestart() => await RunnerService.RestartAsync();
+
+    private string GetDeviceStyle()
+    {
+        // Default to a mobile size
+        int w = 375, h = 812;
+        
+        if (_isLandscape)
+        {
+            var temp = w;
+            w = h;
+            h = temp;
+        }
+
+        // Scale down slightly to fit well in the pane
+        return $"width: {w * 0.8}px; height: {h * 0.8}px;";
+    }
+
+    private string GetDesktopStyle()
+    {
+        return $"width: 100%; height: 100%; max-width: 100%; max-height: 100%;";
+    }
+
+    public void Dispose()
+    {
+        RunnerService.OnOutput -= HandleOutput;
+        RunnerService.OnReady -= HandleReady;
+        _ = StopPreview();
+    }
+}

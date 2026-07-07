@@ -1,0 +1,31 @@
+@namespace Syncro.Desktop.Components.Pages.Connector.DevHub
+@using MudBlazor
+@* Root Blazor component for the DevHub secondary window.
+   Shares the same IServiceProvider as MainPage — all singletons are live. *@
+
+<MudThemeProvider @bind-IsDarkMode="_dark" Theme="_theme" />
+<MudSnackbarProvider />
+<MudDialogProvider FullWidth="true" />
+
+<DevHub />
+
+@code {
+    private bool _dark = true;
+
+    private readonly MudTheme _theme = new()
+    {
+        PaletteLight = new PaletteLight
+        {
+            Primary   = "#6366f1",
+            Secondary = "#10b981"
+        },
+        PaletteDark = new PaletteDark
+        {
+            Primary             = "#818cf8",
+            Secondary           = "#34d399",
+            Background          = "#0f172a",
+            Surface             = "#1e293b",
+            AppbarBackground    = "#0f172a"
+        }
+    };
+}

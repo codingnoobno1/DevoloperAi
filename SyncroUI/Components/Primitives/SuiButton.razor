@@ -1,0 +1,29 @@
+@namespace Syncro.Desktop.SyncroUI
+@inject IJSRuntime JS
+
+@* Reusable text button. Variant: "default" | "primary" | "ghost". *@
+<button @ref="_el" class="sui-btn sui-btn-@Variant sui-focusable" disabled="@Disabled" @onclick="OnClick">
+    @if (Icon is { Length: > 0 })
+    {
+        <i class="@Icon"></i>
+    }
+    @ChildContent
+</button>
+
+@code {
+    [Parameter] public string Variant { get; set; } = "default";
+    [Parameter] public string? Icon { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback OnClick { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private ElementReference _el;
+    private bool _wired;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || _wired) return;
+        _wired = true;
+        try { await JS.InvokeVoidAsync("SyncroUI.ripple", _el); } catch { }
+    }
+}

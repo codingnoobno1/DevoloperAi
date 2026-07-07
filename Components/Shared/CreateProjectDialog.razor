@@ -1,9 +1,11 @@
 @using Syncro.Desktop.Services
 @using MudBlazor
 @using System.IO
-@inject ProjectService ProjService
+@using Syncro.Desktop.Services.projectgenerator.Registry
 @inject ISnackbar Snackbar
 @inject DeveloperAI.BusinessLogic.EnvironmentManager EnvManager
+@inject Syncro.Desktop.Services.projectgenerator.IProjectCreationService CreationService
+@inject StackRegistry StackRegistry
 
 <MudDialog>
     <TitleContent>
@@ -24,10 +26,11 @@
                             <div class="dot green"></div>
                             <span class="ml-2">syncro-cli --init @SelectedType</span>
                         </div>
-                        <div class="terminal-body">
-                            <code>> Initializing project structure...</code>
-                            <code>> Running stack-specific providers...</code>
-                            <code>> Configuring agent synchronization...</code>
+                        <div class="terminal-body" style="max-height: 200px; overflow-y: auto; width: 100%;">
+                            @foreach (var log in _generatorLogs)
+                            {
+                                <code>@log</code>
+                            }
                             <code class="cursor">_</code>
                         </div>
                     </div>
@@ -61,18 +64,70 @@
                 
                 @if (SelectedType == "Mobile App")
                 {
+                    <MudSelect T="string" Label="Mobile Framework" @bind-Value="_mobileFramework" Variant="Variant.Outlined" Class="mb-4">
+                        @foreach (var stack in _mobileStacks)
+                        {
+                            <MudSelectItem Value="@stack.Id">@stack.Label (@stack.Language)</MudSelectItem>
+                        }
+                    </MudSelect>
                     <MudTextField T="string" Label="Package Name" @bind-Value="_packageName" Placeholder="com.example.app" Required="true" Variant="Variant.Outlined" Class="mb-4" />
-                    @if (!_isFlutterInstalled)
+                    @if (_mobileFramework == "flutter" && !_isFlutterInstalled)
                     {
                         <MudAlert Severity="Severity.Warning" Class="mt-2">
                             Flutter not detected. Syncro will help you install it in the next step.
                         </MudAlert>
                     }
                 }
+                else if (SelectedType == "Group Stack")
+                {
+                    <MudText Typo="Typo.body2" Class="mb-2 font-weight-bold">Select services to include in the Group Stack:</MudText>
+                    <div class="d-flex flex-column gap-2 mb-4 group-stack-list">
+                        @foreach (var stack in _groupEligibleStacks)
+                        {
+                            <MudCheckBox T="bool" 
+                                         Value="@IsComponentSelected(stack.Id)" 
+                                         ValueChanged="@((b) => ToggleComponent(stack.Id, b))" 
+                                         Color="Color.Primary" 
+                                         Label="@($"{stack.Label} {stack.Kind} (/{stack.Subfolder})")" />
+                        }
+                    </div>
+                }
+                else if (SelectedType == "Python")
+                {
+                    <MudSelect T="string" Label="Python Framework" @bind-Value="_pythonFramework" Variant="Variant.Outlined" Class="mb-4">
+                        @foreach (var stack in _pythonStacks)
+                        {
+                            <MudSelectItem Value="@stack.Id">@stack.Label (Port: @stack.DefaultPort)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTextField T="string" Label="Description" @bind-Value="Description" Lines="2" Variant="Variant.Outlined" Class="mb-4" />
+                }
+                else if (SelectedType == "Node.js")
+                {
+                    <MudSelect T="string" Label="Node.js Framework" @bind-Value="_nodeFramework" Variant="Variant.Outlined" Class="mb-4">
+                        @foreach (var stack in _nodeStacks)
+                        {
+                            <MudSelectItem Value="@stack.Id">@stack.Label (@stack.Language)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTextField T="string" Label="Description" @bind-Value="Description" Lines="2" Variant="Variant.Outlined" Class="mb-4" />
+                }
+                else if (SelectedType == "API Service")
+                {
+                    <MudSelect T="string" Label="Backend Framework" @bind-Value="_apiFramework" Variant="Variant.Outlined" Class="mb-4">
+                        @foreach (var stack in _apiStacks)
+                        {
+                            <MudSelectItem Value="@stack.Id">@stack.Label (@stack.Language)</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudTextField T="string" Label="Description" @bind-Value="Description" Lines="2" Variant="Variant.Outlined" Class="mb-4" />
+                }
                 else
                 {
                     <MudTextField T="string" Label="Description" @bind-Value="Description" Lines="2" Variant="Variant.Outlined" Class="mb-4" />
                 }
+
+                <MudCheckBox T="bool" @bind-Value="_useNativeCli" Color="Color.Primary" Label="Use Native CLI Scaffolding (npm, npx, flutter, django-admin if installed)" Class="mb-4" />
             }
             else if (_step == 3)
             {
@@ -120,19 +175,26 @@
         flex-direction: column;
         align-items: center;
         text-align: center;
+        background: linear-gradient(145deg, var(--mud-palette-surface), rgba(255,255,255,0.02));
     }
 
     .type-card:hover {
         border-color: var(--accent-primary);
-        background: #f8fafc;
+        background: linear-gradient(145deg, rgba(99, 102, 241, 0.05), rgba(99, 102, 241, 0.01));
         transform: translateY(-2px);
         box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
     }
 
     .type-card.selected {
         border-color: var(--accent-primary);
-        background: rgba(99, 102, 241, 0.05);
+        background: rgba(99, 102, 241, 0.08);
         border-width: 2px;
+    }
+
+    .group-stack-list {
+        max-height: 250px;
+        overflow-y: auto;
+        padding-right: 8px;
     }
 
     .terminal-animation {
@@ -186,6 +248,21 @@
     private bool _syncWithAgent = true;
     private bool _isCreating = false;
     private bool _isFlutterInstalled = false;
+    private bool _useNativeCli = false;
+    private List<string> _generatorLogs = new();
+    
+    // Dynamic stack lists
+    private List<StackArchetype> _pythonStacks = new();
+    private List<StackArchetype> _nodeStacks = new();
+    private List<StackArchetype> _apiStacks = new();
+    private List<StackArchetype> _mobileStacks = new();
+    private List<StackArchetype> _groupEligibleStacks = new();
+    
+    private List<string> _selectedGroupComponents = new();
+    private string _pythonFramework = "";
+    private string _nodeFramework = "";
+    private string _apiFramework = "";
+    private string _mobileFramework = "";
 
     public string ProjectName { get; set; } = "";
     public string SelectedType { get; set; } = "Python";
@@ -196,14 +273,38 @@
     {
         new("Python", Icons.Material.Filled.Terminal, "Scripts, Data Science, AI"),
         new("Node.js", Icons.Material.Filled.Code, "Web Apps, Backend, Tooling"),
-        new("Mobile App", Icons.Material.Filled.Smartphone, "Flutter Native Apps"),
-        new("API Service", Icons.Material.Filled.Cloud, "REST, GraphQL, Microservices")
+        new("Mobile App", Icons.Material.Filled.Smartphone, "Native Apps"),
+        new("API Service", Icons.Material.Filled.Cloud, "REST, GraphQL, Microservices"),
+        new("Group Stack", Icons.Material.Filled.Layers, "Multi-service backend & frontend stack")
     };
 
     protected override async Task OnInitializedAsync()
     {
         await CheckFlutter();
         ProjectPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "SyncroProjects");
+        
+        // Load dynamically from registry
+        var allStacks = StackRegistry.GetAllStacks();
+        
+        _pythonStacks = allStacks.Where(s => s.Language == "Python").ToList();
+        _nodeStacks = allStacks.Where(s => s.Language == "JavaScript" || s.Language == "TypeScript").ToList();
+        _apiStacks = allStacks.Where(s => s.Kind == StackKind.Backend && s.Language != "Python" && s.Language != "JavaScript" && s.Language != "TypeScript").ToList();
+        _mobileStacks = allStacks.Where(s => s.Kind == StackKind.Mobile).ToList();
+        
+        // Group stack allows anything that isn't mobile, including databases
+        _groupEligibleStacks = allStacks.Where(s => s.Kind != StackKind.Mobile).ToList();
+
+        // Set defaults
+        if (_pythonStacks.Any()) _pythonFramework = _pythonStacks.First().Id;
+        if (_nodeStacks.Any()) _nodeFramework = _nodeStacks.First().Id;
+        if (_apiStacks.Any()) _apiFramework = _apiStacks.First().Id;
+        if (_mobileStacks.Any()) _mobileFramework = _mobileStacks.First().Id;
+        
+        // Pre-select a default group stack (e.g., nextjs + fastapi)
+        var next = allStacks.FirstOrDefault(s => s.Id == "nextjs");
+        var api = allStacks.FirstOrDefault(s => s.Id == "fastapi");
+        if (next != null) _selectedGroupComponents.Add(next.Id);
+        if (api != null) _selectedGroupComponents.Add(api.Id);
     }
 
     private async Task CheckFlutter()
@@ -243,16 +344,33 @@
 
     private void Cancel() => MudDialog.Cancel();
 
+    private bool IsComponentSelected(string id)
+    {
+        return _selectedGroupComponents.Contains(id);
+    }
+
+    private void ToggleComponent(string id, bool isSelected)
+    {
+        if (isSelected)
+        {
+            if (!_selectedGroupComponents.Contains(id)) _selectedGroupComponents.Add(id);
+        }
+        else
+        {
+            _selectedGroupComponents.Remove(id);
+        }
+    }
+
     private async Task Submit()
     {
         await _form.ValidateAsync();
         if (!_isValid) return;
 
-        if (SelectedType == "Mobile App" && !_isFlutterInstalled)
+        if (SelectedType == "Mobile App" && _mobileFramework == "flutter" && !_isFlutterInstalled)
         {
             var dialog = await DialogService.ShowAsync<Syncro.Desktop.Components.Dashboard.FlutterSetupView>("Setup Flutter");
-            var result = await dialog.Result;
-            if (result.Canceled) return;
+            var result = await dialog?.Result;
+            if (result == null || result.Canceled) return;
             
             await CheckFlutter();
             if (!_isFlutterInstalled)
@@ -263,22 +381,60 @@
         }
 
         _isCreating = true;
+        _generatorLogs.Clear();
         StateHasChanged();
 
-        var project = await ProjService.CreateProject(ProjectName, ProjectPath, SelectedType);
-        
+        var request = BuildCreationRequest();
+        var progress = new Progress<string>(line => InvokeAsync(() => { _generatorLogs.Add(line); StateHasChanged(); }));
+        var creationResult = await CreationService.CreateAsync(request, progress);
+
         _isCreating = false;
         StateHasChanged();
 
-        if (project != null)
+        if (creationResult.Success && creationResult.Project != null)
         {
-            Snackbar.Add($"Project '{ProjectName}' initialized!", Severity.Success);
-            MudDialog.Close(DialogResult.Ok(project));
+            Snackbar.Add($"Project '{ProjectName}' initialized with AST memory index!", Severity.Success);
+            MudDialog.Close(DialogResult.Ok(creationResult.Project));
         }
         else
         {
-            Snackbar.Add("Failed to initialize project. Please check if CLI tools are installed.", Severity.Error);
+            Snackbar.Add(creationResult.Error ?? "Failed to initialize project. Please check the logs.", Severity.Error);
         }
+    }
+
+    private Syncro.Desktop.Services.projectgenerator.Models.ProjectCreationRequest BuildCreationRequest()
+    {
+        if (SelectedType == "Group Stack")
+        {
+            return new Syncro.Desktop.Services.projectgenerator.Models.ProjectCreationRequest
+            {
+                Name = ProjectName,
+                Path = ProjectPath,
+                Kind = Syncro.Desktop.Services.projectgenerator.Models.CreationKind.Group,
+                GroupComponents = _selectedGroupComponents,
+                UseNativeCli = _useNativeCli,
+                SyncWithAgent = _syncWithAgent
+            };
+        }
+
+        string actualType = SelectedType switch
+        {
+            "Python" => _pythonFramework,
+            "Node.js" => _nodeFramework,
+            "Mobile App" => _mobileFramework,
+            "API Service" => _apiFramework,
+            _ => SelectedType
+        };
+
+        return new Syncro.Desktop.Services.projectgenerator.Models.ProjectCreationRequest
+        {
+            Name = ProjectName,
+            Path = ProjectPath,
+            Kind = Syncro.Desktop.Services.projectgenerator.Models.CreationKind.Single,
+            Type = actualType,
+            UseNativeCli = _useNativeCli,
+            SyncWithAgent = _syncWithAgent
+        };
     }
 
     private void BrowseFolder()

@@ -1,0 +1,11 @@
+{
+  "name": "syncro-desktop",
+  "version": "1.0.0",
+  "description": "Tailwind build setup for Syncro IDE",
+  "scripts": {
+    "build:css": "tailwindcss -i ./src/input.css -o ./wwwroot/css/tailwind.css"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.1"
+  }
+}

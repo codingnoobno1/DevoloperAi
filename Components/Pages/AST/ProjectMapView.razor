@@ -1,0 +1,555 @@
+@page "/project-map-view"
+@using Syncro.Desktop.Services.AST
+@using Syncro.Desktop.Services.AST.Models
+@using Syncro.Desktop.Services.AST.Core
+@using Syncro.Desktop.Services.AST.Graph
+@using System.IO
+@inject AstService AstService
+@inject NavigationManager Navigation
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+    <!-- Sub-navigation Header -->
+    <div class="d-flex align-center justify-space-between mb-6 pa-6 panel rounded-lg ast-header-gradient text-white">
+        <div>
+            <div class="d-flex align-center gap-2">
+                <MudIcon Icon="@Icons.Material.Filled.AccountTree" Size="Size.Large" Class="text-white" />
+                <MudText Typo="Typo.h5" Class="font-weight-bold text-white">AST GRAPH & TREE MAP</MudText>
+            </div>
+            @if (AstService.ActiveProjectMap != null)
+            {
+                <MudText Typo="Typo.caption" Class="text-white-50">Active Project: <strong>@AstService.ActiveProjectMap.ProjectName</strong> (@AstService.ActiveProjectMap.Language / @AstService.ActiveProjectMap.Framework)</MudText>
+            }
+            else
+            {
+                <MudText Typo="Typo.caption" Class="text-white-50">Please load and scan a project to view its AST map</MudText>
+            }
+        </div>
+        <div class="d-flex gap-2">
+            <MudButton Variant="Variant.Filled" 
+                       Color="Color.Primary" 
+                       OnClick="@(() => Navigation.NavigateTo("ast-dashboard"))" 
+                       StartIcon="@Icons.Material.Filled.Search"
+                       Class="header-nav-btn">Scan Hub</MudButton>
+            @if (AstService.ActiveProjectMap != null)
+            {
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Secondary" 
+                           OnClick="@(() => Navigation.NavigateTo("project-map-view"))" 
+                           StartIcon="@Icons.Material.Filled.AccountTree"
+                           Class="header-nav-btn active">Graph Map</MudButton>
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Info" 
+                           OnClick="@(() => Navigation.NavigateTo("endpoint-explorer"))" 
+                           StartIcon="@Icons.Material.Filled.Api"
+                           Class="header-nav-btn">Endpoints</MudButton>
+                <MudButton Variant="Variant.Filled" 
+                           Color="Color.Warning" 
+                           OnClick="@(() => Navigation.NavigateTo("dto-planner"))" 
+                           StartIcon="@Icons.Material.Filled.DataArray"
+                           Class="header-nav-btn">DTO Planner</MudButton>
+            }
+        </div>
+    </div>
+
+    @if (AstService.ActiveProjectMap == null)
+    {
+        <MudPaper Elevation="0" Class="pa-12 panel rounded-lg text-center d-flex flex-column align-center justify-center">
+            <MudIcon Icon="@Icons.Material.Filled.Warning" Color="Color.Warning" Size="Size.Large" Class="mb-4" />
+            <MudText Typo="Typo.h6" Class="font-weight-bold">No Scanned Project Loaded</MudText>
+            <MudText Typo="Typo.body2" Class="text-muted mb-6">You must scan a project codebase first before accessing the graph tree map explorer.</MudText>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Search" OnClick="@(() => Navigation.NavigateTo("ast-dashboard"))">
+                Go to Scan Hub
+            </MudButton>
+        </MudPaper>
+    }
+    else
+    {
+        <MudGrid>
+            <!-- Left Side: AST Tree View -->
+            <MudItem xs="12" md="5">
+                <MudPaper Elevation="0" Class="pa-6 panel rounded-lg" Style="max-height: 700px; overflow-y: auto;">
+                    <div class="d-flex align-center justify-space-between mb-4">
+                        <MudText Typo="Typo.h6" Class="font-weight-bold">Codebase Entity Tree</MudText>
+                        <MudSwitch T="bool" Value="@_hideLibraryNodes" ValueChanged="OnHideLibraryNodesChanged" Color="Color.Primary" Label="Filter Boilerplates" Size="Size.Small" />
+                    </div>
+                    
+                    @if (TreeItems.Any())
+                    {
+                        <MudTreeView T="TreeItemData" Hover="true" SelectedValueChanged="OnTreeSelectionChanged">
+                            @foreach (var root in TreeItems)
+                            {
+                                @RenderTreeItem(root)
+                            }
+                        </MudTreeView>
+                    }
+                    else
+                    {
+                        <span class="text-xs text-muted italic">No hierarchical entities resolved in this codebase.</span>
+                    }
+                </MudPaper>
+            </MudItem>
+
+            <!-- Right Side: Details / Connection Tabs -->
+            <MudItem xs="12" md="7">
+                <MudTabs Elevation="0" Rounded="true" ApplyEffectsToContainer="true" PanelClass="pa-6 border border-subtle border-t-0 rounded-b-lg bg-white">
+                    
+                    <!-- Tab 1: Node Inspector -->
+                    <MudTabPanel Text="Node Inspector" Icon="@Icons.Material.Filled.Info">
+                        @if (_selectedNode == null)
+                        {
+                            <div class="text-center py-12">
+                                <MudIcon Icon="@Icons.Material.Filled.TouchApp" Color="Color.Secondary" Size="Size.Large" Class="mb-3" />
+                                <MudText Typo="Typo.body1" Class="text-muted font-weight-medium">Select a node in the tree to inspect details</MudText>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="d-flex align-center justify-space-between mb-4 border-b pb-2">
+                                <div>
+                                    <MudText Typo="Typo.h6" Class="font-weight-bold">@_selectedNode.Name</MudText>
+                                    <span class="badge @GetNodeTypeBadgeClass(_selectedNode.Type)">@_selectedNode.Type</span>
+                                </div>
+                                <MudText Typo="Typo.caption" Class="text-muted">ID: @_selectedNode.Id</MudText>
+                            </div>
+
+                            <MudGrid Class="mb-4">
+                                <MudItem xs="12" sm="6">
+                                    <div class="py-2">
+                                        <span class="text-caption text-muted font-weight-bold uppercase d-block">Namespace</span>
+                                        <span class="text-body2 text-primary">@(_selectedNode.Namespace ?? "None")</span>
+                                    </div>
+                                    <div class="py-2">
+                                        <span class="text-caption text-muted font-weight-bold uppercase d-block">Source File</span>
+                                        <span class="text-xs text-secondary truncate d-block" title="@_selectedNode.FilePath">@Path.GetFileName(_selectedNode.FilePath)</span>
+                                    </div>
+                                </MudItem>
+                                <MudItem xs="12" sm="6">
+                                    <div class="py-2">
+                                        <span class="text-caption text-muted font-weight-bold uppercase d-block">Line Number</span>
+                                        <span class="text-body2 text-primary font-weight-bold">L: @_selectedNode.LineNumber</span>
+                                    </div>
+                                    <div class="py-2">
+                                        <span class="text-caption text-muted font-weight-bold uppercase d-block">Return Type</span>
+                                        <span class="text-body2 text-info font-weight-bold">@(_selectedNode.ReturnType ?? "void/any")</span>
+                                    </div>
+                                </MudItem>
+                            </MudGrid>
+
+                            @if (_selectedNode.Parameters.Any())
+                            {
+                                <div class="mb-4">
+                                    <MudText Typo="Typo.subtitle2" Class="font-weight-bold mb-2">Parameters</MudText>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        @foreach (var param in _selectedNode.Parameters)
+                                        {
+                                            <MudChip T="string" Color="Color.Primary" Size="Size.Small" Variant="Variant.Text">@param</MudChip>
+                                        }
+                                    </div>
+                                </div>
+                            }
+
+                            @if (!string.IsNullOrEmpty(_selectedNode.Summary))
+                            {
+                                <div class="mb-4">
+                                    <MudText Typo="Typo.subtitle2" Class="font-weight-bold mb-1">Documentation / Summary</MudText>
+                                    <div class="pa-3 rounded bg-light border border-subtle">
+                                        <MudText Typo="Typo.body2" Class="italic text-secondary">@_selectedNode.Summary</MudText>
+                                    </div>
+                                </div>
+                            }
+
+                            @if (_selectedNode.Metadata.Any())
+                            {
+                                <div>
+                                    <MudText Typo="Typo.subtitle2" Class="font-weight-bold mb-2">Properties & Attributes</MudText>
+                                    <div class="pa-2 border border-subtle rounded-lg">
+                                        @foreach (var meta in _selectedNode.Metadata)
+                                        {
+                                            <div class="d-flex justify-space-between py-1 border-b text-xs">
+                                                <span class="font-weight-bold text-secondary">@meta.Key</span>
+                                                <span class="text-muted font-mono">@meta.Value?.ToString()</span>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </MudTabPanel>
+                    
+                    <!-- Tab 2: Call Graphs & Edge Map -->
+                    <MudTabPanel Text="Connections" Icon="@Icons.Material.Filled.Link">
+                        <MudText Typo="Typo.h6" Class="mb-3 font-weight-bold">Code Call & Import Edges</MudText>
+                        <MudText Typo="Typo.caption" Class="text-muted d-block mb-4">Lists the resolved connections parsed in the dependency graph.</MudText>
+                        
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            <table class="ent-table">
+                                <thead>
+                                    <tr>
+                                        <th>Source Entity (Caller)</th>
+                                        <th>Relation</th>
+                                        <th>Target Entity (Callee)</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @if (_relations.Any())
+                                    {
+                                        @foreach (var rel in _relations)
+                                        {
+                                            <tr>
+                                                <td class="font-weight-medium">@rel.Source</td>
+                                                <td>
+                                                    <span class="badge badge-info">@rel.Type</span>
+                                                </td>
+                                                <td class="font-weight-medium text-info">@rel.Target</td>
+                                            </tr>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <tr>
+                                            <td colspan="3" class="text-center text-muted italic">No edge relationships found.</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </MudTabPanel>
+
+                    <!-- Tab 3: Dependency Layers -->
+                    <MudTabPanel Text="Dependency Layers" Icon="@Icons.Material.Filled.Layers">
+                        <MudText Typo="Typo.h6" Class="mb-3 font-weight-bold">Topological Layer Order</MudText>
+                        <MudText Typo="Typo.caption" Class="text-muted d-block mb-4">Calculated using Kahn's topological sort. Lower layers indicate base libraries; higher layers represent entry modules.</MudText>
+                        
+                        <div style="max-height: 400px; overflow-y: auto;">
+                            @if (_dependencyLayers.Any())
+                            {
+                                <div class="d-flex flex-column gap-3">
+                                    @foreach (var layer in _dependencyLayers)
+                                    {
+                                        <div class="pa-3 rounded-lg border border-subtle bg-light">
+                                            <div class="d-flex justify-space-between mb-2">
+                                                <span class="text-caption font-weight-bold text-indigo">LAYER @layer.Key</span>
+                                                <span class="text-xs text-muted">@layer.Value.Count entities</span>
+                                            </div>
+                                            <div class="d-flex flex-wrap gap-1">
+                                                @foreach (var entity in layer.Value)
+                                                {
+                                                    <span class="text-xs pa-1 border rounded bg-white" title="@entity">@Path.GetFileName(entity)</span>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <span class="text-xs text-muted italic">No topological dependencies computed.</span>
+                            }
+                        </div>
+                    </MudTabPanel>
+                </MudTabs>
+            </MudItem>
+        </MudGrid>
+    }
+</MudContainer>
+
+<style>
+    .ast-header-gradient {
+        background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+        box-shadow: 0 4px 20px -2px rgba(99, 102, 241, 0.15);
+    }
+    .text-white-50 {
+        color: rgba(255, 255, 255, 0.7) !important;
+    }
+    .header-nav-btn {
+        text-transform: none !important;
+        font-weight: 600 !important;
+        border-radius: 6px !important;
+    }
+    .header-nav-btn.active {
+        border: 2px solid white !important;
+    }
+    .bg-light {
+        background-color: #F9FAFB;
+    }
+    .border-b {
+        border-bottom: 1px solid var(--border-subtle);
+    }
+    .uppercase {
+        text-transform: uppercase;
+    }
+    .font-mono {
+        font-family: 'JetBrains Mono', monospace;
+    }
+    .border-t-0 {
+        border-top: none !important;
+    }
+
+    /* Badges */
+    .badge-project { background: #EEF2FF; color: #4F46E5; }
+    .badge-module { background: #ECFDF5; color: #059669; }
+    .badge-class { background: #FFFBEB; color: #D97706; }
+    .badge-interface { background: #FFF1F2; color: #E11D48; }
+    .badge-method { background: #F0FDF4; color: #15803d; }
+    .badge-property { background: #F5F3FF; color: #6D28D9; }
+    .badge-route { background: #ECFEFF; color: #0891B2; }
+    .badge-dto { background: #FFF7ED; color: #C2410C; }
+    .badge-config { background: #F3F4F6; color: #4B5563; }
+</style>
+
+@code {
+    private List<TreeItemData> TreeItems { get; set; } = new();
+    private AstNode? _selectedNode;
+    private List<RelationEdge> _relations = new();
+    private Dictionary<int, List<string>> _dependencyLayers = new();
+    private bool _hideLibraryNodes = true;
+
+    public class TreeItemData
+    {
+        public string Title { get; set; } = "";
+        public string Subtitle { get; set; } = "";
+        public string Icon { get; set; } = "";
+        public AstNode Node { get; set; } = new();
+        public List<TreeItemData> Children { get; set; } = new();
+        public bool Expanded { get; set; } = false;
+    }
+
+    public class RelationEdge
+    {
+        public string Source { get; set; } = "";
+        public string Target { get; set; } = "";
+        public string Type { get; set; } = "";
+    }
+
+    protected override void OnInitialized()
+    {
+        if (AstService.ActiveProjectMap != null)
+        {
+            BuildTree(AstService.ActiveProjectMap);
+            ResolveRelations(AstService.ActiveProjectMap);
+            ResolveDependencyLayers(AstService.ActiveProjectMap);
+        }
+    }
+
+    private void OnHideLibraryNodesChanged(bool val)
+    {
+        _hideLibraryNodes = val;
+        if (AstService.ActiveProjectMap != null)
+        {
+            BuildTree(AstService.ActiveProjectMap);
+        }
+        StateHasChanged();
+    }
+
+    private void BuildTree(AstProjectMap map)
+    {
+        TreeItems.Clear();
+        var allNodes = _hideLibraryNodes 
+            ? map.Nodes.Where(n => !n.IsExternalOrBoilerplate).ToList()
+            : map.Nodes;
+
+        // Group child IDs to find roots
+        var childIds = allNodes.SelectMany(n => n.Children).ToHashSet();
+        
+        // Find roots (nodes not in any child list, or of type Project)
+        var roots = allNodes
+            .Where(n => !childIds.Contains(n.Id) || n.Type == AstNodeType.Project)
+            .ToList();
+
+        // If everything is cyclic or empty, add all nodes as roots
+        if (!roots.Any() && allNodes.Any())
+        {
+            roots = allNodes;
+        }
+
+        foreach (var r in roots)
+        {
+            TreeItems.Add(CreateTreeItem(r, allNodes, new HashSet<string>()));
+        }
+    }
+
+    private TreeItemData CreateTreeItem(AstNode node, List<AstNode> allNodes, HashSet<string> visited)
+    {
+        // Prevent infinite cycles
+        if (visited.Contains(node.Id))
+        {
+            return new TreeItemData
+            {
+                Title = node.Name,
+                Subtitle = "Cyclic Reference",
+                Icon = GetIcon(node.Type),
+                Node = node,
+                Expanded = false
+            };
+        }
+        visited.Add(node.Id);
+
+        var item = new TreeItemData
+        {
+            Title = node.Name,
+            Subtitle = node.Type.ToString(),
+            Icon = GetIcon(node.Type),
+            Node = node,
+            Expanded = node.Type == AstNodeType.Project || node.Type == AstNodeType.Module
+        };
+
+        foreach (var childId in node.Children)
+        {
+            var childNode = allNodes.FirstOrDefault(n => n.Id == childId);
+            if (childNode != null)
+            {
+                item.Children.Add(CreateTreeItem(childNode, allNodes, new HashSet<string>(visited)));
+            }
+        }
+
+        return item;
+    }
+
+    private string GetIcon(AstNodeType type)
+    {
+        return type switch
+        {
+            AstNodeType.Project => Icons.Material.Filled.Workspaces,
+            AstNodeType.Module => Icons.Material.Filled.Folder,
+            AstNodeType.Namespace => Icons.Material.Filled.MenuOpen,
+            AstNodeType.Class => Icons.Material.Filled.Class,
+            AstNodeType.Interface => Icons.Material.Filled.GridGoldenratio,
+            AstNodeType.Method => Icons.Material.Filled.Code,
+            AstNodeType.Property => Icons.Material.Filled.SettingsInputHdmi,
+            AstNodeType.Route => Icons.Material.Filled.AlternateEmail,
+            AstNodeType.Dto => Icons.Material.Filled.DataObject,
+            AstNodeType.Config => Icons.Material.Filled.SettingsApplications,
+            _ => Icons.Material.Filled.HelpOutline
+        };
+    }
+
+    private string GetNodeTypeBadgeClass(AstNodeType type)
+    {
+        return type switch
+        {
+            AstNodeType.Project => "badge-project",
+            AstNodeType.Module => "badge-module",
+            AstNodeType.Namespace => "badge-namespace",
+            AstNodeType.Class => "badge-class",
+            AstNodeType.Interface => "badge-interface",
+            AstNodeType.Method => "badge-method",
+            AstNodeType.Property => "badge-property",
+            AstNodeType.Route => "badge-route",
+            AstNodeType.Dto => "badge-dto",
+            AstNodeType.Config => "badge-config",
+            _ => ""
+        };
+    }
+
+    private void OnTreeSelectionChanged(TreeItemData item)
+    {
+        if (item != null)
+        {
+            _selectedNode = item.Node;
+            StateHasChanged();
+        }
+    }
+
+    private void ResolveRelations(AstProjectMap map)
+    {
+        _relations.Clear();
+
+        // Populate call relation edges
+        // Let's parse out relations from DOT graph lines if present
+        if (!string.IsNullOrEmpty(map.CallGraphDot))
+        {
+            var lines = map.CallGraphDot.Split('\n');
+            foreach (var line in lines)
+            {
+                if (line.Contains("->"))
+                {
+                    var parts = line.Split("->");
+                    if (parts.Length == 2)
+                    {
+                        var src = parts[0].Replace("\"", "").Trim();
+                        var destPart = parts[1].Split("[")[0].Replace("\"", "").Replace(";", "").Trim();
+                        _relations.Add(new RelationEdge
+                        {
+                            Source = src,
+                            Target = destPart,
+                            Type = "calls"
+                        });
+                    }
+                }
+            }
+        }
+
+        // Add module imports if call graph is empty
+        if (!_relations.Any() && !string.IsNullOrEmpty(map.DependencyGraphDot))
+        {
+            var lines = map.DependencyGraphDot.Split('\n');
+            foreach (var line in lines)
+            {
+                if (line.Contains("->"))
+                {
+                    var parts = line.Split("->");
+                    if (parts.Length == 2)
+                    {
+                        var src = parts[0].Replace("\"", "").Trim();
+                        var destPart = parts[1].Split("[")[0].Replace("\"", "").Replace(";", "").Trim();
+                        _relations.Add(new RelationEdge
+                        {
+                            Source = Path.GetFileName(src),
+                            Target = Path.GetFileName(destPart),
+                            Type = "imports"
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    private void ResolveDependencyLayers(AstProjectMap map)
+    {
+        _dependencyLayers.Clear();
+
+        try
+        {
+            var graph = new AstGraph();
+            foreach (var node in map.Nodes)
+            {
+                graph.AddNode(node);
+            }
+            
+            foreach (var node in map.Nodes)
+            {
+                foreach (var childId in node.Children)
+                {
+                    graph.AddEdge(node.Id, childId, "contains");
+                }
+            }
+
+            var builder = new DagBuilder();
+            var dag = builder.BuildCycleFreeDag(graph, out _);
+            _dependencyLayers = builder.GetLayers(dag);
+        }
+        catch
+        {
+            // Fallback: Group by files in map
+            var files = map.Nodes.Select(n => n.FilePath).Where(f => !string.IsNullOrEmpty(f)).Distinct().ToList();
+            if (files.Any())
+            {
+                _dependencyLayers[0] = files.Take(Math.Min(files.Count, 5)).ToList();
+                if (files.Count > 5)
+                {
+                    _dependencyLayers[1] = files.Skip(5).ToList();
+                }
+            }
+        }
+    }
+
+    RenderFragment RenderTreeItem(TreeItemData item) => __builder => {
+        <MudTreeViewItem Value="@item" Icon="@item.Icon" Text="@item.Title" Expanded="@item.Expanded">
+            @foreach (var child in item.Children)
+            {
+                @RenderTreeItem(child)
+            }
+        </MudTreeViewItem>
+    };
+}

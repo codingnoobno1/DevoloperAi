@@ -1,0 +1,105 @@
+@using MudBlazor
+@using Syncro.Desktop.Services.Connector.Models
+
+<MudPaper Elevation="0" Class="panel pa-4 mb-4">
+    <div class="d-flex align-center gap-2 mb-3">
+        <MudIcon Icon="@Icons.Material.Filled.AutoAwesome" Color="Color.Primary" Size="Size.Small" />
+        <MudText Typo="Typo.subtitle1" Class="font-weight-bold">AI Route Drafting</MudText>
+    </div>
+    <MudText Typo="Typo.caption" Class="text-muted d-block mb-3">Draft backend files for an endpoint. Nothing is written until you click Apply.</MudText>
+
+    <div class="d-flex gap-2 mb-3">
+        <MudSelect T="HttpVerb" Value="Method" ValueChanged="OnMethodChanged" Label="Method" Variant="Variant.Outlined" Margin="Margin.Dense" Style="max-width: 130px;">
+            @foreach (var v in Enum.GetValues<HttpVerb>())
+            {
+                <MudSelectItem Value="v">@v.ToString().ToUpperInvariant()</MudSelectItem>
+            }
+        </MudSelect>
+        <MudTextField Value="Path" ValueChanged="OnPathChanged" T="string" Label="Path" Placeholder="/api/orders" Variant="Variant.Outlined" Margin="Margin.Dense" />
+    </div>
+    <MudTextField Value="Description" ValueChanged="OnDescriptionChanged" T="string" Label="What should it do?" Lines="2" Variant="Variant.Outlined" Margin="Margin.Dense" Class="mb-3"
+                  Placeholder="e.g. Create an order from a cart id and return the order with a status." />
+
+    <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+               StartIcon="@Icons.Material.Filled.AutoFixHigh" OnClick="OnGenerateClick"
+               Disabled="IsGenerating || string.IsNullOrWhiteSpace(Path)">
+        @(IsGenerating ? "Drafting…" : "Draft with AI")
+    </MudButton>
+
+    @if (GenerateError != null)
+    {
+        <MudAlert Severity="Severity.Error" Dense="true" Class="mt-3">@GenerateError</MudAlert>
+    }
+
+    @if (GenerateResult is { Success: true })
+    {
+        <div class="mt-4">
+            @if (!string.IsNullOrWhiteSpace(GenerateResult.Explanation))
+            {
+                <MudText Typo="Typo.caption" Class="text-muted d-block mb-2">@GenerateResult.Explanation</MudText>
+            }
+            <MudExpansionPanels Elevation="0" Dense="true">
+                @foreach (var f in GenerateResult.Files)
+                {
+                    <MudExpansionPanel>
+                        <TitleContent>
+                            <div class="d-flex align-center gap-2">
+                                <MudChip T="string" Size="Size.Small" Color="@(f.Action == "modify" ? Color.Warning : Color.Success)" Variant="Variant.Text">@f.Action</MudChip>
+                                <span class="file-path">@f.Path</span>
+                            </div>
+                        </TitleContent>
+                        <ChildContent>
+                            <pre class="code-preview">@f.Content</pre>
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            </MudExpansionPanels>
+
+            <MudButton Variant="Variant.Filled" Color="Color.Success" FullWidth="true" Class="mt-3"
+                       StartIcon="@Icons.Material.Filled.SaveAlt" OnClick="OnApplyClick" Disabled="IsApplying">
+                @(IsApplying ? "Writing…" : $"Apply {GenerateResult.Files.Count} file(s) to backend")
+            </MudButton>
+        </div>
+    }
+</MudPaper>
+
+<style>
+    .file-path { font-family: 'Cascadia Code',monospace; font-size: 12.5px; }
+    .code-preview { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 6px; font-size: 11.5px;
+        font-family: 'Cascadia Code','Fira Code',monospace; overflow-x: auto; max-height: 320px; white-space: pre; margin: 0; }
+</style>
+
+@code {
+    [Parameter] public HttpVerb Method { get; set; } = HttpVerb.Post;
+    [Parameter] public EventCallback<HttpVerb> MethodChanged { get; set; }
+    
+    [Parameter] public string Path { get; set; } = "";
+    [Parameter] public EventCallback<string> PathChanged { get; set; }
+
+    [Parameter] public string Description { get; set; } = "";
+    [Parameter] public EventCallback<string> DescriptionChanged { get; set; }
+
+    [Parameter] public bool IsGenerating { get; set; }
+    [Parameter] public string? GenerateError { get; set; }
+    [Parameter] public BackendGenerationResult? GenerateResult { get; set; }
+    [Parameter] public bool IsApplying { get; set; }
+
+    [Parameter] public EventCallback OnGenerateClick { get; set; }
+    [Parameter] public EventCallback OnApplyClick { get; set; }
+
+    private async Task OnMethodChanged(HttpVerb value)
+    {
+        Method = value;
+        await MethodChanged.InvokeAsync(value);
+    }
+    private async Task OnPathChanged(string value)
+    {
+        Path = value;
+        await PathChanged.InvokeAsync(value);
+    }
+    private async Task OnDescriptionChanged(string value)
+    {
+        Description = value;
+        await DescriptionChanged.InvokeAsync(value);
+    }
+}

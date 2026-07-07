@@ -1,0 +1,42 @@
+.sui-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+
+.badge-icon {
+    margin-right: 4px;
+    font-size: 10px;
+}
+
+/* Colors */
+.sui-badge-default {
+    background-color: var(--bg-activity, #333333);
+    color: var(--text-muted, #858585);
+}
+
+.sui-badge-accent {
+    background-color: var(--accent, #007acc);
+    color: var(--text-inverse, #ffffff);
+}
+
+.sui-badge-error {
+    background-color: var(--error, #f14c4c);
+    color: var(--text-inverse, #ffffff);
+}
+
+.sui-badge-warning {
+    background-color: var(--warn, #cca700);
+    color: var(--bg-editor, #1e1e1e);
+}
+
+.sui-badge-success {
+    background-color: var(--ok, #89d185);
+    color: var(--bg-editor, #1e1e1e);
+}

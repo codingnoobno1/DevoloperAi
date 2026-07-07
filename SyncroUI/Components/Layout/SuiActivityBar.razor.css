@@ -1,0 +1,57 @@
+.sui-activitybar {
+    width: 48px;
+    background: var(--bg-activity, #333333);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 10px 0;
+    user-select: none;
+}
+
+.sui-activitybar-top, .sui-activitybar-bottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+}
+
+.sui-activity-item {
+    width: 48px;
+    height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted, #858585);
+    cursor: pointer;
+    position: relative;
+    font-size: 24px; /* Icon size */
+    transition: color 0.15s;
+}
+
+.sui-activity-item:hover {
+    color: var(--text, #cccccc);
+}
+
+.sui-activity-item.is-active {
+    color: var(--text, #cccccc);
+}
+
+.sui-activity-item.is-active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--accent, #007acc);
+}
+
+.sui-activity-badge {
+    position: absolute;
+    bottom: 4px;
+    right: 4px;
+    pointer-events: none;
+    transform: scale(0.85);
+    transform-origin: bottom right;
+}

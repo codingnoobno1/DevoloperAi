@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
 using YamlDotNet.Serialization;
 using Syncro.Desktop.Services.AST.Core;

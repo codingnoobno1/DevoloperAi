@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Syncro CLI — User Guide & Quick Start | Syncro Docs</title>
+  <meta name="description" content="A friendly, hands-on guide to installing and using the Syncro CLI: clone, analyse, report, and let the self-healing agent loop work — offline or AI-powered.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#0a0d14; --surface:#111520; --surface2:#171c2e; --border:#1e2540;
+      --accent:#6c63ff; --accent2:#00d4ff; --accent3:#ff6c6c;
+      --green:#00e5a0; --yellow:#ffd166; --text:#e2e8f0; --text-dim:#8892a4; --text-bright:#fff;
+      --sidebar-w:280px;
+    }
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh}
+    html{scroll-behavior:smooth}
+
+    /* Sidebar */
+    .sidebar{width:var(--sidebar-w);min-height:100vh;background:var(--surface);border-right:1px solid var(--border);
+      display:flex;flex-direction:column;position:sticky;top:0;height:100vh;overflow-y:auto}
+    .sidebar-brand{padding:24px 20px 20px;border-bottom:1px solid var(--border)}
+    .brand-logo{font-size:22px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent2));
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-.5px}
+    .brand-sub{font-size:11px;color:var(--text-dim);margin-top:4px;text-transform:uppercase;letter-spacing:1px}
+    .sidebar nav{padding:16px 12px;flex:1}
+    .nav-section-title{font-size:10px;text-transform:uppercase;letter-spacing:1.5px;color:var(--text-dim);padding:8px 8px 4px;margin-top:12px}
+    .nav-link{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;font-size:13.5px;color:var(--text-dim);
+      text-decoration:none;transition:all .2s;margin-bottom:2px}
+    .nav-link:hover,.nav-link.active{background:linear-gradient(135deg,rgba(108,99,255,.18),rgba(0,212,255,.08));
+      color:var(--text-bright);border-left:2px solid var(--accent);padding-left:10px}
+    .nav-link .icon{font-size:16px;width:20px;text-align:center}
+
+    .main{flex:1;overflow-y:auto;max-width:calc(100vw - var(--sidebar-w))}
+    .hero{background:linear-gradient(135deg,#0f1428 0%,#141830 50%,#0a0d1a 100%);border-bottom:1px solid var(--border);
+      padding:60px 64px 48px;position:relative;overflow:hidden}
+    .hero::before{content:'';position:absolute;top:-60px;right:-60px;width:400px;height:400px;
+      background:radial-gradient(circle,rgba(0,212,255,.12) 0%,transparent 70%);pointer-events:none}
+    .hero-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(0,229,160,.12);border:1px solid rgba(0,229,160,.4);
+      border-radius:100px;padding:4px 14px;font-size:12px;font-weight:600;color:var(--green);margin-bottom:20px;
+      text-transform:uppercase;letter-spacing:.5px}
+    .hero h1{font-size:46px;font-weight:800;background:linear-gradient(135deg,#fff,#a89dff 50%,var(--accent2));
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;line-height:1.1;margin-bottom:16px}
+    .hero-desc{font-size:17px;color:var(--text-dim);max-width:640px;line-height:1.7}
+    .hero-stats{display:flex;gap:32px;margin-top:36px;flex-wrap:wrap}
+    .stat{display:flex;flex-direction:column;gap:2px}
+    .stat-num{font-size:26px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent2));
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+    .stat-label{font-size:12px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px}
+
+    .content{padding:48px 64px}
+    .section{margin-bottom:64px}
+    h2.section-title{font-size:26px;font-weight:700;color:var(--text-bright);margin-bottom:8px;display:flex;align-items:center;gap:12px}
+    .section-sub{font-size:15px;color:var(--text-dim);margin-bottom:28px;line-height:1.6;max-width:760px}
+    h3.sub{color:var(--text-bright);margin:24px 0 12px;font-size:16px}
+
+    /* Steps */
+    .steps{display:flex;flex-direction:column;gap:18px}
+    .step{display:flex;gap:18px;align-items:flex-start}
+    .step-num{flex-shrink:0;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+      font-weight:800;color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2))}
+    .step-body{flex:1}
+    .step-title{font-size:16px;font-weight:700;color:var(--text-bright);margin-bottom:4px}
+    .step-desc{font-size:13.5px;color:var(--text-dim);line-height:1.6;margin-bottom:8px}
+
+    /* Code */
+    .code-block{background:#080b14;border:1px solid var(--border);border-radius:12px;overflow:hidden;margin:12px 0}
+    .code-header{background:var(--surface2);border-bottom:1px solid var(--border);padding:9px 16px;display:flex;align-items:center;justify-content:space-between}
+    .code-lang{font-size:11px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px}
+    .code-dots{display:flex;gap:6px}.code-dot{width:10px;height:10px;border-radius:50%}
+    pre.code{font-family:'JetBrains Mono',monospace;font-size:13px;padding:18px 20px;line-height:1.7;overflow-x:auto;color:#c8d6f0}
+    .sh-prompt{color:var(--accent2)} .sh-flag{color:var(--yellow)} .sh-out{color:var(--text-dim)} .sh-ok{color:var(--green)}
+
+    /* Command cards */
+    .cmd-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;margin-top:8px}
+    .cmd-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:18px;transition:all .2s;position:relative;overflow:hidden}
+    .cmd-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),var(--accent2));opacity:0;transition:opacity .2s}
+    .cmd-card:hover{border-color:rgba(108,99,255,.5);transform:translateY(-2px)}.cmd-card:hover::before{opacity:1}
+    .cmd-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+    .cmd-name{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--accent2)}
+    .cmd-desc{font-size:13px;color:var(--text-dim);line-height:1.55}
+    .cmd-ex{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--green);background:rgba(0,229,160,.06);padding:6px 10px;border-radius:6px;margin-top:10px;display:block;white-space:nowrap;overflow-x:auto}
+
+    /* Pills */
+    .pill{font-size:10px;font-weight:700;padding:2px 9px;border-radius:100px;text-transform:uppercase;letter-spacing:.5px}
+    .pill-live{background:rgba(0,229,160,.15);color:var(--green);border:1px solid rgba(0,229,160,.35)}
+    .pill-preview{background:rgba(0,212,255,.15);color:var(--accent2);border:1px solid rgba(0,212,255,.35)}
+    .pill-soon{background:rgba(255,209,102,.13);color:var(--yellow);border:1px solid rgba(255,209,102,.3)}
+
+    /* Flow */
+    .flow{display:flex;align-items:center;flex-wrap:wrap;gap:0;padding:24px;background:var(--surface2);border:1px solid var(--border);border-radius:14px;overflow-x:auto}
+    .flow-node{padding:9px 16px;border-radius:10px;font-size:13px;font-weight:600;white-space:nowrap;flex-shrink:0}
+    .fn-purple{background:rgba(108,99,255,.25);border:1px solid rgba(108,99,255,.5);color:#c0b9ff}
+    .fn-blue{background:rgba(0,212,255,.15);border:1px solid rgba(0,212,255,.4);color:var(--accent2)}
+    .fn-green{background:rgba(0,229,160,.15);border:1px solid rgba(0,229,160,.4);color:var(--green)}
+    .fn-red{background:rgba(255,108,108,.15);border:1px solid rgba(255,108,108,.4);color:var(--accent3)}
+    .fn-yellow{background:rgba(255,209,102,.15);border:1px solid rgba(255,209,102,.4);color:var(--yellow)}
+    .flow-arrow{padding:0 8px;color:var(--text-dim);font-size:18px;flex-shrink:0}
+
+    /* Info cards */
+    .info-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+    .info-card{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:20px}
+    .info-icon{font-size:24px;margin-bottom:10px}
+    .info-title{font-size:15px;font-weight:700;color:var(--text-bright);margin-bottom:8px}
+    .info-body{font-size:13px;color:var(--text-dim);line-height:1.65}
+
+    /* Two-col */
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    @media(max-width:760px){.two-col{grid-template-columns:1fr}}
+
+    /* Alert */
+    .alert{border-radius:10px;padding:14px 18px;margin:16px 0;border-left:4px solid;font-size:14px;line-height:1.6}
+    .alert-info{background:rgba(0,212,255,.08);border-color:var(--accent2);color:#99e8ff}
+    .alert-success{background:rgba(0,229,160,.08);border-color:var(--green);color:#88f0d0}
+    .alert-warn{background:rgba(255,209,102,.08);border-color:var(--yellow);color:#e8d18a}
+    .alert strong{font-weight:700}
+
+    /* Table */
+    .table-wrap{overflow-x:auto;margin:16px 0}
+    table{width:100%;border-collapse:collapse;font-size:13.5px}
+    th{background:var(--surface2);padding:11px 16px;text-align:left;font-weight:700;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;font-size:11px;border-bottom:1px solid var(--border)}
+    td{padding:11px 16px;border-bottom:1px solid rgba(30,37,64,.5);color:var(--text);vertical-align:top}
+    tr:hover td{background:rgba(108,99,255,.04)}
+    td code,.inline{font-family:'JetBrains Mono',monospace;font-size:12px;background:rgba(108,99,255,.1);padding:2px 7px;border-radius:4px;color:#c0b9ff}
+
+    /* FAQ */
+    details{background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px 18px;margin-bottom:10px}
+    details summary{cursor:pointer;font-weight:600;color:var(--text-bright);font-size:14px}
+    details p{margin-top:10px;color:var(--text-dim);font-size:13.5px;line-height:1.6}
+
+    .legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px;font-size:12px;color:var(--text-dim)}
+    .legend span{display:inline-flex;align-items:center;gap:6px}
+
+    .footer{padding:32px 64px;border-top:1px solid var(--border);color:var(--text-dim);font-size:13px}
+    ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg)}
+    ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+    @media(max-width:900px){.sidebar{display:none}.main{max-width:100vw}.hero{padding:40px 24px 32px}.content{padding:32px 24px}.hero h1{font-size:30px}}
+  </style>
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-brand">
+    <div class="brand-logo">⚡ Syncro CLI</div>
+    <div class="brand-sub">User Guide</div>
+  </div>
+  <nav>
+    <div class="nav-section-title">Get Going</div>
+    <a href="#install" class="nav-link active"><span class="icon">📦</span> Install</a>
+    <a href="#first5" class="nav-link"><span class="icon">🚀</span> First 5 Minutes</a>
+    <a href="#cheat" class="nav-link"><span class="icon">📟</span> Command Cheat-Sheet</a>
+    <div class="nav-section-title">Use It</div>
+    <a href="#workflows" class="nav-link"><span class="icon">🧭</span> Workflows</a>
+    <a href="#loop" class="nav-link"><span class="icon">🔁</span> Self-Healing Loop</a>
+    <a href="#offline" class="nav-link"><span class="icon">📡</span> Offline &amp; AI</a>
+    <a href="#flags" class="nav-link"><span class="icon">🎚️</span> Flags &amp; Exit Codes</a>
+    <div class="nav-section-title">Good To Know</div>
+    <a href="#safety" class="nav-link"><span class="icon">🔒</span> Safety</a>
+    <a href="#faq" class="nav-link"><span class="icon">❓</span> FAQ</a>
+    <div class="nav-section-title">More Docs</div>
+    <a href="cli.html" class="nav-link"><span class="icon">🏗️</span> Architecture</a>
+    <a href="index.html" class="nav-link"><span class="icon">↩</span> Back to Home</a>
+    <a href="rag.html" class="nav-link"><span class="icon">🧠</span> RAG &amp; Memory</a>
+  </nav>
+</aside>
+
+<main class="main">
+  <section class="hero">
+    <div class="hero-badge">🚀 5-Minute Quick Start</div>
+    <h1>Syncro CLI — User Guide</h1>
+    <p class="hero-desc">
+      One command-line tool to <strong>clone, analyse, document, and fix</strong> any project.
+      It builds a local map of your code, answers questions about it, and quietly fixes setup
+      errors for you — <strong>fully offline</strong>, and smarter when an AI model is available.
+    </p>
+    <div class="hero-stats">
+      <div class="stat"><span class="stat-num">30s</span><span class="stat-label">To Install</span></div>
+      <div class="stat"><span class="stat-num">1 cmd</span><span class="stat-label">To Analyse a Repo</span></div>
+      <div class="stat"><span class="stat-num">Offline</span><span class="stat-label">Works With No Internet</span></div>
+      <div class="stat"><span class="stat-num">AI-Ready</span><span class="stat-label">Enriches When Available</span></div>
+    </div>
+  </section>
+
+  <div class="content">
+
+    <div class="alert alert-info">
+      <strong>Tip:</strong> Run <span class="inline">syncro help</span> at any time to see exactly which
+      commands are available in <em>your</em> build. This guide marks each command
+      <span class="pill pill-live">Live</span> <span class="pill pill-preview">Preview</span>
+      <span class="pill pill-soon">Soon</span> so you know what to expect.
+    </div>
+
+    <!-- INSTALL -->
+    <section class="section" id="install">
+      <h2 class="section-title">📦 Install</h2>
+      <p class="section-sub">Syncro CLI ships with the Syncro Desktop app. One command registers it on your
+        system <code>PATH</code> so you can type <span class="inline">syncro</span> from any folder.</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Register on PATH <span class="pill pill-soon">Soon</span></div>
+            <div class="step-desc">Auto-elevates (UAC) and adds the CLI to your machine PATH, then tells open terminals to refresh — no reboot.</div>
+            <div class="code-block"><div class="code-header"><span class="code-lang">PowerShell / Terminal</span><div class="code-dots"><span class="code-dot" style="background:#ff5f57"></span><span class="code-dot" style="background:#febc2e"></span><span class="code-dot" style="background:#28c840"></span></div></div>
+<pre class="code"><span class="sh-prompt">&gt;</span> syncro install</pre></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Verify</div>
+            <div class="step-desc">Open a <em>new</em> terminal and check the version + a quick environment health report.</div>
+            <div class="code-block"><div class="code-header"><span class="code-lang">Terminal</span><div class="code-dots"><span class="code-dot" style="background:#ff5f57"></span><span class="code-dot" style="background:#febc2e"></span><span class="code-dot" style="background:#28c840"></span></div></div>
+<pre class="code"><span class="sh-prompt">&gt;</span> syncro doctor
+<span class="sh-ok">✓ Node.js 20.11   ✓ Python 3.12   ✓ .NET 9   ✓ Git 2.44</span>
+<span class="sh-out">Environment looks healthy.</span></pre></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="alert alert-warn">
+        <strong>Manual fallback:</strong> if <span class="inline">syncro install</span> isn't in your build yet,
+        add the app's install folder to your <code>PATH</code> by hand (System → Environment Variables → Path),
+        then reopen your terminal.
+      </div>
+    </section>
+
+    <!-- FIRST 5 -->
+    <section class="section" id="first5">
+      <h2 class="section-title">🚀 Your First 5 Minutes</h2>
+      <p class="section-sub">The core loop: bring a project in, let Syncro understand it, then ask it questions
+        and generate a report. Everything is stored locally in a <span class="inline">.syncro_db</span> folder.</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Clone a repo <span class="pill pill-live">Live</span></div>
+            <div class="step-desc">A crash-safe clone that runs in its own process and reports progress.</div>
+            <div class="code-block"><div class="code-header"><span class="code-lang">Terminal</span><div class="code-dots"><span class="code-dot" style="background:#ff5f57"></span><span class="code-dot" style="background:#febc2e"></span><span class="code-dot" style="background:#28c840"></span></div></div>
+<pre class="code"><span class="sh-prompt">&gt;</span> syncro git clone https://github.com/acme/viking-api.git</pre></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Analyse it <span class="pill pill-preview">Preview</span></div>
+            <div class="step-desc">Scans the source into an AST, detects the language &amp; framework, finds endpoints and DTOs,
+              and tokenises everything into a local searchable index.</div>
+            <div class="code-block"><div class="code-header"><span class="code-lang">Terminal</span><div class="code-dots"><span class="code-dot" style="background:#ff5f57"></span><span class="code-dot" style="background:#febc2e"></span><span class="code-dot" style="background:#28c840"></span></div></div>
+<pre class="code"><span class="sh-prompt">&gt;</span> cd viking-api
+<span class="sh-prompt">&gt;</span> syncro analyse
+<span class="sh-out">Scanned 142 files · 18 endpoints · 9 DTOs · tokenised 142 vectors</span></pre></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">See what it learned <span class="pill pill-preview">Preview</span></div>
+            <div class="step-desc">Prints the project straight from the local DB — in its tokenised/vector form: top terms, entities, endpoints.</div>
+            <div class="code-block"><div class="code-header"><span class="code-lang">Terminal</span><div class="code-dots"><span class="code-dot" style="background:#ff5f57"></span><span class="code-dot" style="background:#febc2e"></span><span class="code-dot" style="background:#28c840"></span></div></div>
+<pre class="code"><span class="sh-prompt">&gt;</span> syncro show project
+<span class="sh-out">viking-api  (csharp / aspnet)
+AST:     142 nodes · 18 endpoints · 9 DTOs
+Vectors: 142 records · top tokens: controller, tender, jwt, repository
+Entities: TenderController →uses→ TenderService →writes→ TenderTable</span></pre></div>
+          </div>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Generate a report <span class="pill pill-soon">Soon</span></div>
+            <div class="step-desc">Builds a PDF/JSON report from what's already in the DB — endpoints, DTOs, dependency graph, ports. No re-scan.</div>
+            <div class="code-block"><div class="code-header"><span class="code-lang">Terminal</span><div class="code-dots"><span class="code-dot" style="background:#ff5f57"></span><span class="code-dot" style="background:#febc2e"></span><span class="code-dot" style="background:#28c840"></span></div></div>
+<pre class="code"><span class="sh-prompt">&gt;</span> syncro generate report
+<span class="sh-ok">✓ report.pdf written to .syncro_db/</span></pre></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CHEAT SHEET -->
+    <section class="section" id="cheat">
+      <h2 class="section-title">📟 Command Cheat-Sheet</h2>
+      <p class="section-sub">Every command at a glance. Add <span class="inline">--help</span> to any command for full options.</p>
+      <div class="legend">
+        <span><span class="pill pill-live">Live</span> available now</span>
+        <span><span class="pill pill-preview">Preview</span> rolling out</span>
+        <span><span class="pill pill-soon">Soon</span> planned</span>
+      </div>
+
+      <h3 class="sub">Setup &amp; Project</h3>
+      <div class="cmd-grid">
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro init</span><span class="pill pill-live">Live</span></div>
+          <div class="cmd-desc">Bootstrap a workspace — creates <code>.syncro_db/</code> and fingerprints the stack.</div>
+          <code class="cmd-ex">syncro init . --name "Viking API"</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro doctor</span><span class="pill pill-live">Live</span></div>
+          <div class="cmd-desc">Environment health check: Node, Python, .NET, Git, Docker, DBs.</div>
+          <code class="cmd-ex">syncro doctor</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro git</span><span class="pill pill-live">Live</span></div>
+          <div class="cmd-desc">Crash-safe clone / pull / push in a child process.</div>
+          <code class="cmd-ex">syncro git clone &lt;url&gt;</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro project</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">List, group, and remove registered projects &amp; combo stacks.</div>
+          <code class="cmd-ex">syncro project list</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro run</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">Detect the project type and launch its dev server.</div>
+          <code class="cmd-ex">syncro run --port 5000</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro install</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">Register the CLI on the system PATH (UAC).</div>
+          <code class="cmd-ex">syncro install</code></div>
+      </div>
+
+      <h3 class="sub">Understand Your Code</h3>
+      <div class="cmd-grid">
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro analyse</span><span class="pill pill-preview">Preview</span></div>
+          <div class="cmd-desc">AST scan + tokenise into the local vector index. The foundation for everything else.</div>
+          <code class="cmd-ex">syncro analyse --tokenize</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro show project</span><span class="pill pill-preview">Preview</span></div>
+          <div class="cmd-desc">Print the project from the DB in vector/token form (top terms, entities, endpoints).</div>
+          <code class="cmd-ex">syncro show project --json</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro ast</span><span class="pill pill-live">Live</span></div>
+          <div class="cmd-desc">Query the AST node store: find a symbol, list classes, find usages.</div>
+          <code class="cmd-ex">syncro ast find TenderController</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro graph</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">Render the dependency graph as Mermaid or DOT.</div>
+          <code class="cmd-ex">syncro graph --format mermaid</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro generate report</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">PDF/JSON report from the DB — endpoints, DTOs, graphs, ports.</div>
+          <code class="cmd-ex">syncro generate report</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro memory</span><span class="pill pill-preview">Preview</span></div>
+          <div class="cmd-desc">View what the agent has learned: past fixes, decisions, and to-dos.</div>
+          <code class="cmd-ex">syncro memory list --todo</code></div>
+      </div>
+
+      <h3 class="sub">AI &amp; Automation</h3>
+      <div class="cmd-grid">
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro ai</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">Ask about your code — grounded in AST + vectors. Works degraded if the model is offline.</div>
+          <code class="cmd-ex">syncro ai explain TenderController</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro generate</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">Scaffold code matching your project's conventions &amp; chosen architecture.</div>
+          <code class="cmd-ex">syncro generate controller Tender</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro patch</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">Read the last build error and propose a fix (preview → approve → apply).</div>
+          <code class="cmd-ex">syncro patch --last-error</code></div>
+        <div class="cmd-card"><div class="cmd-top"><span class="cmd-name">syncro agent</span><span class="pill pill-soon">Soon</span></div>
+          <div class="cmd-desc">Multi-step goal: plan → generate → validate → repair, all gated.</div>
+          <code class="cmd-ex">syncro agent "add JWT auth"</code></div>
+      </div>
+    </section>
+
+    <!-- WORKFLOWS -->
+    <section class="section" id="workflows">
+      <h2 class="section-title">🧭 Common Workflows</h2>
+      <p class="section-sub">Copy-paste recipes for the things you'll actually do.</p>
+      <div class="info-grid">
+        <div class="info-card"><div class="info-icon">📥</div><div class="info-title">Onboard a new repo</div>
+          <div class="info-body"><span class="inline">syncro git clone &lt;url&gt;</span> → <span class="inline">cd repo</span> → <span class="inline">syncro analyse</span>. You now have a searchable local map.</div></div>
+        <div class="info-card"><div class="info-icon">🔍</div><div class="info-title">Understand a codebase</div>
+          <div class="info-body"><span class="inline">syncro show project</span> for the big picture, then <span class="inline">syncro ast find &lt;Name&gt;</span> or <span class="inline">syncro ai explain &lt;Name&gt;</span> to drill in.</div></div>
+        <div class="info-card"><div class="info-icon">📄</div><div class="info-title">Hand off a report</div>
+          <div class="info-body"><span class="inline">syncro generate report</span> produces a PDF with endpoints, DTOs and graphs — great for reviews &amp; onboarding.</div></div>
+        <div class="info-card"><div class="info-icon">🛠️</div><div class="info-title">Auto-fix a setup error</div>
+          <div class="info-body">A failing <span class="inline">syncro run</span> feeds the self-healing loop: it identifies the cause and reuses a known fix script (with your approval).</div></div>
+      </div>
+    </section>
+
+    <!-- LOOP -->
+    <section class="section" id="loop">
+      <h2 class="section-title">🔁 The Self-Healing Loop</h2>
+      <p class="section-sub">When a task fails, Syncro doesn't just stop. It reads the error, looks up a known fix in its
+        local database, reuses a fix script if it has one, and loops — bounded, and never silently changing your code.</p>
+      <div class="flow">
+        <div class="flow-node fn-purple">Task</div><div class="flow-arrow">→</div>
+        <div class="flow-node fn-blue">Run</div><div class="flow-arrow">→</div>
+        <div class="flow-node fn-green">Success ✓</div>
+        <div class="flow-arrow" style="opacity:.4">／</div>
+        <div class="flow-node fn-red">Failed</div><div class="flow-arrow">→</div>
+        <div class="flow-node fn-yellow">Find keywords</div><div class="flow-arrow">→</div>
+        <div class="flow-node fn-blue">Match known fix</div><div class="flow-arrow">→</div>
+        <div class="flow-node fn-green">Reuse fix script</div><div class="flow-arrow">↻</div>
+        <div class="flow-node fn-purple">Retry</div>
+      </div>
+      <div class="alert alert-success" style="margin-top:18px">
+        <strong>It gets smarter.</strong> Every fix that works is remembered in a local table, so the next time the
+        same error appears it's resolved instantly — no AI call needed. If an AI model <em>is</em> available, it teaches
+        Syncro brand-new fixes, which then become reusable offline.
+      </div>
+    </section>
+
+    <!-- OFFLINE & AI -->
+    <section class="section" id="offline">
+      <h2 class="section-title">📡 Works Offline · Better With AI</h2>
+      <p class="section-sub">Syncro is designed to be useful with zero internet, and to quietly level up when a model is reachable.</p>
+      <div class="two-col">
+        <div class="info-card"><div class="info-icon">🔌</div><div class="info-title">Offline (always)</div>
+          <div class="info-body">Cloning, analysing, AST queries, reports, keyword-based error fixes and script reuse all run locally from your
+            <span class="inline">.syncro_db</span>. No model required.</div></div>
+        <div class="info-card"><div class="info-icon">🤖</div><div class="info-title">With AI (optional)</div>
+          <div class="info-body">If a local model is running (default <span class="inline">localhost:3020</span>), Syncro adds richer explanations,
+            code generation, and learns new error fixes. It probes quickly and falls back gracefully if the model is down.</div></div>
+      </div>
+      <div class="alert alert-info"><strong>Force offline anytime:</strong> add <span class="inline">--no-llm</span> to any command to skip the model and use only local knowledge.</div>
+    </section>
+
+    <!-- FLAGS -->
+    <section class="section" id="flags">
+      <h2 class="section-title">🎚️ Global Flags &amp; Exit Codes</h2>
+      <p class="section-sub">These work on every command.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Flag</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><code>--json</code></td><td>Machine-readable output (for scripts &amp; the Desktop UI)</td></tr>
+          <tr><td><code>--yes</code> / <code>-y</code></td><td>Approve mutating actions (apply a patch, run an unproven script)</td></tr>
+          <tr><td><code>--dry-run</code></td><td>Show the plan / commands without changing anything</td></tr>
+          <tr><td><code>--no-llm</code></td><td>Force deterministic, offline behaviour</td></tr>
+          <tr><td><code>--quiet</code></td><td>Only essential output</td></tr>
+          <tr><td><code>--cwd &lt;path&gt;</code></td><td>Run against a different project directory</td></tr>
+          <tr><td><code>--timeout &lt;s&gt;</code></td><td>Cap how long a step may run</td></tr>
+        </tbody>
+      </table></div>
+      <h3 class="sub">Exit codes</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Code</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>0</code></td><td>Success</td></tr>
+          <tr><td><code>1</code></td><td>Generic error</td></tr>
+          <tr><td><code>2</code></td><td>Usage error (bad arguments)</td></tr>
+          <tr><td><code>3</code></td><td>LLM required but unavailable</td></tr>
+          <tr><td><code>4</code></td><td>Needs approval (mutating action in non-interactive mode)</td></tr>
+          <tr><td><code>5</code></td><td>Sandbox / permission denied</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- SAFETY -->
+    <section class="section" id="safety">
+      <h2 class="section-title">🔒 What Syncro Will &amp; Won't Do</h2>
+      <p class="section-sub">Syncro is built to be safe to leave running. The AI proposes — the deterministic core disposes.</p>
+      <div class="info-grid">
+        <div class="info-card"><div class="info-icon">🚫</div><div class="info-title">Never auto-runs AI code</div>
+          <div class="info-body">Generated scripts &amp; patches are previewed and applied only with your <span class="inline">--yes</span>/approval. A new script's first run always asks.</div></div>
+        <div class="info-card"><div class="info-icon">🧴</div><div class="info-title">Secrets stay home</div>
+          <div class="info-body">API keys, tokens and connection strings are redacted before anything is sent to a model, and never written into stored scripts.</div></div>
+        <div class="info-card"><div class="info-icon">🛡️</div><div class="info-title">Dangerous scripts blocked</div>
+          <div class="info-body">A safety scanner refuses destructive patterns (<span class="inline">rm -rf /</span>, format, fork bombs, pipe-to-shell) — they can never auto-run.</div></div>
+        <div class="info-card"><div class="info-icon">🔁</div><div class="info-title">No runaway loops</div>
+          <div class="info-body">The self-healing loop is bounded by a max-attempts limit and hands off to you instead of looping forever.</div></div>
+        <div class="info-card"><div class="info-icon">📋</div><div class="info-title">Everything is audited</div>
+          <div class="info-body">Every script run, fix and model call is logged to <span class="inline">.syncro_db/.../audit.jsonl</span>.</div></div>
+        <div class="info-card"><div class="info-icon">🧱</div><div class="info-title">Sandboxed execution</div>
+          <div class="info-body">Scripts run in isolated child processes; admin elevation is requested only for <span class="inline">syncro install</span>.</div></div>
+      </div>
+    </section>
+
+    <!-- FAQ -->
+    <section class="section" id="faq">
+      <h2 class="section-title">❓ FAQ &amp; Troubleshooting</h2>
+      <details><summary>“<span class="inline">syncro</span> is not recognized” after install</summary>
+        <p>PATH changes apply to <em>new</em> terminals. Close and reopen your terminal (or sign out/in). If it still
+        fails, add the install folder to PATH manually and retry.</p></details>
+      <details><summary>Do I need an internet connection or API key?</summary>
+        <p>No. Cloning, analysing, reports, AST queries and known-fix reuse are all local. AI features are optional and
+        use a local model endpoint when present.</p></details>
+      <details><summary>Where is my data stored?</summary>
+        <p>Per-project state lives in a <span class="inline">.syncro_db</span> folder; cross-project learning (known fixes,
+        scripts, audit) lives under your user profile. Nothing leaves your machine unless you point Syncro at a remote model.</p></details>
+      <details><summary>A command hangs — what do I do?</summary>
+        <p>Press <span class="inline">Ctrl+C</span>. Add <span class="inline">--timeout &lt;seconds&gt;</span> to cap long steps, or
+        <span class="inline">--no-llm</span> to skip the model entirely.</p></details>
+      <details><summary>How do I see exactly what's available in my build?</summary>
+        <p>Run <span class="inline">syncro help</span>. Commands marked <span class="pill pill-soon">Soon</span> here may not
+        appear yet.</p></details>
+      <details><summary>Will it change my code without asking?</summary>
+        <p>No. Mutating actions always show a preview and require approval (<span class="inline">--yes</span>), unless you
+        explicitly opt into autonomous mode for safe, proven scripts.</p></details>
+    </section>
+
+  </div>
+
+  <div class="footer">
+    Syncro CLI · User Guide &nbsp;·&nbsp; For internals see <a href="cli.html" style="color:var(--accent2)">Architecture &amp; Deep Dive</a>.
+    &nbsp; Run <span class="inline">syncro help</span> to get started.
+  </div>
+</main>
+
+</body>
+</html>

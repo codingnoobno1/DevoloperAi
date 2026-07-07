@@ -1,0 +1,38 @@
+@using System.Collections.Generic
+@using System.Linq
+@using Syncro.Desktop.Services.Ide
+@using Syncro.Desktop.Services.Ide.Models
+@inject FileService Files
+
+@if (_roots == null)
+{
+    <div class="ftn-muted">Loading…</div>
+}
+else if (_roots.Count == 0)
+{
+    <div class="ftn-muted">Empty workspace</div>
+}
+else
+{
+    @foreach (var n in _roots)
+    {
+        <FileTreeNode Node="n" Depth="0" OnOpenFile="OnOpenFile" />
+    }
+}
+
+@code {
+    [Parameter] public string RootPath { get; set; } = "";
+    [Parameter] public EventCallback<string> OnOpenFile { get; set; }
+
+    private List<FileNode>? _roots;
+    private string _loadedFor = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (RootPath != _loadedFor)
+        {
+            _loadedFor = RootPath;
+            _roots = string.IsNullOrEmpty(RootPath) ? new() : (await Files.ListAsync(RootPath)).ToList();
+        }
+    }
+}

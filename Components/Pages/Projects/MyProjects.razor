@@ -2,11 +2,16 @@
 @using Syncro.Desktop.Services
 @inject ProjectService ProjService
 @inject IDialogService DialogService
+@inject NavigationManager Nav
+@inject Syncro.Desktop.Services.VSTools.VscodeLauncherService VscodeService
 
 <MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
     <div class="d-flex align-center justify-space-between mb-6">
         <MudText Typo="Typo.h5" Class="font-weight-bold">MY PROJECTS</MudText>
         <div class="d-flex gap-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.CloudDownload" OnClick="OpenCloneDialog">
+                Clone Git Repo
+            </MudButton>
             <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.FileUpload" OnClick="OpenImportDialog">
                 Import Existing
             </MudButton>
@@ -55,7 +60,8 @@
                                 {
                                     <MudIconButton Icon="@Icons.Material.Filled.PlayArrow" Color="Color.Success" Size="Size.Small" OnClick="@(() => OpenRunSelector(project))" Title="Run Mobile Project" />
                                 }
-                                <MudIconButton Icon="@Icons.Material.Filled.ArrowForward" Color="Color.Primary" Size="Size.Small" />
+                                <MudIconButton Icon="@Icons.Material.Filled.Code" Color="Color.Secondary" Size="Size.Small" OnClick="@(() => OpenInVscode(project.Path))" Title="Open in VS Code" />
+                                <MudIconButton Icon="@Icons.Material.Filled.ArrowForward" Color="Color.Primary" Size="Size.Small" OnClick="@(() => NavigateToHindsight(project.Path))" Title="Open in Hindsight Analysis" />
                             </div>
                         </div>
                     </MudPaper>
@@ -130,5 +136,29 @@
     {
         ProjService.DeleteProject(id);
         _projects = ProjService.GetProjects();
+    }
+
+    private async Task OpenCloneDialog()
+    {
+        var options = new DialogOptions { CloseOnEscapeKey = true, MaxWidth = MaxWidth.Small, FullWidth = true };
+        var dialog = await DialogService.ShowAsync<Syncro.Desktop.Components.Shared.CloneGitProjectDialog>("Clone Git Repository", options);
+        var result = await dialog.Result;
+
+        if (result != null && !result.Canceled)
+        {
+            _projects = ProjService.GetProjects();
+        }
+    }
+
+    private void NavigateToHindsight(string path)
+    {
+        var bytes = System.Text.Encoding.UTF8.GetBytes(path);
+        var base64 = Convert.ToBase64String(bytes);
+        Nav.NavigateTo($"hindsight/{base64}");
+    }
+
+    private async Task OpenInVscode(string path)
+    {
+        await VscodeService.LaunchAsync(path);
     }
 }

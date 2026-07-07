@@ -1,0 +1,18 @@
+.sui-btn {
+    position: relative; overflow: hidden;
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 14px; border-radius: var(--radius);
+    border: 1px solid var(--border-soft); background: var(--bg-input);
+    color: var(--text); cursor: pointer;
+    font: 500 var(--fs-ui)/1 var(--font-ui);
+    transition: background var(--motion-fast), border-color var(--motion-fast);
+}
+.sui-btn:hover { background: var(--hover-strong); }
+.sui-btn:disabled { opacity: .45; cursor: default; }
+.sui-btn i { font-size: 14px; }
+
+.sui-btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.sui-btn-primary:hover { background: var(--accent-hover); }
+
+.sui-btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); }
+.sui-btn-ghost:hover { background: var(--hover); color: var(--text); }

@@ -1,0 +1,46 @@
+@namespace Syncro.Desktop.SyncroUI.Components.Layout
+
+<div class="sui-panel">
+    @if (ShowHeader)
+    {
+        <div class="sui-panel-head">
+            <div class="sui-panel-title">
+                @if (!string.IsNullOrEmpty(Icon))
+                {
+                    <i class="@Icon"></i>
+                }
+                <span>@Title</span>
+            </div>
+            
+            @if (!string.IsNullOrEmpty(SubTitle) || HeaderRightContent != null)
+            {
+                <div class="sui-panel-head-right">
+                    @if (!string.IsNullOrEmpty(SubTitle))
+                    {
+                        <span class="sui-panel-sub">@SubTitle</span>
+                    }
+                    @if (HeaderRightContent != null)
+                    {
+                        @HeaderRightContent
+                    }
+                </div>
+            }
+        </div>
+    }
+    
+    <div class="sui-panel-body @BodyClass" style="@BodyStyle">
+        @ChildContent
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public string SubTitle { get; set; } = "";
+    [Parameter] public string Icon { get; set; } = "";
+    [Parameter] public bool ShowHeader { get; set; } = true;
+    [Parameter] public string BodyClass { get; set; } = "";
+    [Parameter] public string BodyStyle { get; set; } = "";
+    
+    [Parameter] public RenderFragment? HeaderRightContent { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

@@ -1,0 +1,65 @@
+{
+  "ProjectPath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\yest",
+  "ProjectName": "yest",
+  "Language": "Swift/Objective-C",
+  "Framework": "iOS Native SwiftUI/UIKit",
+  "Nodes": [
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\yest\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py::handle_new_rx_page",
+      "Type": 4,
+      "Name": "handle_new_rx_page",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\yest\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py",
+      "LineNumber": 7,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "cyclomaticComplexity": 2,
+        "complexityRating": "Low"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "Python Method definition",
+      "IsExternalOrBoilerplate": false
+    },
+    {
+      "Id": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\yest\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py::__lldb_init_module",
+      "Type": 4,
+      "Name": "__lldb_init_module",
+      "FilePath": "C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\yest\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py",
+      "LineNumber": 24,
+      "Namespace": null,
+      "ReturnType": null,
+      "Parameters": [],
+      "Children": [],
+      "Metadata": {
+        "cyclomaticComplexity": 1,
+        "complexityRating": "Low"
+      },
+      "HttpMethods": [],
+      "Route": null,
+      "Summary": "Python Method definition",
+      "IsExternalOrBoilerplate": false
+    }
+  ],
+  "Endpoints": [],
+  "Dtos": [],
+  "Dependencies": [],
+  "Ports": [
+    {
+      "Port": 3306,
+      "State": "Open",
+      "Service": "MySQL DB",
+      "Type": "Scanned"
+    }
+  ],
+  "SwaggerSpecs": [],
+  "ConfigFiles": {
+    "__cache_signature__": "DFC1D002A78E6B09E5D88E9FA416990B84400210EEC6C80A1B26A27102EB054D"
+  },
+  "Errors": [],
+  "DependencyGraphDot": "digraph AstGraph {\r\n  rankdir=LR;\r\n  node [shape=box, style=filled, fillcolor=lightblue];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\yest\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py::handle_new_rx_page\" [label=\"handle_new_rx_page\\n(Method)\"];\r\n  \"C:\\Users\\tushar\\OneDrive\\Documents\\SyncroProjects\\yest\\ios\\Flutter\\ephemeral\\flutter_lldb_helper.py::__lldb_init_module\" [label=\"__lldb_init_module\\n(Method)\"];\r\n}\r\n",
+  "CallGraphDot": "digraph AstGraph {\r\n  rankdir=LR;\r\n  node [shape=box, style=filled, fillcolor=lightblue];\r\n}\r\n",
+  "DagFlowchartMermaid": "graph TD\r\n"
+}

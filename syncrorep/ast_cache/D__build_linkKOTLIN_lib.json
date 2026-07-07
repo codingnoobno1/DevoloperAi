@@ -1,0 +1,26 @@
+{
+  "ProjectPath": "D:\\build_linkKOTLIN\\lib",
+  "ProjectName": "lib",
+  "Language": "Dart",
+  "Framework": "Flutter",
+  "Nodes": [],
+  "Endpoints": [],
+  "Dtos": [],
+  "Dependencies": [],
+  "Ports": [
+    {
+      "Port": 3306,
+      "State": "Open",
+      "Service": "MySQL DB",
+      "Type": "Scanned"
+    }
+  ],
+  "SwaggerSpecs": [],
+  "ConfigFiles": {
+    "__cache_signature__": "3E988A7F7A3ACF63E320F2F9B660B8086408F05D02FADE20C7A8D15D07621902"
+  },
+  "Errors": [],
+  "DependencyGraphDot": "digraph AstGraph {\r\n  rankdir=LR;\r\n  node [shape=box, style=filled, fillcolor=lightblue];\r\n}\r\n",
+  "CallGraphDot": "digraph AstGraph {\r\n  rankdir=LR;\r\n  node [shape=box, style=filled, fillcolor=lightblue];\r\n}\r\n",
+  "DagFlowchartMermaid": "graph TD\r\n"
+}

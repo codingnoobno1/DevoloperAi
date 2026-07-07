@@ -11,5 +11,6 @@ public enum AstNodeType
     Route,
     Dto,
     Config,
-    Module
+    Module,
+    Import
 }

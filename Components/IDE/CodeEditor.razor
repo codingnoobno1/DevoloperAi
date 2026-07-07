@@ -1,0 +1,111 @@
+@using System.IO
+@using Microsoft.JSInterop
+@using Microsoft.AspNetCore.Components.Web
+@using Syncro.Desktop.Services.Ide
+@using Syncro.Desktop.Services.Ide.Models
+@inject FileService Files
+@inject IdeWorkspaceState State
+@inject ISnackbar Snackbar
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+@if (Tab == null)
+{
+    <div class="ed-empty">
+        <i class="bi bi-code-square" style="font-size:42px;opacity:.25;"></i>
+        <div>Select a file from the explorer</div>
+    </div>
+}
+else
+{
+    <div class="ed-root">
+        <div class="ed-bar">
+            <i class="bi bi-file-earmark-code-fill"></i>
+            <span class="ed-path">@Tab.FilePath</span>
+            @if (Tab.IsDirty) { <span class="ed-dot">●</span> }
+            <span class="ed-lang">@Tab.Language</span>
+            <button class="ed-save" disabled="@(!Tab.IsDirty)" @onclick="Save">@(Tab.IsDirty ? "Save" : "Saved")</button>
+        </div>
+        <div class="ed-code">
+            <pre class="ed-gutter" @ref="_gutter"></pre>
+            <textarea @ref="_ta" class="ed-area" spellcheck="false" wrap="off"
+                      value="@_content" @oninput="OnInput"></textarea>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EditorTab? Tab { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private string _content = "";
+    private string _loadedUri = "";
+    private ElementReference _ta;
+    private ElementReference _gutter;
+    private IJSObjectReference? _mod;
+    private DotNetObjectReference<CodeEditor>? _self;
+    private bool _attached;
+    private bool _needsRefresh;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Tab == null) { _attached = false; _loadedUri = ""; return; }
+        if (Tab.Uri != _loadedUri)
+        {
+            _loadedUri = Tab.Uri;
+            _content = State.Buffers.TryGetValue(Tab.Uri, out var buf) ? buf : await Files.ReadAsync(Tab.FilePath);
+            _needsRefresh = true;
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Tab == null) return;
+        try
+        {
+            _mod ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/ide/editor.js");
+            if (!_attached)
+            {
+                _self ??= DotNetObjectReference.Create(this);
+                await _mod.InvokeVoidAsync("attach", _ta, _gutter, _self);
+                _attached = true;
+                _needsRefresh = false;
+            }
+            else if (_needsRefresh)
+            {
+                _needsRefresh = false;
+                await _mod.InvokeVoidAsync("refresh", _ta, _gutter);
+            }
+        }
+        catch { /* gutter is cosmetic; editing still works without it */ }
+    }
+
+    private async Task OnInput(ChangeEventArgs e)
+    {
+        _content = e.Value?.ToString() ?? "";
+        if (Tab != null)
+        {
+            State.Buffers[Tab.Uri] = _content;
+            if (!Tab.IsDirty) { Tab.IsDirty = true; await Changed.InvokeAsync(); }
+        }
+    }
+
+    [JSInvokable]
+    public async Task SaveFromJsAsync() => await Save();
+
+    private async Task Save()
+    {
+        if (Tab == null) return;
+        await Files.WriteAsync(Tab.FilePath, _content);
+        Tab.IsDirty = false;
+        Snackbar.Add($"Saved {Path.GetFileName(Tab.FilePath)}", Severity.Success);
+        await Changed.InvokeAsync();
+        StateHasChanged();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { if (_mod != null) await _mod.DisposeAsync(); } catch { }
+        _self?.Dispose();
+    }
+}

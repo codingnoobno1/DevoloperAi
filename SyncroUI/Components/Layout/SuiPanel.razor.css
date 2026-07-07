@@ -1,0 +1,49 @@
+.sui-panel {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-side, #252526);
+    height: 100%;
+    width: 100%;
+}
+
+.sui-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text-muted, #858585);
+    border-bottom: 1px solid var(--border);
+    text-transform: uppercase;
+    flex-shrink: 0;
+}
+
+.sui-panel-title {
+    display: flex;
+    align-items: center;
+    font-weight: 500;
+}
+
+.sui-panel-title i {
+    margin-right: 6px;
+    font-size: 13px;
+}
+
+.sui-panel-head-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sui-panel-sub {
+    color: var(--text-faint, #666666);
+    letter-spacing: 0.02em;
+}
+
+.sui-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    position: relative;
+}

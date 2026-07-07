@@ -1,0 +1,30 @@
+<label class="sui-checkbox-container @Class">
+    <input type="checkbox" checked="@Value" @onchange="OnChangeHandler" disabled="@Disabled" class="sui-checkbox-input" />
+    <span class="sui-checkbox-checkmark">
+        @if (Value)
+        {
+            <i class="bi bi-check"></i>
+        }
+    </span>
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <span class="sui-checkbox-label">@Label</span>
+    }
+</label>
+
+@code {
+    [Parameter] public bool Value { get; set; }
+    [Parameter] public EventCallback<bool> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Class { get; set; } = "";
+    [Parameter] public bool Disabled { get; set; }
+
+    private async Task OnChangeHandler(ChangeEventArgs e)
+    {
+        if (bool.TryParse(e.Value?.ToString(), out bool v))
+        {
+            Value = v;
+            await ValueChanged.InvokeAsync(Value);
+        }
+    }
+}

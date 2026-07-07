@@ -1,9 +1,9 @@
 @using DeveloperAI.BusinessLogic
 @inject EnvironmentManager EnvManager
 
-<MudPaper Elevation="0" Class="pa-6 panel">
-    <div class="d-flex align-center justify-space-between mb-4">
-        <MudText Typo="Typo.h6">Development Environments</MudText>
+<div>
+    <div class="d-flex align-center justify-space-between mb-4 px-2">
+        <MudText Typo="Typo.h6" Style="font-weight: 700; font-size: 16px;">Development Environments</MudText>
         <MudButton StartIcon="@Icons.Material.Filled.Refresh" 
                    Size="Size.Small" 
                    Color="Color.Primary" 
@@ -22,74 +22,148 @@
     }
     else
     {
-        <MudGrid>
+        <MudGrid Spacing="4">
             @foreach (var env in _environments)
             {
-                <MudItem xs="12" sm="6" md="4">
-                    <MudPaper Elevation="0" Class="pa-4 border-subtle d-flex align-center gap-3">
-                        <div class="env-icon-wrapper @(env.IsAvailable ? "available" : "unavailable")">
-                            <MudIcon Icon="@GetIconForEnv(env.Name)" Size="Size.Medium" />
+                <MudItem xs="12" sm="6" md="4" lg="3">
+                    <div class="env-installer-card">
+                        <div class="env-card-header">
+                            <div class="env-icon-wrapper @(env.IsAvailable ? "available" : "unavailable")">
+                                <MudIcon Icon="@GetIconForEnv(env.Name)" Size="Size.Medium" />
+                            </div>
+                            <MudChip T="string" Color="@(env.IsAvailable ? Color.Success : Color.Error)" 
+                                     Size="Size.Small" 
+                                     Variant="Variant.Filled" 
+                                     Class="env-status-chip">
+                                @(env.IsAvailable ? "INSTALLED" : "MISSING")
+                            </MudChip>
                         </div>
-                        <div class="flex-grow-1 overflow-hidden">
-                            <div class="d-flex align-center justify-space-between">
-                                <MudText Typo="Typo.subtitle2" Class="font-weight-bold">@env.Name</MudText>
-                                <MudChip T="string" Color="@(env.IsAvailable ? Color.Success : Color.Error)" 
-                                         Size="Size.Small" 
-                                         Variant="Variant.Text" 
-                                         Class="ma-0">
-                                    @(env.IsAvailable ? "INSTALLED" : "MISSING")
-                                </MudChip>
-                            </div>
-                            <div class="d-flex align-center justify-space-between mt-2">
-                                <MudText Typo="Typo.caption" Class="text-muted d-block text-truncate flex-grow-1">
-                                    @(env.IsAvailable ? env.Version : "Not found in system path")
-                                </MudText>
-                                <MudButton Size="Size.Small" Color="Color.Primary" Variant="Variant.Text" 
-                                           OnClick="@(() => RunSetup(env.Name))"
-                                           Class="pa-0" Style="min-width: 40px; height: 20px; font-size: 10px;">
-                                    SETUP
-                                </MudButton>
-                            </div>
+                        
+                        <div class="env-card-body">
+                            <h3 class="env-title">@env.Name</h3>
+                            <p class="env-version">
+                                @(env.IsAvailable ? env.Version : "Not found in system path")
+                            </p>
                             @if (env.IsAvailable && !string.IsNullOrEmpty(env.Path))
                             {
                                 <MudTooltip Text="@env.Path">
-                                    <MudText Typo="Typo.caption" Class="env-path">
-                                        @env.Path
-                                    </MudText>
+                                    <span class="env-path">@env.Path</span>
                                 </MudTooltip>
                             }
                         </div>
-                    </MudPaper>
+                        
+                        <div class="env-card-footer">
+                            <button class="env-action-btn" @onclick="@(() => RunSetup(env.Name))">
+                                @(env.IsAvailable ? "Configure" : "Setup") <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
                 </MudItem>
             }
         </MudGrid>
     }
-</MudPaper>
+</div>
 
 <style>
+    .env-installer-card {
+        background: #FFFFFF;
+        border-radius: 16px;
+        padding: 20px;
+        border: 1px solid rgba(226, 232, 240, 0.8);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.02);
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    .env-installer-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.04);
+    }
+
+    .env-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 16px;
+    }
+
     .env-icon-wrapper {
-        width: 40px;
-        height: 40px;
-        border-radius: 8px;
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
         display: flex;
         align-items: center;
         justify-content: center;
     }
     .env-icon-wrapper.available {
-        background: #F0FDF4;
-        color: #16A34A;
+        background: rgba(16, 185, 129, 0.1);
+        color: #10B981;
     }
     .env-icon-wrapper.unavailable {
-        background: #FEF2F2;
-        color: #DC2626;
+        background: rgba(239, 68, 68, 0.1);
+        color: #EF4444;
     }
+    
+    .env-status-chip {
+        margin: 0 !important;
+        font-weight: 700;
+        font-size: 10px;
+        height: 22px;
+    }
+
+    .env-card-body {
+        flex-grow: 1;
+        margin-bottom: 20px;
+    }
+
+    .env-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin: 0 0 4px 0;
+    }
+
+    .env-version {
+        font-size: 13px;
+        color: var(--text-secondary);
+        margin: 0;
+    }
+
     .env-path {
         font-family: 'JetBrains Mono', monospace;
-        font-size: 10px;
+        font-size: 11px;
         color: #94A3B8;
         display: block;
-        text-truncate: true;
-        margin-top: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        margin-top: 8px;
+    }
+
+    .env-card-footer {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .env-action-btn {
+        background: transparent;
+        border: none;
+        color: #0EA5E9;
+        font-weight: 600;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 6px;
+        transition: background 0.2s;
+    }
+    
+    .env-action-btn:hover {
+        background: rgba(14, 165, 233, 0.08);
     }
 </style>
 

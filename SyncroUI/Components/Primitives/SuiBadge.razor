@@ -1,0 +1,28 @@
+<span class="sui-badge @ColorClass @Class">
+    @if (!string.IsNullOrEmpty(Icon))
+    {
+        <i class="@Icon badge-icon"></i>
+    }
+    @if (ChildContent != null)
+    {
+        @ChildContent
+    }
+    else
+    {
+        @Text
+    }
+</span>
+
+@code {
+    [Parameter] public string Text { get; set; } = "";
+    [Parameter] public string Icon { get; set; } = "";
+    [Parameter] public string Class { get; set; } = "";
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+    
+    /// <summary>
+    /// Can be 'default', 'accent', 'error', 'warning', 'success'
+    /// </summary>
+    [Parameter] public string Color { get; set; } = "default";
+
+    private string ColorClass => $"sui-badge-{Color}";
+}

@@ -1,0 +1,72 @@
+@using MudBlazor
+
+<MudPaper Elevation="0" Class="panel pa-4 mb-4">
+    <MudGrid Spacing="3" Class="align-center">
+        <MudItem xs="12" md="6">
+            <MudTextField Value="BackendPath" ValueChanged="OnBackendPathChanged" T="string" Label="Backend repository path" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Adornment="Adornment.End"
+                          AdornmentIcon="@Icons.Material.Filled.Folder" OnAdornmentClick="PickBackendFolder"
+                          Placeholder="C:\path\to\api" />
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudTextField Value="FrontendPath" ValueChanged="OnFrontendPathChanged" T="string" Label="Frontend repository path (optional)" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Adornment="Adornment.End"
+                          AdornmentIcon="@Icons.Material.Filled.Folder" OnAdornmentClick="PickFrontendFolder"
+                          Placeholder="C:\path\to\mobile-app" />
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudTextField Value="ProjectRoot" ValueChanged="OnProjectRootChanged" T="string" Label="Project root (where connector.json is written)" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Adornment="Adornment.End"
+                          AdornmentIcon="@Icons.Material.Filled.Folder" OnAdornmentClick="PickProjectFolder"
+                          Placeholder="Defaults to the backend path" />
+        </MudItem>
+        <MudItem xs="12" md="6" Class="d-flex gap-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true"
+                       StartIcon="@Icons.Material.Filled.Radar" OnClick="OnResolveClick"
+                       Disabled="IsResolving || string.IsNullOrWhiteSpace(BackendPath)">
+                @(IsResolving ? "Scanning…" : "Resolve backend")
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true"
+                       StartIcon="@Icons.Material.Filled.Hub" OnClick="OnMapClick"
+                       Disabled="IsMapping || string.IsNullOrWhiteSpace(BackendPath) || string.IsNullOrWhiteSpace(FrontendPath)">
+                @(IsMapping ? "Mapping…" : "Map")
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+</MudPaper>
+
+@code {
+    [Parameter] public string BackendPath { get; set; } = "";
+    [Parameter] public EventCallback<string> BackendPathChanged { get; set; }
+    [Parameter] public EventCallback PickBackendFolder { get; set; }
+
+    [Parameter] public string FrontendPath { get; set; } = "";
+    [Parameter] public EventCallback<string> FrontendPathChanged { get; set; }
+    [Parameter] public EventCallback PickFrontendFolder { get; set; }
+
+    [Parameter] public string ProjectRoot { get; set; } = "";
+    [Parameter] public EventCallback<string> ProjectRootChanged { get; set; }
+    [Parameter] public EventCallback PickProjectFolder { get; set; }
+
+    [Parameter] public bool IsResolving { get; set; }
+    [Parameter] public bool IsMapping { get; set; }
+
+    [Parameter] public EventCallback OnResolveClick { get; set; }
+    [Parameter] public EventCallback OnMapClick { get; set; }
+
+    private async Task OnBackendPathChanged(string value)
+    {
+        BackendPath = value;
+        await BackendPathChanged.InvokeAsync(value);
+    }
+    private async Task OnFrontendPathChanged(string value)
+    {
+        FrontendPath = value;
+        await FrontendPathChanged.InvokeAsync(value);
+    }
+    private async Task OnProjectRootChanged(string value)
+    {
+        ProjectRoot = value;
+        await ProjectRootChanged.InvokeAsync(value);
+    }
+}

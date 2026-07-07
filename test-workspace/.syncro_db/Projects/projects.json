@@ -1,0 +1,27 @@
+[
+  {
+    "project_id": "test-workspace-202606061323",
+    "name": "test-workspace",
+    "path": "D:\\DeveloperAI\\DEVOLOPER\\Syncro.Desktop\\test-workspace",
+    "language": "Unknown",
+    "framework": "Unknown",
+    "ecosystem": "Unknown",
+    "packageManager": "unknown",
+    "devCommand": "echo 'No run command detected'",
+    "buildCommand": "echo 'No build command detected'",
+    "defaultPort": 0,
+    "requiresVenv": false,
+    "requiresNodeModules": false,
+    "excludeDirs": [],
+    "sourceRoots": [
+      "."
+    ],
+    "groupIds": [],
+    "databases": [],
+    "lastScanned": null,
+    "astNodeCount": 0,
+    "vectorCount": 0,
+    "tags": [],
+    "created": "2026-06-06T13:23:42.1744031Z"
+  }
+]

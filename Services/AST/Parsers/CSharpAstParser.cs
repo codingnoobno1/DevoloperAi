@@ -136,6 +136,25 @@ public class CSharpAstParser : IAstParser
             _currentNamespace = parentNamespace;
         }
 
+        public override void VisitUsingDirective(UsingDirectiveSyntax node)
+        {
+            string importName = node.Name?.ToString() ?? "";
+            if (!string.IsNullOrEmpty(importName))
+            {
+                var astNode = new AstNode
+                {
+                    Id = $"{_filePath}::import::{importName}",
+                    Name = importName,
+                    Type = AstNodeType.Import,
+                    FilePath = _filePath,
+                    LineNumber = node.GetLocation().GetMappedLineSpan().StartLinePosition.Line + 1,
+                    Namespace = _currentNamespace
+                };
+                Nodes.Add(astNode);
+            }
+            base.VisitUsingDirective(node);
+        }
+
         public override void VisitClassDeclaration(ClassDeclarationSyntax node)
         {
             string className = node.Identifier.ValueText;
@@ -215,6 +234,29 @@ public class CSharpAstParser : IAstParser
 
             Nodes.Add(astNode);
             base.VisitMethodDeclaration(node);
+        }
+
+        public override void VisitPropertyDeclaration(PropertyDeclarationSyntax node)
+        {
+            if (_currentClass == null) return;
+
+            string propName = node.Identifier.ValueText;
+            string id = $"{_filePath}::{_currentClass}::{propName}";
+
+            var astNode = new AstNode
+            {
+                Id = id,
+                Name = propName,
+                Type = AstNodeType.Property,
+                FilePath = _filePath,
+                LineNumber = node.GetLocation().GetMappedLineSpan().StartLinePosition.Line + 1,
+                Namespace = _currentNamespace,
+                ReturnType = node.Type.ToString(),
+                Summary = ExtractXmlDocSummary(node)
+            };
+
+            Nodes.Add(astNode);
+            base.VisitPropertyDeclaration(node);
         }
 
         private void ParseRouteAttributes(SyntaxList<AttributeListSyntax> attributeLists, AstNode astNode)

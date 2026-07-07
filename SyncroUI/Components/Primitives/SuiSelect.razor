@@ -1,0 +1,32 @@
+@namespace Syncro.Desktop.SyncroUI.Components.Primitives
+
+<div class="sui-select-container @Class">
+    @if (!string.IsNullOrEmpty(Label))
+    {
+        <label class="sui-select-label">@Label</label>
+    }
+    <div class="sui-select-wrapper">
+        <select class="sui-select" value="@Value" @onchange="OnChangeHandler" disabled="@Disabled">
+            @foreach (var option in Options)
+            {
+                <option value="@option.Value">@option.Text</option>
+            }
+        </select>
+        <i class="bi bi-chevron-down sui-select-icon"></i>
+    </div>
+</div>
+
+@code {
+    [Parameter] public string Value { get; set; } = "";
+    [Parameter] public EventCallback<string> ValueChanged { get; set; }
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public string Class { get; set; } = "";
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public List<SuiSelectOption> Options { get; set; } = new();
+
+    private async Task OnChangeHandler(ChangeEventArgs e)
+    {
+        Value = e.Value?.ToString() ?? "";
+        await ValueChanged.InvokeAsync(Value);
+    }
+}

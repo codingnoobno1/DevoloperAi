@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>Syncro.Desktop</title>
+    <title>Syncro AI</title>
     <base href="/" />
     <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap" rel="stylesheet" />
     <link href="_content/MudBlazor/MudBlazor.min.css" rel="stylesheet" />
@@ -11,6 +11,19 @@
     <link rel="stylesheet" href="css/app.css" />
     <link rel="stylesheet" href="Syncro.Desktop.styles.css" />
     <link rel="icon" href="data:,">
+
+    <!-- Bootstrap Icons (vendored, MIT) — the `bi bi-*` glyphs used across the IDE + file-type icons -->
+    <link rel="stylesheet" href="lib/bootstrap-icons/bootstrap-icons.min.css" />
+
+    <!-- Syncro.UI design system — tokens (CSS variables) + shared widget styles -->
+    <link rel="stylesheet" href="css/tokens.css" />
+    <link rel="stylesheet" href="css/syncro-ui.css" />
+    <link rel="stylesheet" href="css/tailwind.css" />
+
+    <!-- IDE libraries — vendored locally under wwwroot/lib (offline-first, no CDN). See ide/repo/README.md -->
+    <link href="lib/golden-layout/css/goldenlayout-base.css" rel="stylesheet" />
+    <link href="lib/golden-layout/css/goldenlayout-dark-theme.css" rel="stylesheet" />
+    <link href="lib/xterm/xterm.css" rel="stylesheet" />
 </head>
 
 <body>
@@ -32,6 +45,36 @@
             });
         }
     </script>
+    <script src="js/ide/theme.js"></script>
+    <script>
+        (function() {
+            try {
+                var saved = localStorage.getItem("syncro-settings");
+                if (saved) {
+                    var opts = JSON.parse(saved);
+                    window.SyncroTheme.apply(opts.ThemeName, opts.FontSize);
+                }
+            } catch (e) {}
+        })();
+    </script>
+
+    
+    <!-- IDE libraries — all vendored locally (wwwroot/lib), no CDN at runtime.
+         ORDER MATTERS: every UMD lib (jQuery, GoldenLayout, xterm) must load BEFORE Monaco's
+         AMD loader, otherwise they register as anonymous AMD modules and never set their
+         window globals (window.Terminal, window.FitAddon, window.GoldenLayout). -->
+    <script src="lib/jquery/jquery.min.js"></script>
+    <script src="lib/golden-layout/goldenlayout.min.js"></script>
+    <script src="lib/xterm/xterm.js"></script>
+    <script src="lib/xterm/addon-fit.js"></script>
+    <!-- Monaco Editor AMD loader (defines `define`/`require`; must come AFTER the UMD libs) -->
+    <script src="lib/monaco/vs/loader.js"></script>
+    <!-- Editor surface module (window.SyncroMonaco) — owns all Monaco API, §2.4 provider model -->
+    <script src="js/ide/monaco.js"></script>
+    <!-- Syncro.UI shared interaction behaviors (window.SyncroUI) — tooltips, menus, ripple, resize… -->
+    <script src="js/ide/ui.js"></script>
+    <!-- Syncro IDE JS Bridge (docking + terminal; delegates editing to SyncroMonaco) -->
+    <script src="js/syncro-ide.js"></script>
 </body>
 
 </html>

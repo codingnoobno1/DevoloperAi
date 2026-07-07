@@ -1,0 +1,93 @@
+@using MudBlazor
+@using Syncro.Desktop.Services.Connector.Models
+
+@if (Contract != null)
+{
+    <MudPaper Elevation="0" Class="panel pa-4 mb-4">
+        <div class="d-flex align-center justify-space-between mb-3">
+            <MudText Typo="Typo.subtitle1" Class="font-weight-bold">API Surface</MudText>
+            <div class="d-flex gap-2">
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary" Variant="Variant.Filled" Icon="@Icons.Material.Filled.Dns">@Contract.Stack</MudChip>
+                <MudChip T="string" Size="Size.Small" Color="@(Contract.PrimarySource == RouteSource.Swagger ? Color.Success : Color.Default)" Variant="Variant.Outlined">
+                    @(Contract.PrimarySource == RouteSource.Swagger ? "swagger" : "route-scan")
+                </MudChip>
+                <MudChip T="string" Size="Size.Small" Color="Color.Info" Variant="Variant.Text">@Contract.Routes.Count routes</MudChip>
+            </div>
+        </div>
+
+        @if (Contract.Routes.Count == 0)
+        {
+            <div class="pa-6 text-center">
+                <MudText Typo="Typo.body2" Class="text-muted mb-2">No routes detected in this backend.</MudText>
+                <MudText Typo="Typo.caption" Class="text-muted">Use AI route drafting on the right to generate endpoints from scratch.</MudText>
+            </div>
+        }
+        else
+        {
+            <div class="route-list">
+                @foreach (var r in Contract.Routes)
+                {
+                    <div class="route-row">
+                        <span class="verb-badge @VerbClass(r.Method)">@r.Method.ToString().ToUpperInvariant()</span>
+                        <span class="route-path">@r.PathTemplate</span>
+                        <span class="route-meta">
+                            @if (!string.IsNullOrWhiteSpace(r.Summary)) { @r.Summary }
+                            else if (!string.IsNullOrWhiteSpace(r.OperationId)) { @r.OperationId }
+                            else if (r.Line.HasValue) { <span class="text-muted">line @r.Line</span> }
+                        </span>
+                    </div>
+                }
+            </div>
+        }
+    </MudPaper>
+
+    @if (Contract.Notes.Count > 0)
+    {
+        <MudPaper Elevation="0" Class="panel pa-4">
+            <MudText Typo="Typo.subtitle2" Class="font-weight-bold mb-2">Resolution notes</MudText>
+            <div class="notes">
+                @foreach (var n in Contract.Notes)
+                {
+                    <div class="note-line">@n</div>
+                }
+            </div>
+        </MudPaper>
+    }
+}
+
+<style>
+    .route-list { display: flex; flex-direction: column; }
+    .route-row { display: grid; grid-template-columns: 68px 1fr auto; align-items: center; gap: 12px;
+        padding: 8px 6px; border-bottom: 1px solid var(--mud-palette-lines-default); font-size: 13px; }
+    .route-row:last-child { border-bottom: none; }
+    .route-path { font-family: 'Cascadia Code','Fira Code',monospace; color: var(--mud-palette-text-primary); }
+    .route-meta { font-size: 12px; color: var(--mud-palette-text-secondary); text-align: right; max-width: 40%;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .verb-badge { font-size: 10px; font-weight: 700; text-align: center; padding: 3px 6px; border-radius: 5px;
+        color: #fff; letter-spacing: .03em; }
+    .verb-get { background: #10b981; }
+    .verb-post { background: #f59e0b; }
+    .verb-put { background: #3b82f6; }
+    .verb-patch { background: #8b5cf6; }
+    .verb-delete { background: #ef4444; }
+    .verb-other { background: #64748b; }
+
+    .notes { display: flex; flex-direction: column; gap: 4px; }
+    .note-line { font-size: 12px; color: var(--mud-palette-text-secondary); font-family: 'Cascadia Code',monospace; }
+    .note-line:before { content: "› "; color: var(--mud-palette-primary); }
+</style>
+
+@code {
+    [Parameter] public BackendContract? Contract { get; set; }
+
+    private static string VerbClass(HttpVerb v) => v switch
+    {
+        HttpVerb.Get => "verb-get",
+        HttpVerb.Post => "verb-post",
+        HttpVerb.Put => "verb-put",
+        HttpVerb.Patch => "verb-patch",
+        HttpVerb.Delete => "verb-delete",
+        _ => "verb-other"
+    };
+}

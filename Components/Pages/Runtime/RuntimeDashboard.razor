@@ -1,0 +1,256 @@
+@page "/runtime"
+@using System.Collections.Generic
+@using System.Linq
+@using Syncro.Desktop.Services.Universe
+@using Syncro.Desktop.Services.Universe.Runtime
+@using Syncro.Desktop.Services.Universe.Store
+@using Syncro.Desktop.Services.Universe.Models
+@inject IEventBus Bus
+@inject StackRunManager RunMgr
+@inject UniverseGraphStore Store
+@inject UniverseRegistry Registry
+@implements IDisposable
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-0">
+
+    <div class="d-flex align-center justify-space-between mb-2">
+        <div class="d-flex align-center gap-3">
+            <div class="rt-brand"><MudIcon Icon="@Icons.Material.Filled.MonitorHeart" Color="Color.Surface" /></div>
+            <div>
+                <MudText Typo="Typo.h5" Class="font-weight-bold">Runtime Dashboard</MudText>
+                <MudText Typo="Typo.caption" Class="text-muted">Live ecosystem state — updated by the engine, not the AI. @_uNodes nodes · @_uEdges edges · @_uWorkspaces workspaces.</MudText>
+            </div>
+        </div>
+        <MudChip T="string" Color="Color.Success" Variant="Variant.Outlined" Size="Size.Small">● live</MudChip>
+    </div>
+
+    <!-- Start a stack -->
+    <MudPaper Elevation="0" Class="panel pa-4 mb-4">
+        <MudGrid Spacing="2" Class="align-center">
+            <MudItem xs="12" md="4"><MudTextField @bind-Value="_wsPath" Label="Workspace path" Variant="Variant.Outlined" Margin="Margin.Dense" Placeholder="C:\path\to\server" /></MudItem>
+            <MudItem xs="6" md="2"><MudTextField @bind-Value="_label" Label="Label" Variant="Variant.Outlined" Margin="Margin.Dense" Placeholder="server" /></MudItem>
+            <MudItem xs="12" md="3"><MudTextField @bind-Value="_command" Label="Run command" Variant="Variant.Outlined" Margin="Margin.Dense" Placeholder="npm run dev" /></MudItem>
+            <MudItem xs="6" md="1"><MudTextField @bind-Value="_port" Label="Port" Variant="Variant.Outlined" Margin="Margin.Dense" /></MudItem>
+            <MudItem xs="12" md="2">
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" FullWidth="true" StartIcon="@Icons.Material.Filled.PlayArrow"
+                           OnClick="StartStack" Disabled="@(string.IsNullOrWhiteSpace(_wsPath) || string.IsNullOrWhiteSpace(_command))">Run</MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    <MudGrid Spacing="4">
+        <!-- Processes -->
+        <MudItem xs="12" md="7">
+            <MudText Typo="Typo.subtitle1" Class="font-weight-bold mb-2">Processes</MudText>
+            @if (_procs.Count == 0)
+            {
+                <MudPaper Elevation="0" Class="panel pa-8 d-flex flex-column align-center">
+                    <MudIcon Icon="@Icons.Material.Filled.PowerSettingsNew" Class="text-muted mb-2" Style="font-size:48px;" />
+                    <MudText Typo="Typo.body2" Class="text-muted">Nothing running. Start a stack above.</MudText>
+                </MudPaper>
+            }
+            else
+            {
+                <div class="tile-grid">
+                    @foreach (var p in _procs)
+                    {
+                        <MudPaper Elevation="0" Class="panel rt-tile pa-4">
+                            <div class="d-flex align-center justify-space-between mb-2">
+                                <div class="d-flex align-center gap-2">
+                                    <span class="dot @DotClass(p.State)"></span>
+                                    <span class="tile-title">@p.Label</span>
+                                </div>
+                                <MudIconButton Icon="@Icons.Material.Filled.Stop" Size="Size.Small" Color="Color.Error" OnClick="() => StopStack(p.Id)" />
+                            </div>
+                            <div class="tile-state @DotClass(p.State)">@p.State.ToUpperInvariant()</div>
+                            <div class="tile-metrics">
+                                @if (p.Port > 0) { <span><MudIcon Icon="@Icons.Material.Filled.Lan" Size="Size.Small" /> :@p.Port</span> }
+                                @if (p.Pid.HasValue) { <span>pid @p.Pid</span> }
+                                <span><MudIcon Icon="@Icons.Material.Filled.Memory" Size="Size.Small" /> @p.CpuPercent.ToString("0.0")%</span>
+                                <span>@p.MemoryMb.ToString("0") MB</span>
+                            </div>
+                        </MudPaper>
+                    }
+                </div>
+            }
+        </MudItem>
+
+        <!-- Event feed -->
+        <MudItem xs="12" md="5">
+            <MudText Typo="Typo.subtitle1" Class="font-weight-bold mb-2">Live events</MudText>
+            <MudPaper Elevation="0" Class="panel pa-3 rt-feed">
+                @if (_events.Count == 0)
+                {
+                    <div class="text-muted pa-2" style="font-size:12px;">Waiting for engine events…</div>
+                }
+                else
+                {
+                    @foreach (var line in _events)
+                    {
+                        <div class="feed-line">@line</div>
+                    }
+                }
+            </MudPaper>
+        </MudItem>
+
+        <!-- Per-workspace API tiles -->
+        <MudItem xs="12">
+            <MudText Typo="Typo.subtitle1" Class="font-weight-bold mb-2 mt-2">Workspaces</MudText>
+            @if (_workspaces.Count == 0)
+            {
+                <MudPaper Elevation="0" Class="panel pa-6 text-center">
+                    <MudText Typo="Typo.body2" Class="text-muted">No workspaces indexed yet. Use the Connector page or the IndexWorkspace tool to populate the graph.</MudText>
+                </MudPaper>
+            }
+            else
+            {
+                <div class="tile-grid wide">
+                    @foreach (var w in _workspaces)
+                    {
+                        <MudPaper Elevation="0" Class="panel rt-tile pa-4">
+                            <div class="tile-title mb-1">@w.Name</div>
+                            <div class="ws-stacks mb-2">
+                                @foreach (var s in w.Stacks.Take(4))
+                                {
+                                    <span class="stack-chip">@s</span>
+                                }
+                            </div>
+                            <div class="ws-metrics">
+                                <div><b>@w.Endpoints</b><span>endpoints</span></div>
+                                <div><b>@w.Calls</b><span>calls</span></div>
+                                <div class="ok"><b>@w.Mapped</b><span>mapped</span></div>
+                                @if (w.Missing > 0)
+                                {
+                                    <div class="bad"><b>@w.Missing</b><span>missing</span></div>
+                                }
+                            </div>
+                        </MudPaper>
+                    }
+                </div>
+            }
+        </MudItem>
+    </MudGrid>
+</MudContainer>
+
+<style>
+    .rt-brand { width:44px;height:44px;border-radius:10px;background:var(--mud-palette-primary);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(14,165,233,.35); }
+    .tile-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:14px; }
+    .tile-grid.wide { grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); }
+    .rt-tile { display:flex; flex-direction:column; }
+    .tile-title { font-weight:600; font-size:14px; color:var(--mud-palette-text-primary); }
+    .tile-state { font-size:11px; font-weight:700; letter-spacing:.04em; margin-bottom:8px; }
+    .tile-metrics { display:flex; flex-wrap:wrap; gap:10px; font-size:12px; color:var(--mud-palette-text-secondary); font-family:'Cascadia Code',monospace; align-items:center; }
+    .tile-metrics span { display:inline-flex; align-items:center; gap:3px; }
+
+    .dot { width:10px; height:10px; border-radius:50%; display:inline-block; background:#94a3b8; }
+    .dot.ok, .tile-state.ok { color:#10b981; } .dot.ok { background:#10b981; box-shadow:0 0 8px rgba(16,185,129,.6); }
+    .dot.warn, .tile-state.warn { color:#f59e0b; } .dot.warn { background:#f59e0b; }
+    .dot.bad, .tile-state.bad { color:#ef4444; } .dot.bad { background:#ef4444; }
+
+    .rt-feed { max-height:340px; overflow-y:auto; font-family:'Cascadia Code',monospace; font-size:11.5px; }
+    .feed-line { padding:2px 4px; color:var(--mud-palette-text-secondary); border-bottom:1px solid var(--mud-palette-lines-default); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+    .ws-stacks { display:flex; flex-wrap:wrap; gap:5px; }
+    .stack-chip { font-size:10.5px; padding:2px 7px; border-radius:6px; background:var(--mud-palette-background-grey); color:var(--mud-palette-text-secondary); }
+    .ws-metrics { display:flex; gap:16px; }
+    .ws-metrics div { display:flex; flex-direction:column; }
+    .ws-metrics b { font-size:18px; color:var(--mud-palette-text-primary); line-height:1; }
+    .ws-metrics span { font-size:10.5px; color:var(--mud-palette-text-secondary); }
+    .ws-metrics .ok b { color:#10b981; }
+    .ws-metrics .bad b { color:#ef4444; }
+</style>
+
+@code {
+    private string _wsPath = "";
+    private string _label = "server";
+    private string _command = "";
+    private string _port = "";
+
+    private List<RunStatus> _procs = new();
+    private readonly Queue<string> _events = new();
+    private List<WsTile> _workspaces = new();
+    private int _uNodes, _uEdges, _uWorkspaces;
+
+    protected override void OnInitialized()
+    {
+        Bus.OnEvent += OnRuntimeEvent;
+        Refresh();
+    }
+
+    private void OnRuntimeEvent(RuntimeEvent e)
+    {
+        var line = $"{DateTime.Now:HH:mm:ss}  {e.Kind}  {e.TargetNodeId}";
+        _events.Enqueue(line);
+        while (_events.Count > 25) _events.Dequeue();
+        InvokeAsync(() => { Refresh(); StateHasChanged(); });
+    }
+
+    private void Refresh()
+    {
+        try
+        {
+            _procs = RunMgr.Snapshot().OrderBy(p => p.Label).ToList();
+
+            var (n, ed, ws) = Store.Stats();
+            _uNodes = n; _uEdges = ed; _uWorkspaces = ws;
+
+            // Map ApiCall/Endpoint nodes to per-workspace tiles using the Consumes edge set.
+            var consumes = Store.EdgesByKind(EdgeKind.Consumes);
+            var mappedCallIds = consumes.Select(x => x.FromId).ToHashSet();
+
+            _workspaces = Registry.All().Select(w =>
+            {
+                var calls = Store.NodesByKindInWorkspace(w.Id, NodeKind.ApiCall);
+                var endpoints = Store.NodesByKindInWorkspace(w.Id, NodeKind.Endpoint);
+                int mapped = calls.Count(c => mappedCallIds.Contains(c.Id));
+                return new WsTile
+                {
+                    Name = w.Name,
+                    Stacks = w.Stacks,
+                    Endpoints = endpoints.Count,
+                    Calls = calls.Count,
+                    Mapped = mapped,
+                    Missing = calls.Count - mapped
+                };
+            }).ToList();
+        }
+        catch { /* dashboard must never throw */ }
+    }
+
+    private void StartStack()
+    {
+        try
+        {
+            var ws = Registry.Register(_wsPath);
+            int.TryParse(_port, out var port);
+            var spec = RunSpec.FromCommandLine(ws.Id, string.IsNullOrWhiteSpace(_label) ? "app" : _label, _wsPath, _command, port);
+            RunMgr.Start(spec);
+            Refresh();
+        }
+        catch { }
+    }
+
+    private void StopStack(string id)
+    {
+        RunMgr.Stop(id);
+        Refresh();
+    }
+
+    private static string DotClass(string state) => state switch
+    {
+        "healthy" => "ok",
+        "running" => "ok",
+        "starting" => "warn",
+        "crashed" => "bad",
+        _ => ""
+    };
+
+    public void Dispose() => Bus.OnEvent -= OnRuntimeEvent;
+
+    private sealed class WsTile
+    {
+        public string Name = "";
+        public List<string> Stacks = new();
+        public int Endpoints, Calls, Mapped, Missing;
+    }
+}

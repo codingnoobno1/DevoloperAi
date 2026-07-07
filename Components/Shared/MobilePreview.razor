@@ -5,7 +5,12 @@
 @using Newtonsoft.Json
 @using Newtonsoft.Json.Linq
 @using System.IO
-@inject AIClient AiClient
+@using Syncro.Desktop.Services.Engine.Core
+@using Syncro.Desktop.Services.Engine.Context
+@inject ILLMProvider LlmProvider
+@inject ContextBuilder CtxBuilder
+@inject ISessionManager SessionMgr
+@inject IWorkspaceManager WorkspaceMgr
 @inject ISnackbar Snackbar
 @inject FlutterService FlutterSvc
 @implements IDisposable
@@ -405,14 +410,24 @@
 
         try
         {
-            var (response, error) = await AiClient.CallLLM(_aiPrompt, "FlutterSandbox", ProjectPath);
+            // Initialize Workspace & Session if not already done
+            WorkspaceMgr.SetWorkspace(ProjectPath);
+            await SessionMgr.InitializeSessionAsync(ProjectPath);
+
+            // Record the user prompt to memory
+            await SessionMgr.RecordInteractionAsync(_aiPrompt, "Processing requested feature...");
+
+            // Build Context (Hindsight + Workspace summary)
+            string systemContext = await CtxBuilder.BuildSystemPromptAsync(ProjectPath);
             
-            if (!string.IsNullOrEmpty(error))
-            {
-                _aiStatus = $"Error: {error}";
-                _aiError = true;
-                return;
-            }
+            // Append format instruction strictly since we need JSON
+            systemContext += "\nCRITICAL: Respond ONLY with VALID JSON matching this schema: { \"explanation\": \"summary\", \"changes\": [ { \"type\": \"modify|create|delete\", \"path\": \"relative/path\", \"content\": \"...\" } ] }. DO NOT return markdown.";
+
+            // Call Groq / LLM natively
+            string response = await LlmProvider.GenerateResponseAsync(systemContext, _aiPrompt);
+            
+            // Record the LLM response to memory
+            await SessionMgr.RecordInteractionAsync("LLM Output Received", "Parsed response successfully.");
 
             if (string.IsNullOrEmpty(response))
             {
@@ -557,7 +572,7 @@
 
     private void HandleOutput(string message)
     {
-        InvokeAsync(async () =>
+        InvokeAsync(() =>
         {
             _logs.Add(message);
             if (_logs.Count > 100) _logs.RemoveAt(0);

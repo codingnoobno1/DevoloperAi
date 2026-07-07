@@ -1,0 +1,25 @@
+<div class="d-flex align-center justify-space-between mb-2">
+    <div class="d-flex align-center gap-3">
+        <div class="conn-brand">
+            <MudIcon Icon="@Icons.Material.Filled.Hub" Color="Color.Surface" Size="Size.Medium" />
+        </div>
+        <div>
+            <MudText Typo="Typo.h5" Class="font-weight-bold">Connector Engine</MudText>
+            <MudText Typo="Typo.caption" Class="text-muted">Understand a backend's API surface, draft missing routes with AI, and wire it to a frontend.</MudText>
+        </div>
+    </div>
+    <MudChip T="string" Color="Color.Info" Variant="Variant.Outlined" Size="Size.Small">Backend side</MudChip>
+</div>
+
+<style>
+    .conn-brand { 
+        width: 44px; 
+        height: 44px; 
+        border-radius: 10px; 
+        background: var(--mud-palette-primary);
+        display: flex; 
+        align-items: center; 
+        justify-content: center; 
+        box-shadow: 0 4px 12px rgba(14,165,233,.35); 
+    }
+</style>

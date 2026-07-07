@@ -3,49 +3,65 @@
 @using Syncro.Desktop.Services
 @inject NetlifyService NetlifySvc
 
-<MudThemeProvider Theme="_theme" />
+<MudThemeProvider Theme="_theme" IsDarkMode="false" />
 <MudPopoverProvider />
 <MudDialogProvider />
 <MudSnackbarProvider />
 
 <MudLayout>
     <div class="page">
-        <NavMenu />
+        <MudDrawer @bind-Open="_drawerOpen" Elevation="0" Class="arc-sidebar" ClipMode="DrawerClipMode.Never" Variant="@DrawerVariant.Responsive">
+            <NavMenu />
+        </MudDrawer>
 
         <main>
             <header class="app-header">
                 <div class="header-left">
-                    <button class="terminal-toggle-btn" @onclick="OpenTerminal">
-                        <i class="bi bi-terminal-fill"></i>
-                        <span>Syncro Terminal</span>
+                    <button class="icon-btn me-3" @onclick="DrawerToggle" title="Toggle Sidebar">
+                        <i class="bi bi-list" style="font-size: 24px;"></i>
                     </button>
-                    <div class="divider"></div>
-                    <div class="system-status">
-                        <span class="status-item"><span class="dot success"></span> CLI Ready</span>
-                        <span class="status-item"><span class="dot success"></span> API Online</span>
-                        @if (_netlifySite != null)
-                        {
-                            <span class="status-item">
-                                <span class="dot @(_netlifySite.State == "active" ? "success" : "warning")"></span> 
-                                Netlify: @(_netlifySite.State.ToUpper())
-                            </span>
-                        }
+                    <div class="project-title-container">
+                        <h1 class="project-title">Project Syncro</h1>
+                        <span class="project-subtitle">Active Workspace</span>
                     </div>
-                </div>
-                
-                <div class="header-center">
-                    <span class="breadcrumb">Workspace / Dashboard</span>
                 </div>
 
                 <div class="header-right">
-                    <div class="session-info">
-                        <i class="bi bi-shield-lock-fill"></i>
-                        <span>Secure Session</span>
+                    <div class="status-pills">
+                        <div class="status-pill success frosted-glass">
+                            <span class="dot pulse"></span>
+                            <span>CLI Ready</span>
+                        </div>
+                        <div class="status-pill success frosted-glass">
+                            <span class="dot pulse"></span>
+                            <span>API Online</span>
+                        </div>
+                        <div class="status-pill primary frosted-glass">
+                            <i class="bi bi-lightning-charge-fill me-1"></i>
+                            <span>Local Engine</span>
+                        </div>
                     </div>
+                    
                     <div class="divider"></div>
-                    <div class="user-profile">
-                        <span class="user-role">ADMIN</span>
-                        <span class="user-name">dev@syncro.local</span>
+                    
+                    <button class="icon-btn frosted-glass" title="Notifications">
+                        <i class="bi bi-bell"></i>
+                    </button>
+                    
+                    <button class="icon-btn frosted-glass" @onclick="OpenTerminal" title="Syncro Terminal">
+                        <i class="bi bi-terminal"></i>
+                    </button>
+
+                    <div class="divider"></div>
+                    
+                    <div class="user-profile frosted-glass">
+                        <div class="avatar">
+                            <img src="images/syncro.jpg" alt="User" />
+                        </div>
+                        <div class="user-info">
+                            <span class="user-name">Tushar</span>
+                            <span class="user-role">Admin</span>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -63,6 +79,12 @@
 @code {
     private MudTheme _theme = new();
     private NetlifySite? _netlifySite;
+    private bool _drawerOpen = true;
+
+    private void DrawerToggle()
+    {
+        _drawerOpen = !_drawerOpen;
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -70,18 +92,21 @@
         {
             PaletteLight = new PaletteLight()
             {
-                Primary = "#6366f1",
-                Secondary = "#64748b",
-                Background = "#F3F4F6",
+                Primary = "#0EA5E9",
+                Secondary = "#8B5CF6", // AI Purple
+                Background = "#F7F9FC",
                 Surface = "#FFFFFF",
-                AppbarBackground = "#FFFFFF",
-                DrawerBackground = "#FFFFFF",
-                TextPrimary = "#111827",
-                TextSecondary = "#4B5563",
-                LinesDefault = "#E5E7EB",
-                TableLines = "#E5E7EB",
-                Divider = "#E5E7EB",
-                ActionDefault = "#64748b"
+                AppbarBackground = "rgba(255, 255, 255, 0.8)",
+                DrawerBackground = "rgba(255, 255, 255, 0.8)",
+                TextPrimary = "#0F172A",
+                TextSecondary = "#475569",
+                LinesDefault = "#E2E8F0",
+                TableLines = "#E2E8F0",
+                Divider = "#E2E8F0",
+                ActionDefault = "#64748B",
+                Success = "#10B981",
+                Warning = "#F59E0B",
+                Error = "#EF4444"
             }
         };
 
@@ -91,18 +116,52 @@
 
     private void OpenTerminal()
     {
-        MainThread.BeginInvokeOnMainThread(() => {
-            if (Application.Current != null)
+        try
+        {
+            string? processPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "syncro-cli.exe");
+            if (System.IO.File.Exists(processPath))
             {
-                var terminalWindow = new Window(new TerminalPage()) 
-                { 
-                    Title = "Syncro Terminal",
-                    Width = 900,
-                    Height = 600
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = processPath,
+                    UseShellExecute = true, // Launch in separate console window
+                    CreateNoWindow = false
                 };
-                Application.Current.OpenWindow(terminalWindow);
+                System.Diagnostics.Process.Start(psi);
             }
-        });
+            else
+            {
+                // Fallback to MAUI window if executable is missing
+                MainThread.BeginInvokeOnMainThread(() => {
+                    if (Application.Current != null)
+                    {
+                        var terminalWindow = new Window(new TerminalPage()) 
+                        { 
+                            Title = "Syncro Terminal",
+                            Width = 900,
+                            Height = 600
+                        };
+                        Application.Current.OpenWindow(terminalWindow);
+                    }
+                });
+            }
+        }
+        catch (Exception)
+        {
+            // Fallback to MAUI window on error
+            MainThread.BeginInvokeOnMainThread(() => {
+                if (Application.Current != null)
+                {
+                    var terminalWindow = new Window(new TerminalPage()) 
+                    { 
+                        Title = "Syncro Terminal",
+                        Width = 900,
+                        Height = 600
+                    };
+                    Application.Current.OpenWindow(terminalWindow);
+                }
+            });
+        }
     }
 
     private void OpenMobileStore()
@@ -124,21 +183,24 @@
 
 <style>
     :root {
-        --header-height: 64px;
-        --border-subtle: #E5E7EB;
-        --bg-panel: #FFFFFF;
-        --bg-main: #F3F4F6;
-        --text-primary: #111827;
-        --text-secondary: #4B5563;
+        --header-height: 72px;
+        --border-subtle: rgba(226, 232, 240, 0.8);
+        --bg-panel: rgba(255, 255, 255, 0.75);
+        --bg-main: #F7F9FC;
+        --text-primary: #0F172A;
+        --text-secondary: #475569;
         --text-muted: #94A3B8;
-        --accent-primary: #6366f1;
+        --accent-primary: #0EA5E9;
+        --accent-purple: #8B5CF6;
         --status-success: #10B981;
+        --status-warning: #F59E0B;
     }
 
     .page {
         display: flex;
         height: 100vh;
         background-color: var(--bg-main);
+        font-family: 'Inter', sans-serif;
     }
 
     main {
@@ -150,124 +212,192 @@
 
     .app-header {
         height: var(--header-height);
-        background: var(--bg-panel);
-        border-bottom: 1px solid var(--border-subtle);
+        background: var(--glass-bg);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        border-bottom: 1px solid rgba(255,255,255,0.4);
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0 24px;
+        padding: 0 32px;
         z-index: 10;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+        box-shadow: 0 4px 24px rgba(0,0,0,0.02);
     }
 
-    .header-left, .header-right {
+    .header-left {
         display: flex;
         align-items: center;
-        gap: 16px;
+    }
+
+    .header-right {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+    }
+
+    .project-title-container {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .project-title {
+        font-size: 18px;
+        font-weight: 700;
+        color: var(--text-primary);
+        margin: 0;
+        letter-spacing: -0.01em;
+    }
+
+    .project-subtitle {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--text-secondary);
+        margin-top: 2px;
     }
 
     .divider {
         width: 1px;
-        height: 20px;
+        height: 24px;
         background: var(--border-subtle);
     }
 
-    .terminal-toggle-btn {
-        background: #0F172A;
-        border: none;
-        color: #FFFFFF;
-        padding: 8px 16px;
-        border-radius: 6px;
-        font-size: 13px;
-        font-weight: 600;
-        cursor: pointer;
+    .status-pills {
+        display: flex;
+        gap: 12px;
+    }
+
+    .status-pill {
         display: flex;
         align-items: center;
-        gap: 10px;
-        transition: all 0.2s;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    }
-
-    .terminal-toggle-btn:hover {
-        background: #1e293b;
-        transform: translateY(-1px);
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-    }
-
-    .system-status {
-        display: flex;
-        gap: 16px;
-        font-size: 12px;
-        color: var(--text-muted);
-        font-weight: 600;
-        text-transform: uppercase;
+        gap: 6px;
+        padding: 6px 14px;
+        border-radius: var(--radius-lg);
+        font-size: 11px;
+        font-weight: 700;
         letter-spacing: 0.02em;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        box-shadow: var(--shadow-soft);
+        color: var(--text-secondary);
+        transition: all 0.2s;
+    }
+    
+    .status-pill:hover {
+        transform: translateY(-1px);
+        box-shadow: var(--shadow-hover);
     }
 
-    .status-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
+    .pulse {
+        animation: pulse-animation 2s infinite;
     }
+
+    @@keyframes pulse-animation {
+        0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+        70% { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+    }
+
+    .status-pill.success { color: var(--status-success); border-color: rgba(16, 185, 129, 0.2); background: rgba(16, 185, 129, 0.05); }
+    .status-pill.success .dot { background: var(--status-success); }
+    
+    .status-pill.warning { color: var(--status-warning); border-color: rgba(245, 158, 11, 0.2); background: rgba(245, 158, 11, 0.05); }
+    .status-pill.warning .dot { background: var(--status-warning); }
+
+    .status-pill.primary { color: var(--accent-primary); border-color: rgba(14, 165, 233, 0.2); background: rgba(14, 165, 233, 0.05); }
 
     .dot {
-        width: 8px;
-        height: 8px;
+        width: 6px;
+        height: 6px;
         border-radius: 50%;
     }
 
-    .dot.success { background: var(--status-success); box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1); }
-
-    .breadcrumb {
-        font-size: 13px;
-        font-weight: 600;
+    .icon-btn {
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        box-shadow: var(--shadow-soft);
         color: var(--text-secondary);
-    }
-
-    .session-info {
-        font-size: 12px;
-        color: var(--status-success);
+        font-size: 16px;
+        cursor: pointer;
+        padding: 10px;
+        border-radius: var(--radius-md);
+        transition: all 0.2s;
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-weight: 600;
+        justify-content: center;
+    }
+
+    .icon-btn:hover {
+        background: #FFFFFF;
+        color: var(--text-primary);
+        box-shadow: var(--shadow-hover);
+        transform: translateY(-1px);
     }
 
     .user-profile {
         display: flex;
-        flex-direction: column;
-        align-items: flex-end;
+        align-items: center;
+        gap: 12px;
+        cursor: pointer;
+        background: var(--glass-bg);
+        border: 1px solid var(--glass-border);
+        padding: 4px 16px 4px 4px;
+        border-radius: var(--radius-lg);
+        box-shadow: var(--shadow-soft);
+        transition: all 0.2s;
+    }
+    
+    .user-profile:hover {
+        background: #FFFFFF;
+        box-shadow: var(--shadow-hover);
+        transform: translateY(-1px);
     }
 
-    .user-role {
-        font-size: 10px;
-        font-weight: 800;
-        color: var(--accent-primary);
-        letter-spacing: 0.05em;
+    .avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        overflow: hidden;
+        border: 2px solid #FFFFFF;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+
+    .avatar img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .user-info {
+        display: flex;
+        flex-direction: column;
     }
 
     .user-name {
-        font-size: 12px;
+        font-size: 14px;
         font-weight: 600;
         color: var(--text-primary);
+    }
+
+    .user-role {
+        font-size: 11px;
+        font-weight: 500;
+        color: var(--text-muted);
     }
 
     .content {
         flex: 1;
         background: var(--bg-main);
-        padding: 24px;
-        overflow: hidden;
-        display: flex;
+        padding: 32px;
+        overflow-y: auto;
     }
 
     .content-panel-mud {
+        /* No longer a boxed panel, letting inner elements handle their own cards */
         flex: 1;
-        background: var(--bg-panel);
-        border: 1px solid var(--border-subtle);
-        border-radius: 8px;
-        overflow-y: auto;
-        padding: 32px !important;
-        margin-top: 0 !important;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        background: transparent;
+        border: none;
+        border-radius: 0;
+        padding: 0 !important;
+        box-shadow: none;
     }
 </style>
