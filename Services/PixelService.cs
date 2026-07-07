@@ -150,7 +150,35 @@ namespace Syncro.Desktop.Services
                 var response = await _httpClient.GetAsync($"{BaseUrl}/api/mobile/user/tasks");
                 if (response.IsSuccessStatusCode && response.Content.Headers.ContentType?.MediaType == "application/json")
                 {
-                    return await response.Content.ReadFromJsonAsync<List<AgentTaskModel>>() ?? new();
+                    var jsonStr = await response.Content.ReadAsStringAsync();
+                    using var doc = System.Text.Json.JsonDocument.Parse(jsonStr);
+                    var tasksList = new List<AgentTaskModel>();
+                    
+                    // Check if tasks are wrapped in a "tasks" object (as seen in the live API)
+                    if (doc.RootElement.TryGetProperty("tasks", out var tasksElement) && tasksElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        foreach (var t in tasksElement.EnumerateArray())
+                        {
+                            tasksList.Add(new AgentTaskModel
+                            {
+                                Id = t.TryGetProperty("_id", out var idProp) ? idProp.GetString() ?? "" : 
+                                     (t.TryGetProperty("id", out var idProp2) ? idProp2.GetString() ?? "" : ""),
+                                Title = t.TryGetProperty("title", out var titleProp) ? titleProp.GetString() ?? "" : "",
+                                ScopeDescription = t.TryGetProperty("description", out var descProp) ? descProp.GetString() ?? "" : 
+                                                   (t.TryGetProperty("scopeDescription", out var scopeProp) ? scopeProp.GetString() ?? "" : ""),
+                                RepoUrl = t.TryGetProperty("repoUrl", out var repoProp) ? repoProp.GetString() ?? "" : "",
+                                Status = t.TryGetProperty("status", out var statusProp) ? statusProp.GetString() ?? "pending" : "pending",
+                                Deadline = t.TryGetProperty("deadline", out var dlProp) && dlProp.TryGetDateTime(out var dl) ? dl : DateTime.Now
+                            });
+                        }
+                        return tasksList;
+                    }
+                    
+                    // Fallback for direct array response
+                    if (doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+                    {
+                        return System.Text.Json.JsonSerializer.Deserialize<List<AgentTaskModel>>(jsonStr, new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new();
+                    }
                 }
                 
                 return new();

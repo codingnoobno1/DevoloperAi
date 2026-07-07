@@ -1,4 +1,5 @@
 @page "/agent-tasks"
+@page "/agent-tasks/{TaskId}"
 @using Syncro.Desktop.Services
 @using Syncro.Desktop.Services.Git
 @using Syncro.Desktop.Services.Mcp
@@ -51,6 +52,17 @@
                             <div>
                                 <h3>@_selectedTask.Title</h3>
                                 <p class="text-muted">Repository: <code>@_selectedTask.RepoUrl</code></p>
+                                <div class="mt-2">
+                                    @if (_gitStatus == "Cloned")
+                                    {
+                                        <MudChip T="string" Color="Color.Success" Size="Size.Small" Icon="@Icons.Material.Filled.Folder">Git Cloned</MudChip>
+                                        <p class="text-muted small mt-1">@_localPath</p>
+                                    }
+                                    else
+                                    {
+                                        <MudChip T="string" Color="Color.Dark" Size="Size.Small" Icon="@Icons.Material.Filled.CloudDownload">Not Cloned</MudChip>
+                                    }
+                                </div>
                             </div>
                             
                             @if (_isSetupComplete)
@@ -116,6 +128,9 @@
 </div>
 
 @code {
+    [Parameter]
+    public string? TaskId { get; set; }
+
     private bool _isLoading = true;
     private List<AgentTaskModel> _tasks = new();
     private AgentTaskModel? _selectedTask;
@@ -124,10 +139,29 @@
     private bool _isSetupComplete = false;
     private LocalMcpServer.MethodologyResponse? _methodology;
 
+    private string _gitStatus = "";
+    private string _localPath = "";
+
     protected override async Task OnInitializedAsync()
     {
         _tasks = await PixelSvc.GetAssignedTasksAsync();
+        
+        if (!string.IsNullOrEmpty(TaskId))
+        {
+            var task = _tasks.FirstOrDefault(t => t.Id == TaskId);
+            if (task != null) SelectTask(task);
+        }
+        
         _isLoading = false;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (_tasks.Any() && !string.IsNullOrEmpty(TaskId) && _selectedTask?.Id != TaskId)
+        {
+            var task = _tasks.FirstOrDefault(t => t.Id == TaskId);
+            if (task != null) SelectTask(task);
+        }
     }
 
     private void SelectTask(AgentTaskModel task)
@@ -135,6 +169,21 @@
         _selectedTask = task;
         _isSetupComplete = false;
         _methodology = null;
+        
+        _localPath = System.IO.Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), 
+            "SyncroWorkspaces", 
+            _selectedTask.Id);
+            
+        if (System.IO.Directory.Exists(System.IO.Path.Combine(_localPath, ".git")))
+        {
+            _gitStatus = "Cloned";
+            _isSetupComplete = true; // if already cloned, maybe setup is partway done
+        }
+        else
+        {
+            _gitStatus = "Not Cloned";
+        }
     }
 
     private async Task AcceptAndSetup()
@@ -147,15 +196,16 @@
         try
         {
             // 1. Auto Clone Repo using GitAutomationService
-            string targetDir = System.IO.Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), 
-                "SyncroWorkspaces", 
-                _selectedTask.Id);
-                
-            bool cloned = await GitSvc.CloneRepositoryAsync(_selectedTask.RepoUrl, targetDir);
+            if (_gitStatus != "Cloned")
+            {
+                bool cloned = await GitSvc.CloneRepositoryAsync(_selectedTask.RepoUrl, _localPath);
+                if (cloned) _gitStatus = "Cloned";
+            }
+
+            string combinedScope = _selectedTask.ScopeDescription;
 
             // 2. Invoke Local MCP Server to analyze codebase and provide methodology
-            _methodology = await McpSvc.GenerateMethodologyAsync(targetDir, _selectedTask.ScopeDescription);
+            _methodology = await McpSvc.GenerateMethodologyAsync(_localPath, combinedScope);
 
             _isSetupComplete = true;
         }
