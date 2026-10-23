@@ -195,6 +195,28 @@ window.SyncroMonaco = (function () {
                 return null;
             }
         });
+
+        // Go-to-definition / F12 / Ctrl-Click (the "scope definer").
+        monaco.languages.registerDefinitionProvider('csharp', {
+            provideDefinition: async function(model, position) {
+                if (!dotNetObj) return null;
+                try {
+                    const def = await dotNetObj.invokeMethodAsync('GetDefinitionJS', model.uri.toString(), position.lineNumber, position.column);
+                    if (def && def.uri) {
+                        return {
+                            uri: monaco.Uri.parse(def.uri),
+                            range: {
+                                startLineNumber: def.startLineNumber,
+                                startColumn: def.startColumn,
+                                endLineNumber: def.endLineNumber,
+                                endColumn: def.endColumn
+                            }
+                        };
+                    }
+                } catch (e) { }
+                return null;
+            }
+        });
     }
 
     function setDiagnostics(uri, markers) {

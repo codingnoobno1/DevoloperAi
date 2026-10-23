@@ -12,5 +12,8 @@ public enum AstNodeType
     Dto,
     Config,
     Module,
-    Import
+    Import,
+    Cubit,
+    Repository,
+    Widget
 }

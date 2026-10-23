@@ -76,7 +76,9 @@ namespace Syncro.Desktop.Services.SyncroCLI
                 new JavaGradleProvider(ProcessRunner),
                 new DartProvider(ProcessRunner),
                 new FlutterProvider(ProcessRunner),
-                new GoProvider(ProcessRunner)
+                new GoProvider(ProcessRunner),
+                new MauiProvider(ProcessRunner),
+                new BlazorHybridProvider(ProcessRunner)
             };
 
             var gitProvider = new GitProvider(ProcessRunner);
@@ -157,6 +159,8 @@ namespace Syncro.Desktop.Services.SyncroCLI
                     "java" => new JavaGradleProvider(runner),
                     "dart" => new DartProvider(runner),
                     "go" => new GoProvider(runner),
+                    "maui" => new MauiProvider(runner),
+                    "blazor-hybrid" => new BlazorHybridProvider(runner),
                     _ => null
                 };
 

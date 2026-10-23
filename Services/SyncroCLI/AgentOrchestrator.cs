@@ -13,6 +13,7 @@ namespace Syncro.Desktop.Services.SyncroCLI
     public class AgentOrchestrator
     {
         private readonly AgentBridgeServer _bridgeServer;
+        private readonly DeveloperAI.BusinessLogic.AIClient? _aiClient;
         private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(2) };
         private readonly string _syncroDbPath;
 
@@ -24,9 +25,10 @@ namespace Syncro.Desktop.Services.SyncroCLI
 
         public event Action<string>? OnLogUpdated;
 
-        public AgentOrchestrator(AgentBridgeServer bridgeServer)
+        public AgentOrchestrator(AgentBridgeServer bridgeServer, DeveloperAI.BusinessLogic.AIClient? aiClient = null)
         {
             _bridgeServer = bridgeServer;
+            _aiClient = aiClient;
             _bridgeServer.OnPacketReceived += HandlePacket;
 
             string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -199,6 +201,21 @@ namespace Syncro.Desktop.Services.SyncroCLI
         public async Task<string> HandleCompileErrorAsync(string sessionId, string errorMessage)
         {
             OnLogUpdated?.Invoke($"[Orchestrator] Error reported: '{errorMessage}'. Running RAG repair flow...");
+
+            // 0. Primary path: Connected Groq LLM via AIClient / ILLMProvider
+            if (_aiClient != null && _aiClient.IsConfigured)
+            {
+                OnLogUpdated?.Invoke("[Orchestrator] Groq LLM connected via Agent Settings. Requesting AI code patch...");
+                var (patch, err) = await _aiClient.CallLLM(
+                    $"Identify root cause and generate a fix for this compiler error: {errorMessage}",
+                    "BatchFileGenerator",
+                    _syncroDbPath);
+                if (err == null && !string.IsNullOrWhiteSpace(patch))
+                {
+                    OnLogUpdated?.Invoke($"[Orchestrator] Groq LLM returned fix: {patch.Trim()}");
+                    return patch.Trim();
+                }
+            }
 
             // 1. Check if LLM (3020) is fetchable
             bool isLlmOnline = false;

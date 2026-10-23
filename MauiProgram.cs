@@ -38,6 +38,9 @@ public static class MauiProgram
 		builder.Services.AddSingleton<Syncro.Desktop.Services.ProjectService>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.PixelService>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.FlutterService>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.MauiService>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.ProgramLogic.ContractLinker>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.ProgramLogic.AiFeatureMapper>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.SyncroCLI.SyncroCLIService>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.SyncroCLI.AgentBridgeServer>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.SyncroCLI.AgentOrchestrator>();
@@ -45,6 +48,14 @@ public static class MauiProgram
 		builder.Services.AddSingleton<Syncro.Desktop.Services.AST.Env.EnvironmentConfigurator>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.AST.AstService>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Git.GitAutomationService>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Git.IGitEngine, Syncro.Desktop.Services.Git.GitEngine>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Git.GitCredentialResolver>();
+		// Agent Settings (agentsettings.md P0/P1): one policy store + bypass decider + approvals + audit.
+		Syncro.Desktop.Services.Agent.Policy.AgentPolicyServiceCollectionExtensions.AddAgentPolicy(builder.Services);
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Git.GitSyncService>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Git.GitWorkflowRunner>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Git.GitCommitDrafter>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Git.GitCopilotService>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Mcp.LocalMcpServer>();
 
 		// Syncro .NET AI Engine
@@ -63,6 +74,9 @@ public static class MauiProgram
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.FileSystemMcp>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.RepositoryMcp>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.GitMcp>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Security.SecurityScanner>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.SecurityMcp>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.CicdMcp>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.AstMcp>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.ApiMcp>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.JsonIntelligenceMcp>();
@@ -71,9 +85,30 @@ public static class MauiProgram
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.PlanningMcp>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Knowledge.RepairDatabaseService>();
 		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.RepairKnowledgeMcp>(); // The 11th Server (Repair OS)
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.ShellMcp>();
+		// Phase 2/3 engines exposed to the agent loop: Problems Hub + Cross-Language Mapper.
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.WorkspaceIntelligenceMcp>();
+
+		// Phase 4 — BuildEngine (uniform build/analyze over every stack, emits BuildDone) and
+		// VerificationEngine (the only sanctioned write path for AI patches: apply → build →
+		// roll back on any newly-introduced compiler error).
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Build.IBuildEngine>(sp =>
+			new Syncro.Desktop.Services.Build.BuildEngine(
+				sp.GetService<Syncro.Desktop.Services.Workspace.Events.IEventBus>()));
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Build.ITestEngine,
+			Syncro.Desktop.Services.Build.TestEngine>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Verification.IVerificationEngine,
+			Syncro.Desktop.Services.Verification.VerificationEngine>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.BuildMcp>();
+		builder.Services.AddSingleton<Syncro.Desktop.Services.Engine.Mcp.Servers.ConflictMcp>();
 
 		// Connector Engine — backend understanding (swagger/route-scan) + batch file ops; the 12th MCP server
 		Syncro.Desktop.Services.Connector.ConnectorServiceCollectionExtensions.AddSyncroConnector(builder.Services);
+
+		// Workspace kernel (Phase 1/2): typed EventBus + WorkspaceOrchestrator + FS watcher +
+		// IndexEngineSubscriber. IdeShell calls orchestrator.Open() → WorkspaceOpened → watcher +
+		// indexer start.
+		Syncro.Desktop.Services.Workspace.WorkspaceServiceCollectionExtensions.AddSyncroWorkspace(builder.Services);
 
 		// AgentCli DB core (task loop, NLP mappings, script store, DB status snapshot)
 		Syncro.Desktop.Services.AgentCli.AgentCliServiceCollectionExtensions.AddAgentCli(builder.Services);
@@ -92,6 +127,7 @@ public static class MauiProgram
 		builder.Services.AddSingleton<IAstParser, JavaScriptAstParser>();
 		builder.Services.AddSingleton<IAstParser, PythonAstParser>();
 		builder.Services.AddSingleton<IAstParser, ConfigFileParser>();
+		builder.Services.AddSingleton<IAstParser, DartAstParser>();
 
 		builder.Services.AddSingleton<PortScanner>();
 		builder.Services.AddSingleton<ApiEndpointScanner>();
@@ -150,6 +186,26 @@ public static class MauiProgram
 
 		var app = builder.Build();
 
+		// Phase 1/2/3 bootstrap: force singleton construction so every event subscriber is
+		// listening on the EventBus before any workspace opens.
+		//   IWorkspaceWatcher            — starts the FS watcher on WorkspaceOpened
+		//   ContractReverifySubscriber   — re-verifies contract on FileChanged
+		//   IndexEngineSubscriber        — (re-)indexes the workspace on WorkspaceOpened/FileChanged
+		//   ContractDriftCodegenSubscriber — regenerates Dart/Bloc on ContractDriftDetected
+		//   DiagnosticsSubscriber        — feeds the Problems Hub (security scan + contract drift)
+		try
+		{
+			app.Services.GetRequiredService<Syncro.Desktop.Services.Workspace.Watch.IWorkspaceWatcher>();
+			app.Services.GetRequiredService<Syncro.Desktop.Services.Connector.Contract.ContractReverifySubscriber>();
+			app.Services.GetRequiredService<Syncro.Desktop.Services.Workspace.Index.IndexEngineSubscriber>();
+			app.Services.GetRequiredService<Syncro.Desktop.Services.Connector.Codegen.ContractDriftCodegenSubscriber>();
+			app.Services.GetRequiredService<Syncro.Desktop.Services.Workspace.Diagnostics.DiagnosticsSubscriber>();
+		}
+		catch (Exception ex)
+		{
+			System.Diagnostics.Debug.WriteLine($"[Workspace] Bootstrap failed: {ex.Message}");
+		}
+
 		// Auto-start Named Pipe IPC server and browser monitor server on port 3030
 		try
 		{
@@ -171,6 +227,27 @@ public static class MauiProgram
 			System.Diagnostics.Debug.WriteLine($"[Runtime] Coordinator failed to start: {ex.Message}");
 		}
 
+		// Load saved API key + model settings before anything can call the LLM.
+		try
+		{
+			Syncro.Desktop.Services.Agent.Policy.AgentPolicyServiceCollectionExtensions.ApplyAgentPolicy(app.Services);
+		}
+		catch (Exception ex)
+		{
+			System.Diagnostics.Debug.WriteLine($"[AgentPolicy] Failed to apply settings: {ex.Message}");
+		}
+
+		// Start the Git auto-sync worker (git-sync-engine.md §5). Read-only fetch until repos are
+		// registered with an opt-in policy — auto-commit/push stay off by default.
+		try
+		{
+			app.Services.GetRequiredService<Syncro.Desktop.Services.Git.GitSyncService>().Start();
+		}
+		catch (Exception ex)
+		{
+			System.Diagnostics.Debug.WriteLine($"[Git] Sync service failed to start: {ex.Message}");
+		}
+
 		// Activate the MCP layer: every server below is registered in DI above, but the
 		// orchestrator only learns about a server's tools once RegisterServerAsync runs.
 		// Without this, the agent loop has no tools at all.
@@ -183,6 +260,8 @@ public static class MauiProgram
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.FileSystemMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.RepositoryMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.GitMcp>(),
+				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.SecurityMcp>(),
+				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.CicdMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.AstMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.ApiMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.JsonIntelligenceMcp>(),
@@ -190,6 +269,10 @@ public static class MauiProgram
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.PatchMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.PlanningMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.RepairKnowledgeMcp>(),
+				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.ShellMcp>(),
+				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.WorkspaceIntelligenceMcp>(),
+				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.BuildMcp>(),
+				app.Services.GetRequiredService<Syncro.Desktop.Services.Engine.Mcp.Servers.ConflictMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Connector.Mcp.ConnectorMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Universe.Mcp.UniverseMcp>(),
 				app.Services.GetRequiredService<Syncro.Desktop.Services.Universe.Mcp.RuntimeMcp>(),

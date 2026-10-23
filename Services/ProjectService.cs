@@ -80,6 +80,10 @@ namespace Syncro.Desktop.Services
                     "node.js" => "mern",
                     "api service" => "python",
                     "react/next/vite" => "mern",
+                    ".net maui" => "maui",
+                    "maui" => "maui",
+                    "blazor hybrid" => "blazor-hybrid",
+                    "blazor-hybrid" => "blazor-hybrid",
                     _ => type.ToLower()
                 };
 
@@ -127,8 +131,15 @@ namespace Syncro.Desktop.Services
         {
             if (!Directory.Exists(path)) return "Unknown";
 
-            // Priority 1: Mobile (Flutter)
+            // Priority 1: Mobile (Flutter & MAUI)
             if (File.Exists(Path.Combine(path, "pubspec.yaml"))) return "Mobile App";
+            var csprojFiles = Directory.GetFiles(path, "*.csproj");
+            if (csprojFiles.Length > 0)
+            {
+                var content = File.ReadAllText(csprojFiles[0]);
+                if (content.Contains("<UseMauiBlazor>true</UseMauiBlazor>")) return "Blazor Hybrid";
+                if (content.Contains("<UseMaui>true</UseMaui>")) return ".NET MAUI";
+            }
 
             // Priority 2: Web Frameworks
             if (File.Exists(Path.Combine(path, "package.json")))

@@ -217,6 +217,50 @@ namespace Syncro.Desktop.Services.Ide.Engines
             return results;
         }
 
+        public async Task<DefinitionDto?> GetDefinitionAsync(string uri, int line, int column)
+        {
+            await _lock.WaitAsync();
+            try
+            {
+                var (document, position) = await GetDocumentAndPositionAsync(uri, line, column);
+                if (document == null) return null;
+
+                var semanticModel = await document.GetSemanticModelAsync();
+                var root = await document.GetSyntaxRootAsync();
+                if (semanticModel == null || root == null) return null;
+
+                var token = root.FindToken(position);
+                var node = token.Parent;
+                if (node == null) return null;
+
+                // Same resolution order as hover: reference first, then declaration.
+                var symbol = semanticModel.GetSymbolInfo(node).Symbol ?? semanticModel.GetDeclaredSymbol(node);
+                if (symbol == null) return null;
+
+                // Prefer a location in source (skip metadata-only symbols like framework types).
+                var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
+                if (location == null) return null;
+
+                var span = location.GetLineSpan();
+                return new DefinitionDto
+                {
+                    Uri = new Uri(span.Path).AbsoluteUri,               // file:// URI Monaco can resolve
+                    StartLineNumber = span.StartLinePosition.Line + 1,  // Roslyn 0-based -> Monaco 1-based
+                    StartColumn = span.StartLinePosition.Character + 1,
+                    EndLineNumber = span.EndLinePosition.Line + 1,
+                    EndColumn = span.EndLinePosition.Character + 1
+                };
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                _lock.Release();
+            }
+        }
+
         private int GetMonacoCompletionItemKind(ISymbol symbol)
         {
             return symbol.Kind switch

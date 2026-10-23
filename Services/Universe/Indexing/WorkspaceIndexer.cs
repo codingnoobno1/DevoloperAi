@@ -185,6 +185,15 @@ namespace Syncro.Desktop.Services.Universe.Indexing
                 }
             }
 
+            // ── Reverse-AST enrichment: service classes + remote servers (when a scan exists) ──
+            try
+            {
+                var contrib = ThunderScanGraphContributor.Contribute(workspacePath, wsId, nodes, edges);
+                if (contrib.ScanFound)
+                    result.Notes.Add($"Reverse-AST scan: +{contrib.ServiceClasses} service class(es), +{contrib.RemoteServers} remote server(s), +{contrib.Edges} edge(s).");
+            }
+            catch (Exception ex) { result.Notes.Add($"Reverse-AST enrichment failed: {ex.Message}"); }
+
             _store.UpsertNodes(nodes);
             _store.UpsertEdges(edges);
             result.Edges = edges.Count;
@@ -194,11 +203,9 @@ namespace Syncro.Desktop.Services.Universe.Indexing
             return result;
         }
 
-        private static string EndpointId(string wsId, HttpVerb method, string path) =>
-            $"ep:{wsId}:{method.ToString().ToUpperInvariant()}:{path}";
+        private static string EndpointId(string wsId, HttpVerb method, string path) => GraphIds.Endpoint(wsId, method, path);
 
-        private static string CallId(string wsId, HttpVerb method, string path) =>
-            $"call:{wsId}:{method.ToString().ToUpperInvariant()}:{path}";
+        private static string CallId(string wsId, HttpVerb method, string path) => GraphIds.Call(wsId, method, path);
 
         private static string BuildSignature(Syncro.Desktop.Services.AST.Core.AstNode n)
         {

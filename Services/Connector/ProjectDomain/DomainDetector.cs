@@ -8,14 +8,12 @@ namespace Syncro.Desktop.Services.Connector.ProjectDomain
 {
     /// <summary>
     /// Pure file-system domain detection — no LLM, no network. Reads well-known manifest files
-    /// (package.json, pubspec.yaml, requirements.txt, .csproj, docker-compose.yml, pom.xml, etc.)
-    /// to classify a folder as Frontend / Backend / Database / Mobile / AIService and infer a
+    /// (package.json, pubspec.yaml, requirements.txt, .csproj, CMakeLists.txt, Cargo.toml, go.mod,
+    /// build.gradle.kts, docker-compose.yml, pom.xml, etc.) to classify a folder and infer a
     /// default run command + port. Also reads git branch + remote for a workspace node.
     /// </summary>
     public static class DomainDetector
     {
-        // ── Public entry points ──────────────────────────────────────────────
-
         /// <summary>Detect domain, stack, run command and port for <paramref name="node"/> in-place.</summary>
         public static void Detect(ConnectorWorkspaceNode node)
         {
@@ -54,25 +52,70 @@ namespace Syncro.Desktop.Services.Connector.ProjectDomain
             if (!Directory.Exists(root))
                 return (DomainKind.Unknown, "Unknown", "", 0);
 
-            // Flutter
+            // Flutter / Dart
             if (File.Exists(Path.Combine(root, "pubspec.yaml")))
                 return (DomainKind.Mobile, "Flutter", "flutter run", 0);
+
+            // Rust (Cargo.toml)
+            var cargo = Path.Combine(root, "Cargo.toml");
+            if (File.Exists(cargo))
+            {
+                var t = SafeRead(cargo).ToLowerInvariant();
+                if (t.Contains("axum"))       return (DomainKind.Backend, "Rust (Axum)",    "cargo run", 8080);
+                if (t.Contains("actix-web"))  return (DomainKind.Backend, "Rust (Actix)",   "cargo run", 8080);
+                if (t.Contains("rocket"))     return (DomainKind.Backend, "Rust (Rocket)",  "cargo run", 8000);
+                if (t.Contains("tauri"))      return (DomainKind.Frontend, "Rust (Tauri)",  "cargo tauri dev", 1420);
+                return (DomainKind.Backend, "Rust", "cargo run", 8080);
+            }
+
+            // Go (go.mod)
+            var goMod = Path.Combine(root, "go.mod");
+            if (File.Exists(goMod))
+            {
+                var t = SafeRead(goMod).ToLowerInvariant();
+                if (t.Contains("gin-gonic/gin")) return (DomainKind.Backend, "Go (Gin)",   "go run .", 8080);
+                if (t.Contains("labstack/echo")) return (DomainKind.Backend, "Go (Echo)",  "go run .", 8080);
+                if (t.Contains("gofiber/fiber")) return (DomainKind.Backend, "Go (Fiber)", "go run .", 3000);
+                if (t.Contains("go-chi/chi"))    return (DomainKind.Backend, "Go (Chi)",   "go run .", 8080);
+                return (DomainKind.Backend, "Go", "go run .", 8080);
+            }
+
+            // C++ (CMakeLists.txt / vcpkg.json / conanfile.txt)
+            var cppManifest = FindAny(root, "CMakeLists.txt", "vcpkg.json", "conanfile.txt", "Makefile");
+            if (cppManifest != null)
+            {
+                var t = SafeRead(cppManifest).ToLowerInvariant();
+                bool hasCrow = t.Contains("crow") || FindExtRecursive(root, ".cpp").Concat(FindExtRecursive(root, ".h"))
+                    .Any(f => SafeRead(f).Contains("CROW_ROUTE", StringComparison.OrdinalIgnoreCase));
+                if (hasCrow) return (DomainKind.Backend, "C++ (Crow)", "cmake --build build", 18080);
+                if (t.Contains("drogon")) return (DomainKind.Backend, "C++ (Drogon)", "cmake --build build", 8080);
+                return (DomainKind.Backend, "C++", "cmake --build build", 8080);
+            }
 
             // package.json — check dependencies first
             var pkg = Path.Combine(root, "package.json");
             if (File.Exists(pkg))
             {
                 var t = SafeRead(pkg).ToLowerInvariant();
-                if (t.Contains("\"next\""))            return (DomainKind.Frontend,  "Next.js",       "npm run dev",             3000);
-                if (t.Contains("\"react-native\""))    return (DomainKind.Mobile,    "React Native",  "npx react-native start",  8081);
+                if (t.Contains("\"react-native\"") || t.Contains("\"expo\""))
+                    return (DomainKind.Mobile, "React Native", "npx expo start", 8081);
+                if (t.Contains("\"@nestjs/core\""))    return (DomainKind.Backend,   "NestJS",        "npm run start:dev",       3001);
+                if (t.Contains("\"next\""))
+                {
+                    // Next.js with app/api or pages/api acts as a full-stack / backend + frontend host
+                    bool hasApiRoutes = Directory.Exists(Path.Combine(root, "src", "app", "api")) ||
+                                        Directory.Exists(Path.Combine(root, "app", "api")) ||
+                                        Directory.Exists(Path.Combine(root, "pages", "api"));
+                    return (hasApiRoutes ? DomainKind.Backend : DomainKind.Frontend,
+                            hasApiRoutes ? "Next.js Fullstack" : "Next.js",
+                            "npm run dev", 3000);
+                }
+                if (t.Contains("\"express\""))         return (DomainKind.Backend,   "Express",       "npm start",               3000);
+                if (t.Contains("\"fastify\""))         return (DomainKind.Backend,   "Fastify",       "npm start",               3000);
                 if (t.Contains("\"@angular/core\""))   return (DomainKind.Frontend,  "Angular",       "ng serve",                4200);
                 if (t.Contains("\"svelte\""))          return (DomainKind.Frontend,  "Svelte",        "npm run dev",             5173);
                 if (t.Contains("\"vue\""))             return (DomainKind.Frontend,  "Vue.js",        "npm run dev",             5173);
                 if (t.Contains("\"react\""))           return (DomainKind.Frontend,  "React",         "npm start",               3000);
-                if (t.Contains("\"@nestjs/core\""))    return (DomainKind.Backend,   "NestJS",        "npm run start:dev",       3001);
-                if (t.Contains("\"express\""))         return (DomainKind.Backend,   "Express",       "npm start",               3000);
-                if (t.Contains("\"fastify\""))         return (DomainKind.Backend,   "Fastify",       "npm start",               3000);
-                // unknown node project — assume frontend SPA if no obvious server dep
                 return (DomainKind.Frontend, "Node.js", "npm start", 3000);
             }
 
@@ -95,20 +138,26 @@ namespace Syncro.Desktop.Services.Connector.ProjectDomain
             {
                 var t = SafeRead(csproj).ToLowerInvariant();
                 if (t.Contains("maui") || t.Contains("xamarin"))
-                    return (DomainKind.Mobile, "MAUI", "dotnet run", 0);
+                    return (DomainKind.Mobile, ".NET MAUI", "dotnet run", 0);
+                if (t.Contains("blazorwebassembly") || t.Contains("components.webassembly"))
+                    return (DomainKind.Frontend, "Blazor WASM", "dotnet run", 5000);
                 if (t.Contains("sdk.web") || t.Contains("aspnetcore") || t.Contains("microsoft.net.sdk.web"))
                     return (DomainKind.Backend, "ASP.NET Core", "dotnet run", 5001);
-                return (DomainKind.Backend, "ASP.NET", "dotnet run", 5001);
+                return (DomainKind.Backend, ".NET", "dotnet run", 5001);
             }
 
-            // Java (Gradle / Maven)
+            // Java / Kotlin (Gradle / Maven)
             var javaBuild = FindAny(root, "build.gradle", "build.gradle.kts", "pom.xml");
             if (javaBuild != null)
             {
                 var t = SafeRead(javaBuild).ToLowerInvariant();
+                if (t.Contains("com.android.application") || t.Contains("android {"))
+                    return (DomainKind.Mobile, "Kotlin Android", "./gradlew assembleDebug", 0);
+                if (t.Contains("io.ktor"))
+                    return (DomainKind.Backend, "Kotlin (Ktor)", "./gradlew run", 8080);
                 if (t.Contains("spring"))
                     return (DomainKind.Backend, "Spring Boot", "./mvnw spring-boot:run", 8080);
-                return (DomainKind.Backend, "Java", "./gradlew run", 8080);
+                return (DomainKind.Backend, "JVM (Java/Kotlin)", "./gradlew run", 8080);
             }
 
             // docker-compose — treat as DB infra if it only has DB images
@@ -144,8 +193,6 @@ namespace Syncro.Desktop.Services.Connector.ProjectDomain
             _                    => "#64748b"
         };
 
-        // ── File helpers ─────────────────────────────────────────────────────
-
         private static string? FindAny(string root, params string[] names)
         {
             foreach (var n in names)
@@ -173,8 +220,6 @@ namespace Syncro.Desktop.Services.Connector.ProjectDomain
         {
             try { return File.ReadAllText(path); } catch { return ""; }
         }
-
-        // ── Git ──────────────────────────────────────────────────────────────
 
         private static async Task<string> RunGit(string workDir, string args)
         {

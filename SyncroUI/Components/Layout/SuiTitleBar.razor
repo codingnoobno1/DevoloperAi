@@ -5,7 +5,10 @@
         <span class="sui-title">@Title</span>
     </div>
     <div class="sui-titlebar-center">
-        <!-- Future: Command Palette Input or Breadcrumbs could go here -->
+        @if (CenterContent != null)
+        {
+            @CenterContent
+        }
     </div>
     <div class="sui-titlebar-right">
         @if (RightContent != null)
@@ -17,5 +20,6 @@
 
 @code {
     [Parameter] public string Title { get; set; } = "";
+    [Parameter] public RenderFragment? CenterContent { get; set; }
     [Parameter] public RenderFragment? RightContent { get; set; }
 }

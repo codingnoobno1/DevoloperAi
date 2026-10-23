@@ -1,0 +1,116 @@
+@page "/security"
+@using Syncro.Desktop.Services.Security
+@using MudBlazor
+@using Severity = Syncro.Desktop.Services.Security.Severity
+@inject SecurityScanner Scanner
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-4">
+
+    <div class="d-flex align-center gap-3 mb-4">
+        <MudIcon Icon="@Icons.Material.Filled.Security" Color="Color.Primary" Size="Size.Large" />
+        <div>
+            <MudText Typo="Typo.h5" Style="font-weight:700;">Security Scan</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">Native static analysis — secrets, weak crypto, injection, insecure TLS. No external tools, runs on every platform.</MudText>
+        </div>
+    </div>
+
+    <MudPaper Elevation="0" Class="pa-3 mb-4 d-flex align-center gap-3 flex-wrap" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px;">
+        <MudTextField @bind-Value="_root" Placeholder="Folder to scan" Label="Root" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FolderOpen" OnClick="Pick">Browse</MudButton>
+        <MudSelect T="Severity" @bind-Value="_failOn" Label="Fail gate on" Dense="true" Margin="Margin.Dense" Style="max-width:160px;">
+            <MudSelectItem T="Severity" Value="Severity.Critical">Critical</MudSelectItem>
+            <MudSelectItem T="Severity" Value="Severity.High">High</MudSelectItem>
+            <MudSelectItem T="Severity" Value="Severity.Medium">Medium</MudSelectItem>
+            <MudSelectItem T="Severity" Value="Severity.Low">Low</MudSelectItem>
+        </MudSelect>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow" OnClick="ScanAsync" Disabled="_busy">@(_busy ? "Scanning…" : "Scan")</MudButton>
+    </MudPaper>
+
+    @if (_report != null)
+    {
+        <!-- SUMMARY + GATE -->
+        <MudPaper Elevation="0" Class="pa-3 mb-4 d-flex align-center gap-3 flex-wrap" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px;">
+            <MudChip T="string" Size="Size.Large" Color="@(_report.GatePassed ? Color.Success : Color.Error)" Variant="Variant.Filled" Icon="@(_report.GatePassed ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Dangerous)">
+                Gate @(_report.GatePassed ? "PASS" : "FAIL")
+            </MudChip>
+            <MudChip T="string" Color="Color.Error" Variant="Variant.Text">@_report.Count(Severity.Critical) critical</MudChip>
+            <MudChip T="string" Color="Color.Error" Variant="Variant.Text">@_report.Count(Severity.High) high</MudChip>
+            <MudChip T="string" Color="Color.Warning" Variant="Variant.Text">@_report.Count(Severity.Medium) medium</MudChip>
+            <MudChip T="string" Color="Color.Info" Variant="Variant.Text">@_report.Count(Severity.Low) low</MudChip>
+            <MudChip T="string" Color="Color.Default" Variant="Variant.Text">@_report.Count(Severity.Info) info</MudChip>
+            <MudSpacer />
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">@_report.FilesScanned files · @_report.ElapsedMs ms</MudText>
+        </MudPaper>
+
+        <!-- FINDINGS -->
+        <MudPaper Elevation="0" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px; overflow:hidden;">
+            <MudTable Items="_report.Findings" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.Sm"
+                      GroupBy="_groupBy" FixedHeader="true">
+                <ColGroup><col style="width:110px;" /><col /><col style="width:220px;" /></ColGroup>
+                <HeaderContent><MudTh>Severity</MudTh><MudTh>Finding</MudTh><MudTh>Location</MudTh></HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="Severity"><MudChip T="string" Size="Size.Small" Color="@SevColor(context.Severity)" Variant="Variant.Filled">@context.Severity</MudChip></MudTd>
+                    <MudTd DataLabel="Finding">
+                        <b>@context.Title</b> <span class="mud-text-secondary">(@context.RuleId)</span>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block">@context.Why</MudText>
+                        <code style="font-size:11px;">@context.Snippet</code>
+                    </MudTd>
+                    <MudTd DataLabel="Location"><code>@context.File:@context.Line</code></MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager PageSizeOptions="new[]{25,50,100}" /></PagerContent>
+            </MudTable>
+        </MudPaper>
+        @if (_report.Findings.Count == 0)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Success" Class="mt-3">No issues found. Clean scan.</MudAlert>
+        }
+    }
+</MudContainer>
+
+@code {
+    private string _root = "";
+    private Severity _failOn = Severity.High;
+    private bool _busy;
+    private SecurityScanReport? _report;
+
+    private readonly TableGroupDefinition<SecurityFinding> _groupBy = new()
+    {
+        Selector = f => f.Category,
+        GroupName = "Category",
+        Expandable = true,
+    };
+
+    private async Task ScanAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_root)) return;
+        _busy = true; StateHasChanged();
+        try { _report = await Scanner.ScanAsync(_root, _failOn); }
+        catch (Exception ex) { Snackbar.Add($"Scan failed: {ex.Message}", MudBlazor.Severity.Error); }
+        finally { _busy = false; StateHasChanged(); }
+    }
+
+    private static Color SevColor(Severity s) => s switch
+    {
+        Severity.Critical => Color.Error,
+        Severity.High => Color.Error,
+        Severity.Medium => Color.Warning,
+        Severity.Low => Color.Info,
+        _ => Color.Default,
+    };
+
+    private async Task Pick()
+    {
+        try
+        {
+            var result = await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync(
+                () => CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync());
+            if (result.IsSuccessful && result.Folder != null && !string.IsNullOrEmpty(result.Folder.Path))
+            {
+                _root = result.Folder.Path;
+                await ScanAsync();
+            }
+        }
+        catch { }
+    }
+}

@@ -1,0 +1,1991 @@
+@page "/settings/agent"
+@page "/settings/agent/{Tab}"
+@using Syncro.Desktop.Services.Agent.Policy
+@using Syncro.Desktop.Services.Engine.Mcp
+@using Syncro.Desktop.Services.Git
+@implements IDisposable
+@inject AgentPolicyStore Store
+@inject ApiKeyStore Keys
+@inject Syncro.Desktop.Services.Engine.Core.ILLMProvider Llm
+@inject TokenUsageTracker Usage
+@inject McpOrchestrator Orchestrator
+@inject ApprovalService Approvals
+@inject AgentAuditLog Audit
+@inject BypassDecider Decider
+@inject ConflictResolutionService ConflictSvc
+@inject Syncro.Desktop.Services.ProjectService Projects
+@inject IJSRuntime JS
+@inject Syncro.Desktop.Services.Agent.Platform.PlatformAgentStatus AgentStatus
+@inject Syncro.Desktop.Services.Agent.Platform.AgentJobWorker AgentWorker
+@inject Syncro.Desktop.Services.Agent.Platform.DeviceIdentity Device
+
+<div class="as-root">
+    @* ───────────── sub navigation ───────────── *@
+    <nav class="as-nav">
+        <div class="as-nav-title"><i class="bi bi-gear-wide-connected"></i> Agent Settings</div>
+        <div class="as-search">
+            <input placeholder="Search agent settings…" @bind="_search" @bind:event="oninput" />
+            <i class="bi bi-search"></i>
+        </div>
+
+        @foreach (var section in Sections)
+        {
+            var tabs = VisibleTabs(section).ToList();
+            if (tabs.Count == 0) continue;
+            <div class="as-nav-section">@section</div>
+            @foreach (var t in tabs)
+            {
+                <button class="as-nav-item @(t.Id == _tab ? "active" : "")" @onclick="() => SelectTab(t.Id)">
+                    <i class="bi @t.Icon"></i>
+                    <span class="lbl">@t.Label</span>
+                    @if (t.Id == "review" && Approvals.PendingCount > 0)
+                    {
+                        <span class="as-count">@Approvals.PendingCount</span>
+                    }
+                    else if (!t.Built)
+                    {
+                        <span class="as-planned">@t.Phase</span>
+                    }
+                </button>
+            }
+        }
+    </nav>
+
+    @* ───────────── main column ───────────── *@
+    <section class="as-main">
+        <div class="as-scope">
+            <span class="as-scope-label">Scope</span>
+            <div class="as-crumb" title="Group, project and branch scopes are not active yet (P5). Every setting here applies globally.">
+                <span>Global</span><span class="as-notactive">other scopes not active yet</span>
+            </div>
+            @if (Dirty)
+            {
+                <span class="as-chip warn"><i class="bi bi-pencil"></i> Unsaved changes</span>
+            }
+            else
+            {
+                <span class="as-chip"><i class="bi bi-house-door"></i> Global · saved · @_d.Conflicts.Rules.Count conflict rules</span>
+            }
+            <span class="as-grow"></span>
+            <button class="as-btn" @onclick="ExportYaml"><i class="bi bi-download"></i> Export YAML</button>
+            <button class="as-btn" @onclick="RunSimulatorAndOpenTab"><i class="bi bi-play"></i> Simulate</button>
+            <button class="as-btn" @onclick="Discard" disabled="@(!Dirty)"><i class="bi bi-arrow-counterclockwise"></i> Discard</button>
+            <button class="as-btn primary" @onclick="Save" disabled="@(!Dirty || Invalid != null)" title="@(Invalid ?? "")"><i class="bi bi-save"></i> Save changes</button>
+        </div>
+
+        @if (Invalid != null)
+        {
+            <div class="as-alert"><i class="bi bi-exclamation-triangle"></i> @Invalid</div>
+        }
+        @if (_flash != null)
+        {
+            <div class="as-alert ok"><i class="bi bi-check2-circle"></i> @_flash</div>
+        }
+
+        @{ var cur = Tabs.FirstOrDefault(t => t.Id == _tab) ?? Tabs[0]; }
+        <h1 class="as-h1">@cur.Label</h1>
+        <p class="as-lead">@cur.Summary</p>
+        @if (!cur.Built)
+        {
+            <div class="as-alert subtle notactive"><i class="bi bi-pause-circle"></i> <span><b>Not active yet (planned @cur.Phase).</b> Settings on this tab are saved, but nothing in Syncro reads them yet, so changing them has no effect today.</span></div>
+        }
+
+        @switch (_tab)
+        {
+            case "model":
+                <div class="as-card wide">
+                    <div class="as-card-head">
+                        <i class="bi bi-database ic blue"></i>
+                        <div><div class="t">Provider Configuration</div><div class="s">Configure the LLM provider and credentials for the Syncro agent.</div></div>
+                        <span class="as-grow"></span>
+                        <span class="as-status @_keyState.ToString().ToLowerInvariant()">● @KeyStateText</span>
+                    </div>
+                    <div class="as-row3">
+                        <label class="as-field">
+                            <span>Provider</span>
+                            <select @bind="_d.Model.Provider"><option value="Groq">Groq</option></select>
+                        </label>
+                        <label class="as-field grow2">
+                            <span>API Key <em class="as-hint">· @KeySource()</em></span>
+                            @if (_editKey)
+                            {
+                                <input type="password" class="mono" placeholder="gsk_…" @bind="_keyInput" @bind:event="oninput" autocomplete="off" />
+                            }
+                            else
+                            {
+                                <input class="mono" readonly value="@(MaskedKey() is { Length: > 0 } m ? m : "No key set")" />
+                            }
+                        </label>
+                        <div class="as-field-actions">
+                            @if (_editKey)
+                            {
+                                <button class="as-btn" @onclick="() => { _editKey = false; _keyInput = string.Empty; }">Cancel</button>
+                                <button class="as-btn primary" @onclick="SaveKey" disabled="@string.IsNullOrWhiteSpace(_keyInput)"><i class="bi bi-lock"></i> Save key</button>
+                            }
+                            else
+                            {
+                                <button class="as-btn outline" @onclick="() => _editKey = true">Change key</button>
+                                <button class="as-btn primary" @onclick="TestKey" disabled="@(_keyState == KeyState.Testing)"><i class="bi bi-wifi"></i> Test connection</button>
+                            }
+                        </div>
+                    </div>
+                    <div class="as-note">
+                        Keys are stored in Windows Credential Manager, never in settings files or logs.
+                        @if (Keys.Has("groq")) { <button class="as-linkbtn danger" @onclick="ClearKey">Remove saved key</button> }
+                    </div>
+                    @if (_keyState == KeyState.Failed && !string.IsNullOrWhiteSpace(Groq?.LastValidationError))
+                    {
+                        <div class="as-alert" style="margin-top:10px; margin-bottom:0;"><i class="bi bi-exclamation-triangle"></i> @Groq.LastValidationError</div>
+                    }
+                </div>
+
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-stars ic blue"></i><div><div class="t">Model Selection</div><div class="s">Choose models for different agent tasks.</div></div></div>
+                        <div class="as-row2">
+                            <label class="as-field">
+                                <span>Agent model</span>
+                                <select @bind="_d.Model.AgentModel">@foreach (var m in Models) { <option value="@m">@m</option> }</select>
+                                <small>Primary model for general tasks and reasoning.</small>
+                            </label>
+                            <label class="as-field">
+                                <span>Resolver model <span class="as-notactive" title="Saved, but the conflict resolver does not call a model yet (P6).">Not active yet</span></span>
+                                <select @bind="_d.Model.ResolverModel"><option value="">Same as agent</option>@foreach (var m in Models) { <option value="@m">@m</option> }</select>
+                                <small>Model used for merge and conflict resolution.</small>
+                            </label>
+                            <label class="as-field">
+                                <span>Fallback model <span class="as-notactive" title="Saved, but no fallback is attempted yet (P5).">Not active yet</span></span>
+                                <select @bind="_d.Model.FallbackModel"><option value="">None</option>@foreach (var m in Models) { <option value="@m">@m</option> }</select>
+                                <small>Used when the primary model is unavailable.</small>
+                            </label>
+                            <div></div>
+                            <label class="as-field">
+                                <span>Agent temperature <b class="as-val">@_d.Model.AgentTemperature.ToString("0.0")</b></span>
+                                <input type="range" min="0" max="1" step="0.1" @bind="_d.Model.AgentTemperature" @bind:event="oninput" />
+                                <small class="as-ends"><span>More deterministic</span><span>More creative</span></small>
+                            </label>
+                            <label class="as-field">
+                                <span>Resolver temperature <b class="as-val">@_d.Model.ResolverTemperature.ToString("0.0")</b></span>
+                                <input type="range" min="0" max="1" step="0.1" @bind="_d.Model.ResolverTemperature" @bind:event="oninput" />
+                                <small class="as-ends"><span>More deterministic</span><span>More creative</span></small>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-speedometer2 ic blue"></i><div><div class="t">Limits &amp; Budget</div><div class="s">Control resource usage and costs.</div></div></div>
+                        <div class="as-row2">
+                            <label class="as-field">
+                                <span>Max tool calls (per task)</span>
+                                <input type="number" min="1" max="200" @bind="_d.Model.MaxToolCalls" />
+                                <small>Maximum number of tool calls per agent task.</small>
+                            </label>
+                            <label class="as-field">
+                                <span>Tokens per conflict hunk <span class="as-notactive" title="Used once AI hunk resolution exists (P6).">Not active yet</span></span>
+                                <input type="number" min="500" step="500" @bind="_d.Model.TokensPerConflictHunk" />
+                                <small>Context tokens per file hunk during resolution.</small>
+                            </label>
+                        </div>
+                        <label class="as-field">
+                            <span>Daily token budget</span>
+                            <input type="number" min="0" step="10000" @bind="_d.Model.DailyTokenBudget" />
+                            <small>Daily spending limit across all agent operations.</small>
+                        </label>
+                        <div class="as-usage">
+                            <div class="as-usage-top"><span><b>@Short(Usage.UsedToday)</b> used today (@UsagePct()%)</span><span>@(_d.Model.DailyTokenBudget > 0 ? Short(_d.Model.DailyTokenBudget) + " limit" : "no limit")</span></div>
+                            <div class="as-bar"><div class="fill @(UsagePct() >= 90 ? "hot" : "")" style="width:@(Math.Min(100, UsagePct()))%"></div></div>
+                        </div>
+                    </div>
+
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-layers ic blue"></i><div><div class="t">Context Sources <span class="as-notactive" title="Saved, but nothing sends these sources to the model yet (P6).">Not active yet</span></div><div class="s">Select what source code and artifacts are provided to the model.</div></div></div>
+                        <div class="as-chips">
+                            @foreach (var (id, label) in ContextSourceOptions)
+                            {
+                                var on = _d.Model.ContextSources.Contains(id);
+                                <button class="as-chipbtn @(on ? "on" : "")" @onclick="() => ToggleSource(id)"><i class="bi @(on ? "bi-check-square-fill" : "bi-square")"></i> @label</button>
+                            }
+                        </div>
+                        <small>These sources are included in the context window when the agent processes code, review or merge tasks.</small>
+                    </div>
+
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-shield-check ic blue"></i><div><div class="t">Safety Defaults</div><div class="s">Configure safety and privacy options for model interactions.</div></div></div>
+                        <label class="as-toggle">
+                            <input type="checkbox" @bind="_d.Model.RedactSecrets" />
+                            <span class="sw"></span>
+                            <span><b>Redact secrets before sending</b> <span class="as-notactive" title="Not applied to model requests yet (P5). Secrets are redacted in the audit log only.">Not active yet</span><br /><small>Automatically detect and redact API keys, tokens and other secrets from prompts and context sent to the model.</small></span>
+                        </label>
+                        <label class="as-toggle">
+                            <input type="checkbox" @bind="_d.Model.OfflineMode" />
+                            <span class="sw"></span>
+                            <span><b>Offline mode</b><br /><small>Prevent sending any code or data to external model providers. Use only deterministic rules and local models if available.</small></span>
+                        </label>
+                    </div>
+                </div>
+                break;
+
+            case "tools":
+                <div class="as-card wide">
+                    <div class="as-card-head">
+                        <i class="bi bi-tools ic blue"></i>
+                        <div><div class="t">Tool registry</div><div class="s">@Orchestrator.Tools.Count tools registered. The action class decides the base risk; an override changes how a tool is treated.</div></div>
+                        <span class="as-grow"></span>
+                        <input class="as-mini-search" placeholder="Filter tools…" @bind="_toolFilter" @bind:event="oninput" />
+                        <select class="as-mini-select" @bind="_classFilter">
+                            <option value="">All classes</option>
+                            @foreach (var c in Enum.GetValues<ActionClass>()) { <option value="@c">@ToolCatalog.Label(c)</option> }
+                        </select>
+                    </div>
+                    <table class="as-table">
+                        <thead><tr><th>Tool</th><th>Action class</th><th title="The old RequiresAdminApproval flag">Old flag</th><th>Override</th></tr></thead>
+                        <tbody>
+                            @foreach (var tool in FilteredTools())
+                            {
+                                var cls = ToolCatalog.Classify(tool.Name);
+                                <tr>
+                                    <td><b>@tool.Name</b>@if (!ToolCatalog.IsKnown(tool.Name)) { <span class="as-planned inline" title="Not in the catalog: always asks">unknown</span> }<div class="as-desc">@Trunc(tool.Description, 110)</div></td>
+                                    <td><span class="as-cls cls-@cls.ToString().ToLowerInvariant()">@ToolCatalog.Label(cls)</span></td>
+                                    <td>@if (tool.RequiresAdminApproval) { <i class="bi bi-lock-fill" title="Marked as needing approval"></i> }</td>
+                                    <td>
+                                        <select class="as-mini-select" value="@OverrideOf(tool.Name)" @onchange="e => SetOverride(tool.Name, e.Value?.ToString())">
+                                            <option value="Default">Default</option>
+                                            <option value="AlwaysAsk">Always ask</option>
+                                            <option value="AutoIfSafe">Auto if safe</option>
+                                            <option value="Block">Block</option>
+                                        </select>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="as-card wide">
+                    <div class="as-card-head"><i class="bi bi-bullseye ic blue"></i><div><div class="t">Decision preview</div><div class="s">See what the agent would be allowed to do with the settings on this page (including unsaved ones). Nothing runs.</div></div></div>
+                    <div class="as-row2">
+                        <label class="as-field">
+                            <span>Tool</span>
+                            <select @bind="_pvTool">@foreach (var t in Orchestrator.Tools.OrderBy(t => t.Name)) { <option value="@t.Name">@t.Name</option> }</select>
+                        </label>
+                        <label class="as-field">
+                            <span>Origin</span>
+                            <select @bind="_pvOrigin"><option value="agent">In-app agent</option><option value="editor">External editor</option></select>
+                        </label>
+                    </div>
+                    <label class="as-field">
+                        <span>Arguments (JSON)</span>
+                        <textarea class="mono" rows="4" @bind="_pvJson" @bind:event="oninput"></textarea>
+                    </label>
+                    @{ var pv = PreviewDecision(); }
+                    <div class="as-preview dec-@pv.Decision.ToString().ToLowerInvariant()">
+                        <div class="as-preview-top"><b>@DecisionText(pv.Decision)</b><span>score @pv.Score · @ToolCatalog.Label(pv.ActionClass)@(pv.Reversible ? "" : " · not undoable")</span></div>
+                        @if (pv.Floor != null) { <div class="as-preview-why">@pv.Floor</div> }
+                        @foreach (var f in pv.Factors) { <div class="as-preview-f">@f.Factor <b>+@f.Points</b> — @f.Why</div> }
+                    </div>
+                </div>
+                break;
+
+            case "context":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-layers ic blue"></i><div><div class="t">Active Context Sources</div><div class="s">Select which artifacts are packed into the agent and conflict-resolver context window.</div></div></div>
+                        <div class="as-chips">
+                            @foreach (var (id, label) in ContextSourceOptions)
+                            {
+                                var on = _d.Model.ContextSources.Contains(id);
+                                <button class="as-chipbtn @(on ? "on" : "")" @onclick="() => ToggleSource(id)"><i class="bi @(on ? "bi-check-square-fill" : "bi-square")"></i> @label</button>
+                            }
+                        </div>
+                        <label class="as-field top">
+                            <span>Max context pack size (tokens)</span>
+                            <input type="number" min="1000" max="64000" step="1000" @bind="_d.Context.MaxContextPackTokens" />
+                        </label>
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-sort-down ic blue"></i><div><div class="t">Retrieval Ranking Weights</div><div class="s">How candidate files and symbols are prioritized when the context budget is full.</div></div></div>
+                        <label class="as-field">
+                            <span>AST Structural Neighbours <b class="as-val">@_d.Context.AstRankingWeight%</b></span>
+                            <input type="range" min="0" max="100" step="5" @bind="_d.Context.AstRankingWeight" @bind:event="oninput" />
+                        </label>
+                        <label class="as-field">
+                            <span>Git Commit Recency <b class="as-val">@_d.Context.RecencyWeight%</b></span>
+                            <input type="range" min="0" max="100" step="5" @bind="_d.Context.RecencyWeight" @bind:event="oninput" />
+                        </label>
+                        <label class="as-field">
+                            <span>Universe Graph Distance <b class="as-val">@_d.Context.GraphDistanceWeight%</b></span>
+                            <input type="range" min="0" max="100" step="5" @bind="_d.Context.GraphDistanceWeight" @bind:event="oninput" />
+                        </label>
+                    </div>
+                </div>
+                break;
+
+            case "prompt":
+                <div class="as-card wide">
+                    <div class="as-card-head"><i class="bi bi-chat-square-text ic blue"></i><div><div class="t">Global &amp; Scope System Instructions</div><div class="s">Supports template variables: <code>{workspace}</code>, <code>{projects}</code>, <code>{branch}</code>, <code>{conflictType}</code>.</div></div></div>
+                    <label class="as-field">
+                        <span>Global System Prompt</span>
+                        <textarea class="mono" rows="4" @bind="_d.Context.GlobalSystemPrompt" @bind:event="oninput"></textarea>
+                    </label>
+                    <label class="as-field">
+                        <span>Current Scope Override (@_d.Scope)</span>
+                        <textarea class="mono" rows="3" @bind="_d.Context.ScopeSystemPrompt" @bind:event="oninput"></textarea>
+                    </label>
+                    <label class="as-field">
+                        <span>AI Conflict Resolver Prompt Template (A1 / A2)</span>
+                        <textarea class="mono" rows="3" @bind="_d.Context.ResolverPromptTemplate" @bind:event="oninput"></textarea>
+                    </label>
+                </div>
+                break;
+
+            case "guardrails":
+                <div class="as-card wide">
+                    <div class="as-card-head"><i class="bi bi-shield-check ic blue"></i><div><div class="t">Autonomy Level &amp; Decision Threshold Bands</div><div class="s">Configure conflict pipelines and autonomous bypass thresholds used by the Syncro agent.</div></div></div>
+                    <div class="as-levels">
+                        @foreach (var (lvl, idx, title, desc) in IndexedLevels)
+                        {
+                            <button class="as-level @(_d.Bypass.Level == lvl ? "on" : "")" @onclick="() => _d.Bypass.Level = lvl">
+                                <div class="lt"><span class="as-planned inline" style="margin:0 6px 0 0;">@idx</span> @title @(_d.Bypass.Level == lvl ? "✓" : "")</div>
+                                <div class="ld">@desc</div>
+                            </button>
+                        }
+                    </div>
+                    <div class="as-bands">
+                        <div class="b auto" style="width:@(_d.Bypass.AutoMax)%">0–@_d.Bypass.AutoMax Auto Bypass (Green)</div>
+                        <div class="b notify" style="width:@(Math.Max(0, _d.Bypass.NotifyMax - _d.Bypass.AutoMax))%">@(_d.Bypass.AutoMax + 1)–@_d.Bypass.NotifyMax Auto + Notify (Teal)</div>
+                        <div class="b ask" style="width:@(Math.Max(0, _d.Bypass.AskMax - _d.Bypass.NotifyMax))%">@(_d.Bypass.NotifyMax + 1)–@_d.Bypass.AskMax Ask Approval (Amber)</div>
+                        <div class="b double" style="width:@(Math.Max(0, 100 - _d.Bypass.AskMax))%">@(_d.Bypass.AskMax + 1)–100 Typed confirm</div>
+                    </div>
+                    <small class="as-muted">Blocks never come from the score — only from deny lists, blocked tools, the Observe level and the floors below.</small>
+                    <div class="as-row3 tight">
+                        <label class="as-field"><span>Auto Bypass max score</span><input type="number" min="0" max="100" @bind="_d.Bypass.AutoMax" /></label>
+                        <label class="as-field"><span>Auto + Notify max score</span><input type="number" min="0" max="100" @bind="_d.Bypass.NotifyMax" /></label>
+                        <label class="as-field"><span>Ask Approval max score</span><input type="number" min="0" max="100" @bind="_d.Bypass.AskMax" /></label>
+                    </div>
+                    <div class="as-sub">Sandbox folders (used only by Full Auto Sandbox)</div>
+                    <StringListEditor Items="_d.Bypass.SandboxRoots" Placeholder="e.g. D:\scratch\worktrees" EmptyText="None — Full Auto Sandbox behaves like Auto + Notify everywhere" />
+                </div>
+
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-sliders ic blue"></i><div><div class="t">Bypass Risk Factor Weights (0–100) <span class="as-notactive" title="Outward, blast radius, protected branch, production and AI-confidence weights are used. The verification-passed and rerere bonuses are not used yet.">Not active yet</span></div><div class="s">Additive points that determine whether the agent bypasses approval or asks a human.</div></div></div>
+                        <label class="as-field">
+                            <span>Outward Push / PR <span class="as-pt-badge" style="float:right;">+@_d.Bypass.Weights.OutwardAction</span></span>
+                            <input type="range" min="5" max="70" step="5" @bind="_d.Bypass.Weights.OutwardAction" @bind:event="oninput" />
+                        </label>
+                        <label class="as-field">
+                            <span>Consumer Blast Radius (&gt;2 projects) <span class="as-pt-badge" style="float:right;">+@_d.Bypass.Weights.ConsumerBlastRadius</span></span>
+                            <input type="range" min="0" max="50" step="5" @bind="_d.Bypass.Weights.ConsumerBlastRadius" @bind:event="oninput" />
+                        </label>
+                        <label class="as-field">
+                            <span>Protected Branch (main, release/*) <span class="as-pt-badge" style="float:right;">+@_d.Bypass.Weights.ProtectedBranch</span></span>
+                            <input type="range" min="10" max="60" step="5" @bind="_d.Bypass.Weights.ProtectedBranch" @bind:event="oninput" />
+                        </label>
+                        <label class="as-field">
+                            <span>AI Confidence &lt; 0.85 <span class="as-pt-badge" style="float:right;">+@_d.Bypass.Weights.LowAiConfidence</span></span>
+                            <input type="range" min="5" max="50" step="5" @bind="_d.Bypass.Weights.LowAiConfidence" @bind:event="oninput" />
+                        </label>
+                        <label class="as-field">
+                            <span>Verification Passed (Build + Tests Green) <span class="as-pt-badge neg" style="float:right;">@_d.Bypass.Weights.VerificationPassedBonus</span></span>
+                            <input type="range" min="-25" max="0" step="5" @bind="_d.Bypass.Weights.VerificationPassedBonus" @bind:event="oninput" />
+                        </label>
+                        <label class="as-field">
+                            <span>Known Rerere Resolution <span class="as-pt-badge neg" style="float:right;">@_d.Bypass.Weights.RerereKnownBonus</span></span>
+                            <input type="range" min="-25" max="0" step="5" @bind="_d.Bypass.Weights.RerereKnownBonus" @bind:event="oninput" />
+                        </label>
+                    </div>
+
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-lock-fill ic red"></i><div><div class="t">Built-in Floors</div><div class="s">Enforced in code at every autonomy level. Force-push and reset --hard are blocked through the shell deny list in Permissions, which you can edit.</div></div></div>
+                        <ul class="as-floors">
+                            @foreach (var f in HardFloors)
+                            {
+                                <li style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px solid #F1F5F9;">
+                                    <span><i class="bi bi-lock-fill" style="color:#DC2626;"></i> @f</span>
+                                    <span class="as-cls cls-destructive">BUILT IN</span>
+                                </li>
+                            }
+                        </ul>
+                        <div class="as-sub">Protected Branch Patterns</div>
+                        <StringListEditor Items="_d.Bypass.ProtectedBranches" Placeholder="e.g. release/*" />
+                    </div>
+                </div>
+
+                <div class="as-card wide">
+                    <div class="as-card-head">
+                        <i class="bi bi-cpu ic blue"></i>
+                        <div><div class="t">Per-Tool Approval Overrides (IMcpTool)</div><div class="s">Your saved overrides. Change them in Tools &amp; Capabilities.</div></div>
+                        <span class="as-grow"></span>
+                        <button class="as-btn small outline" @onclick='() => _tab = "tools"'>Open Full Tool Registry (@Orchestrator.Tools.Count)</button>
+                    </div>
+                    <div class="as-chips">
+                        @foreach (var kv in _d.Bypass.ToolOverrides.OrderBy(k => k.Key))
+                        {
+                            <span class="as-chain-chip"><b>@kv.Key</b> · <span class="as-badge-pill @(kv.Value == ToolOverride.Block ? "floor" : kv.Value == ToolOverride.AlwaysAsk ? "ask" : kv.Value == ToolOverride.AutoIfSafe ? "auto" : "notify")">@OverrideLabel(kv.Value)</span>@(Orchestrator.Tools.Any(t => string.Equals(t.Name, kv.Key, StringComparison.OrdinalIgnoreCase)) ? "" : " (no such tool)")</span>
+                        }
+                        @if (_d.Bypass.ToolOverrides.Count == 0)
+                        {
+                            <span class="as-muted">No overrides — every tool uses its action class.</span>
+                        }
+                    </div>
+                </div>
+                break;
+
+            case "permissions":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-terminal ic blue"></i><div><div class="t">Shell — allowed</div><div class="s">Script lines starting with these run without asking. <code>/regex/</code> allowed. Each part of a chained line (&amp;&amp;, |, ;) is checked.</div></div></div>
+                        <StringListEditor Items="_d.Permissions.ShellAllow" Placeholder="e.g. npm run lint" />
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-slash-circle ic red"></i><div><div class="t">Shell — blocked</div><div class="s">Any line containing these is refused. Deny always wins.</div></div></div>
+                        <StringListEditor Items="_d.Permissions.ShellDeny" Placeholder="e.g. git push --force" />
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-folder-check ic blue"></i><div><div class="t">File paths</div><div class="s">Writes matching a blocked glob are refused. If the allowed list is not empty, writes outside it need approval.</div></div></div>
+                        <div class="as-sub">Blocked</div>
+                        <StringListEditor Items="_d.Permissions.PathDeny" Placeholder="e.g. **/secrets/**" />
+                        <div class="as-sub">Allowed (optional)</div>
+                        <StringListEditor Items="_d.Permissions.PathAllow" Placeholder="e.g. D:\DeveloperAI\**" EmptyText="Any path (subject to the blocked list)" />
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-globe ic blue"></i><div><div class="t">Network</div><div class="s">Hosts the agent may reach without asking. Subdomains match.</div></div></div>
+                        <StringListEditor Items="_d.Permissions.NetworkAllow" Placeholder="e.g. api.example.com" />
+                    </div>
+                </div>
+
+                <div class="as-card wide">
+                    <div class="as-card-head"><i class="bi bi-check2-square ic blue"></i><div><div class="t">Test</div><div class="s">Check a command, path or URL against the lists above (unsaved edits included).</div></div></div>
+                    <div class="as-row3">
+                        <label class="as-field"><span>Command</span><input class="mono" @bind="_testCmd" @bind:event="oninput" placeholder="git push origin main" /></label>
+                        <label class="as-field"><span>File path</span><input class="mono" @bind="_testPath" @bind:event="oninput" placeholder="D:\repo\.git\config" /></label>
+                        <label class="as-field"><span>URL</span><input class="mono" @bind="_testUrl" @bind:event="oninput" placeholder="https://example.com/api" /></label>
+                    </div>
+                    <div class="as-row3">
+                        <div>@Verdict(string.IsNullOrWhiteSpace(_testCmd) ? null : PermissionChecker.CheckShell(_testCmd, _d.Permissions))</div>
+                        <div>@Verdict(string.IsNullOrWhiteSpace(_testPath) ? null : PermissionChecker.CheckPaths(new[] { _testPath }, _d.Permissions))</div>
+                        <div>@Verdict(string.IsNullOrWhiteSpace(_testUrl) ? null : PermissionChecker.CheckUrls(new[] { _testUrl }, _d.Permissions))</div>
+                    </div>
+                </div>
+                break;
+
+            case "privacy":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-incognito ic blue"></i><div><div class="t">LLM Data Boundary</div><div class="s">Files matching these globs are never sent to external LLM providers.</div></div></div>
+                        <StringListEditor Items="_d.Privacy.LlmDenyPathGlobs" Placeholder="e.g. **/*.pem" />
+                        <label class="as-field top">
+                            <span>Max payload per LLM request (KB)</span>
+                            <input type="number" min="4" max="512" @bind="_d.Privacy.MaxRequestKilobytes" />
+                        </label>
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-shield-lock ic blue"></i><div><div class="t">Repo Policy Trust &amp; Prompt Injection Guard</div><div class="s">Control how <code>.syncro/agent-policy.yaml</code> files in cloned repositories are treated.</div></div></div>
+                        <label class="as-toggle">
+                            <input type="checkbox" @bind="_d.Privacy.RequireRepoPolicyTrust" />
+                            <span class="sw"></span>
+                            <span><b>Require explicit trust before applying repo policy YAML</b><br /><small>Untrusted repos can only tighten rules (more strict), never loosen global floors.</small></span>
+                        </label>
+                        <label class="as-toggle">
+                            <input type="checkbox" @bind="_d.Privacy.LockToollessAiResolver" disabled />
+                            <span class="sw"></span>
+                            <span><b>AI Conflict Resolver runs without tool execution (Locked On)</b><br /><small>Prevents prompt-injection inside conflicted source files from invoking shell or file tools.</small></span>
+                        </label>
+                        <div class="as-sub">Trusted Repositories</div>
+                        <StringListEditor Items="_d.Privacy.TrustedRepoPolicies" Placeholder="D:\path\to\trusted\repo" />
+                    </div>
+                </div>
+                break;
+
+            case "environments":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-diagram-2 ic blue"></i><div><div class="t">Environment map</div><div class="s">Which branches count as staging or production. First match wins. Production always needs typed confirmation.</div></div></div>
+                        <table class="as-table compact">
+                            <thead><tr><th>Branch glob</th><th>Environment</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var r in _d.Environments.Branches)
+                                {
+                                    <tr>
+                                        <td><input class="mono" @bind="r.Pattern" /></td>
+                                        <td><select @bind="r.Environment"><option value="local">Local</option><option value="staging">Staging</option><option value="production">Production</option></select></td>
+                                        <td><button class="as-icon" title="Remove" @onclick="() => _d.Environments.Branches.Remove(r)"><i class="bi bi-trash"></i></button></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                        <button class="as-btn outline small" @onclick='() => _d.Environments.Branches.Add(new EnvironmentRule { Pattern = "", Environment = "staging" })'><i class="bi bi-plus-lg"></i> Add rule</button>
+                        <label class="as-field top"><span>Test a branch</span><input class="mono" @bind="_testBranch" @bind:event="oninput" placeholder="release/2.1" /></label>
+                        @if (!string.IsNullOrWhiteSpace(_testBranch))
+                        {
+                            <div class="as-muted">→ <b>@BypassDecider.EnvironmentFor(_testBranch, _d)</b>@(_d.Bypass.ProtectedBranches.Any(g => PermissionChecker.GlobMatch(_testBranch, g)) ? " · protected" : "")</div>
+                        }
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-snow ic blue"></i><div><div class="t">Change freeze &amp; Break-Glass <span class="as-notactive" title="Freeze now is enforced. Scheduled freeze windows and break-glass are not used yet.">Not active yet</span></div><div class="s">While freeze is active, every change requires human approval.</div></div></div>
+                        <label class="as-toggle">
+                            <input type="checkbox" @bind="_d.Environments.FreezeNow" />
+                            <span class="sw"></span>
+                            <span><b>Freeze now</b><br /><small>Forces human approval across all branches and tools.</small></span>
+                        </label>
+                        <label class="as-field"><span>Freeze Reason</span><input @bind="_d.Environments.FreezeReason" placeholder="e.g. release 2.1 going out" /></label>
+                        <div class="as-sub">Scheduled Freeze Windows (Cron)</div>
+                        @foreach (var fw in _d.Environments.ScheduledFreezes)
+                        {
+                            <div class="as-row-inline" style="align-items:center;">
+                                <input type="checkbox" @bind="fw.Enabled" />
+                                <input style="width:180px;" @bind="fw.Name" placeholder="Window name" />
+                                <input class="mono" style="width:130px;" @bind="fw.Cron" placeholder="0 18 * * FRI" />
+                                <input type="number" style="width:80px;" @bind="fw.DurationHours" title="Duration (hours)" />
+                            </div>
+                        }
+                    </div>
+                </div>
+                break;
+
+            case "merge":
+                @* ── Card 1: Global Resolving Order & Strategy Cascade ── *@
+                <div class="as-card wide">
+                    <div class="as-card-head">
+                        <i class="bi bi-layers-half ic blue"></i>
+                        <div><div class="t">Global Resolving Order &amp; Strategy Cascade <span class="as-notactive" title="File order, rule evaluation mode, attempts, global prefix/suffix and stop-on-critical are saved but not used by the resolver yet.">Not active yet</span></div><div class="s">Configure conflict pipelines and deterministic resolving order used by the Syncro agent.</div></div>
+                    </div>
+                    <div class="as-cascade">
+                        <span class="as-step-pill">1. Git Rerere &amp; zdiff3</span>
+                        <span class="as-step-arrow">→</span>
+                        <span class="as-step-pill">2. Structural / Lockfile Regen</span>
+                        <span class="as-step-arrow">→</span>
+                        <span class="as-step-pill">3. AST Semantic Merge</span>
+                        <span class="as-step-arrow">→</span>
+                        <span class="as-step-pill">4. AI Hunk Resolver (conf ≥ 0.85)</span>
+                        <span class="as-step-arrow">→</span>
+                        <span class="as-step-pill">5. Human 3-Way Review</span>
+                    </div>
+                    <div class="as-row2">
+                        <label class="as-field">
+                            <span>File Resolution Order</span>
+                            <select @bind="_d.Conflicts.FileOrder">
+                                <option value="ast-dependency">File Resolution Order: AST Dependency Graph</option>
+                                <option value="path">File Resolution Order: Path Alphabetical</option>
+                                <option value="smallest-first">File Resolution Order: Smallest Diff First</option>
+                                <option value="risk-lowest-first">File Resolution Order: Lowest Risk First</option>
+                            </select>
+                        </label>
+                        <label class="as-field">
+                            <span>Rule Matching</span>
+                            <select @bind="_d.Conflicts.RuleEvaluation">
+                                <option value="first-match">Rule Matching: First-Match Wins</option>
+                                <option value="best-score">Rule Matching: Best Score Wins</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+
+                @* ── Split Row: Left = Ordered Priority Matrix, Right = Add Manual Conflict & Resolution Rule ── *@
+                <div class="as-split-60-40">
+                    <div class="as-card">
+                        <div class="as-card-head">
+                            <i class="bi bi-list-ol ic blue"></i>
+                            <div><div class="t">Conflict Type Resolution Matrix (Ordered Priority)</div><div class="s">Configure conflict type resolution order (@_d.Conflicts.Rules.Count active rules). First match wins.</div></div>
+                        </div>
+                        <div class="as-rule-list">
+                            @foreach (var r in _d.Conflicts.Rules.OrderBy(x => x.Order).ToList())
+                            {
+                                <div class="as-rule-card">
+                                    <div class="as-rule-handle">
+                                        <button title="Move Up" disabled="@(r.Order <= 1 || r.Final)" @onclick="() => MoveRule(r, -1)">▲</button>
+                                        <button title="Move Down" disabled="@(r.Order >= _d.Conflicts.Rules.Count)" @onclick="() => MoveRule(r, 1)">▼</button>
+                                    </div>
+                                    <div class="as-rule-body">
+                                        <div class="as-rule-top">
+                                            <span class="as-rule-title">#@r.Order @r.Name</span>
+                                            <div style="display:flex; align-items:center; gap:6px;">
+                                                <span class="as-badge-pill @BadgeClass(r.ApprovalMode)">@r.ApprovalMode</span>
+                                                @if (!r.Final)
+                                                {
+                                                    <button class="as-icon" title="Remove rule" @onclick="() => RemoveRule(r)"><i class="bi bi-trash"></i></button>
+                                                }
+                                            </div>
+                                        </div>
+                                        <div class="as-chain-chips">
+                                            @if (r.Chain.Count == 0)
+                                            {
+                                                <span class="as-chain-chip floor"><i class="bi bi-slash-circle"></i> Force Human Review</span>
+                                            }
+                                            else
+                                            {
+                                                @for (int i = 0; i < r.Chain.Count; i++)
+                                                {
+                                                    var tid = r.Chain[i];
+                                                    var tech = _d.Conflicts.Techniques.FirstOrDefault(t => t.Id == tid);
+                                                    <span class="as-chain-chip">@(tech != null ? tech.Label : tid)</span>
+                                                    @if (i < r.Chain.Count - 1) { <span class="as-step-arrow">→</span> }
+                                                }
+                                                @if (r.VerifyGates.Count > 0)
+                                                {
+                                                    <span class="as-step-arrow">→</span>
+                                                    <span class="as-chain-chip verify">Verify: @string.Join(" + ", r.VerifyGates.Select(FormatGateName))</span>
+                                                }
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="as-card">
+                        <div class="as-card-head">
+                            <i class="bi bi-plus-square-dotted ic blue"></i>
+                            <div><div class="t">Add Manual Conflict &amp; Resolution Rule</div><div class="s">Configure custom conflict types, detection globs, and resolution chains.</div></div>
+                        </div>
+
+                        <label class="as-field">
+                            <span>Conflict Type</span>
+                            <select @bind="_newRuleConflictType">
+                                @foreach (var ct in _d.Conflicts.ConflictTypes.OrderByDescending(c => c.Priority))
+                                {
+                                    <option value="@ct.Id">@ct.Id — @ct.Label (@ct.Severity)</option>
+                                }
+                                <option value="__custom__">+ Create New Custom Conflict Type…</option>
+                            </select>
+                        </label>
+
+                        @if (_newRuleConflictType == "__custom__")
+                        {
+                            <div class="as-row2">
+                                <label class="as-field">
+                                    <span>New Type ID</span>
+                                    <input class="mono" placeholder="e.g. protobuf-wire" @bind="_customTypeId" />
+                                </label>
+                                <label class="as-field">
+                                    <span>Severity</span>
+                                    <select @bind="_customTypeSeverity">
+                                        <option value="low">low</option>
+                                        <option value="medium">medium</option>
+                                        <option value="high">high</option>
+                                        <option value="critical">critical</option>
+                                    </select>
+                                </label>
+                            </div>
+                        }
+
+                        <label class="as-field">
+                            <span>Detection Glob / Regex</span>
+                            <input class="mono" placeholder="e.g. **/*Service.cs, **/openapi.json" @bind="_newRuleGlob" />
+                        </label>
+
+                        <div class="as-subtabs">
+                            @foreach (var mode in new[] { "Form", "Plain English", "YAML" })
+                            {
+                                <button class="as-subtab @(_ruleInputMode == mode ? "on" : "")" @onclick="() => _ruleInputMode = mode">@mode</button>
+                            }
+                        </div>
+
+                        @if (_ruleInputMode == "Form")
+                        {
+                            <label class="as-field">
+                                <span>Technique Chain (add in resolving order)</span>
+                                <div class="as-row-inline">
+                                    <select class="as-mini-select grow" @bind="_selectedTechToAdd">
+                                        @foreach (var t in _d.Conflicts.Techniques)
+                                        {
+                                            <option value="@t.Id">[@t.Id] @t.Label (@t.Category · @(ConflictResolutionService.IsImplemented(t) ? "runs" : "not built yet"))</option>
+                                        }
+                                    </select>
+                                    <button class="as-btn small outline" @onclick="AddTechToDraftChain">+ Step</button>
+                                </div>
+                            </label>
+                            <div class="as-chain-chips">
+                                @for (int i = 0; i < _newRuleChain.Count; i++)
+                                {
+                                    var idx = i;
+                                    var tid = _newRuleChain[i];
+                                    <span class="as-chain-chip">
+                                        @tid
+                                        <button class="as-linkbtn danger" @onclick="() => _newRuleChain.RemoveAt(idx)">×</button>
+                                    </span>
+                                    @if (i < _newRuleChain.Count - 1) { <span class="as-step-arrow">→</span> }
+                                }
+                            </div>
+                        }
+                        else if (_ruleInputMode == "Plain English")
+                        {
+                            <label class="as-field">
+                                <span>Describe the conflict &amp; resolution in plain English</span>
+                                <textarea rows="3" placeholder="e.g. For Flutter generated files (*.g.dart) always regenerate with build_runner or take theirs, then verify build passes." @bind="_plainEnglishRulePrompt"></textarea>
+                            </label>
+                        }
+                        else if (_ruleInputMode == "YAML")
+                        {
+                            <label class="as-field">
+                                <span>Rule YAML <small>keys: id, name, when (conflictTypes, gitCodes, branches, operations), chain, verify, else, approval, minConfidence, shadow</small></span>
+                                <textarea class="mono" rows="7" @bind="_yamlRuleSnippet"></textarea>
+                            </label>
+                            @if (_yamlError != null)
+                            {
+                                <div class="as-alert"><i class="bi bi-exclamation-triangle"></i> @_yamlError</div>
+                            }
+                            <small class="as-muted">Gates and approval below are ignored in YAML mode — put them in the YAML.</small>
+                        }
+
+                        <div class="as-sub">Verification Gates</div>
+                        <div class="as-chips">
+                            @foreach (var g in new[] { ("build", "Build"), ("tests", "Tests"), ("contract", "Contract"), ("sast", "SAST") })
+                            {
+                                bool on = _newRuleGates.Contains(g.Item1);
+                                <button class="as-chipbtn @(on ? "on" : "")" @onclick="() => ToggleNewRuleGate(g.Item1)">
+                                    <i class="bi @(on ? "bi-check-square-fill" : "bi-square")"></i> @g.Item2
+                                </button>
+                            }
+                        </div>
+
+                        <label class="as-field">
+                            <span>Approval &amp; Bypass Policy</span>
+                            <select @bind="_newRuleApprovalMode">
+                                <option value="Auto Bypass">Auto Bypass (when score ≤ AutoMax)</option>
+                                <option value="Auto + Notify">Auto + Notify</option>
+                                <option value="Ask">Ask Human Approval</option>
+                                <option value="Locked Floor">Locked Floor (Never Bypass)</option>
+                            </select>
+                        </label>
+
+                        <button class="as-btn primary" style="width:100%; justify-content:center;" @onclick="AddManualResolutionRule">
+                            <i class="bi bi-plus-lg"></i> Add Resolution Rule
+                        </button>
+                    </div>
+                </div>
+
+                @* ── Card 4: 2-Layer Taxonomy Reference (13 Git Structural Codes + 32 Techniques) ── *@
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-diagram-3 ic blue"></i><div><div class="t">Git Structural Conflict Codes (13)</div><div class="s">Parsed directly from <code>git status --porcelain=v2</code>.</div></div></div>
+                        <table class="as-table compact">
+                            <thead><tr><th>Code</th><th>Type</th><th>Meaning</th></tr></thead>
+                            <tbody>
+                                @foreach (var sc in ConflictSettings.StructuralGitCodes)
+                                {
+                                    <tr>
+                                        <td><span class="as-cls cls-execute mono">@sc.Code</span></td>
+                                        <td><b>@sc.Name</b></td>
+                                        <td class="as-muted">@sc.Meaning</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-cpu ic blue"></i><div><div class="t">Registered Resolution Techniques (@_d.Conflicts.Techniques.Count)</div><div class="s">Git-native (T1–T15), Structural/AST (S1–S9), AI (A1–A4), and Terminal (H1–H4).</div></div></div>
+                        <div style="max-height:310px; overflow-y:auto;">
+                            <table class="as-table compact">
+                                <thead><tr><th>ID</th><th>Technique</th><th>Category</th><th>Risk</th><th>Runs?</th></tr></thead>
+                                <tbody>
+                                    @foreach (var t in _d.Conflicts.Techniques)
+                                    {
+                                        <tr>
+                                            <td class="mono"><b>@t.Id</b></td>
+                                            <td><b>@t.Label</b><div class="as-desc mono">@t.CommandOrHint</div></td>
+                                            <td><span class="as-planned">@t.Category</span></td>
+                                            <td><span class="as-cls @(t.Risk == "high" ? "cls-destructive" : t.Risk == "medium" ? "cls-outward" : "cls-read")">@t.Risk</span></td>
+                                            <td>@if (ConflictResolutionService.IsImplemented(t)) { <span class="as-cls cls-read">yes</span> } else { <span class="as-notactive">not built yet</span> }</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                break;
+
+            case "cherry":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-bezier2 ic blue"></i><div><div class="t">Cherry-Pick Techniques &amp; Flags <span class="as-notactive" title="Only -x (traceable) and the mainline parent are used by the cherry_pick tool. Dedupe, revert guard, empty handling and order are not used yet.">Not active yet</span></div><div class="s">Configure git cherry-pick safety flags, patch-id deduplication, and 3-way fallback.</div></div></div>
+                        <div class="as-row2">
+                            <label class="as-toggle">
+                                <input type="checkbox" @bind="_d.CherryPick.Traceable" />
+                                <span class="sw"></span>
+                                <span><b>Traceable Pick (-x trailer)</b><br /><small>Appends "(cherry picked from commit …)"</small></span>
+                            </label>
+                            <label class="as-toggle">
+                                <input type="checkbox" @bind="_d.CherryPick.DedupeByPatchId" />
+                                <span class="sw"></span>
+                                <span><b>Dedupe by Patch-ID (git cherry -v)</b><br /><small>Skip commits already applied on target</small></span>
+                            </label>
+                            <label class="as-toggle">
+                                <input type="checkbox" @bind="_d.CherryPick.RevertOfRevertGuard" />
+                                <span class="sw"></span>
+                                <span><b>Revert-of-Revert Guard</b><br /><small>Detect Revert pairs so reverted code isn't resurrected</small></span>
+                            </label>
+                            <label class="as-toggle">
+                                <input type="checkbox" @bind="_d.CherryPick.ThreeWayBlobFallback" />
+                                <span class="sw"></span>
+                                <span><b>3-Way Blob Fallback (-3)</b><br /><small>Synthesize 3-way merge base via blob SHA</small></span>
+                            </label>
+                        </div>
+                        <label class="as-field">
+                            <span>Empty Commit Handling</span>
+                            <select @bind="_d.CherryPick.EmptyHandling">
+                                <option value="drop">Empty Commit Handling: Drop (--empty=drop)</option>
+                                <option value="keep">Empty Commit Handling: Keep (--empty=keep)</option>
+                                <option value="stop">Empty Commit Handling: Stop (--empty=stop)</option>
+                            </select>
+                        </label>
+                        <label class="as-field">
+                            <span>Merge-Commit Mainline Parent</span>
+                            <input class="mono" type="number" min="1" max="2" @bind="_d.CherryPick.MainlineParent" />
+                            <small>Default <code>-m 1</code> (parent 1 = target mainline branch).</small>
+                        </label>
+                    </div>
+
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-layers ic blue"></i><div><div class="t">Backport &amp; Multi-Repo Group Policy <span class="as-notactive" title="Backport targets and multi-repo group picks are not implemented yet.">Not active yet</span></div><div class="s">Configure hotfix backport branches and cross-project producer-first ordering.</div></div></div>
+                        <label class="as-field">
+                            <span>Protected Target Branches (comma-separated)</span>
+                            <input class="mono" value="@string.Join(", ", _d.CherryPick.BackportTargets)" @onchange="e => _d.CherryPick.BackportTargets = SplitList(e.Value?.ToString())" />
+                        </label>
+                        <label class="as-field">
+                            <span>Backport Mode</span>
+                            <select @bind="_d.CherryPick.BackportMode">
+                                <option value="branch-pr">Backport Mode: Create Backport Branch + PR (backport/&lt;sha&gt;-release/*)</option>
+                                <option value="direct-if-unprotected">Backport Mode: Direct Pick on Non-Protected Branches</option>
+                            </select>
+                        </label>
+                        <label class="as-field">
+                            <span>Commit Order</span>
+                            <select @bind="_d.CherryPick.CommitOrder">
+                                <option value="topological">Commit Order: Topological (Oldest to Newest)</option>
+                                <option value="author-date">Commit Order: Author Timestamp</option>
+                            </select>
+                        </label>
+                        <label class="as-toggle" style="background:var(--as-blue-soft); padding:10px 12px; border-radius:8px; border:1px solid #BFD3FF;">
+                            <input type="checkbox" @bind="_d.CherryPick.MultiProjectGroupPick" />
+                            <span class="sw"></span>
+                            <span><b>Multi-Project Group Pick: Producers First → Verify Consumer Contracts</b><br /><small>Applies backports to backend producer repos first, runs ContractEngine, then updates consumers.</small></span>
+                        </label>
+                    </div>
+                </div>
+
+                @RenderSimulatorCard()
+                break;
+
+            case "sync":
+                <div class="as-card wide">
+                    <div class="as-card-head">
+                        <i class="bi bi-arrow-repeat ic blue"></i>
+                        <div><div class="t">Registered repositories</div><div class="s">Background sync worker. Auto-commit and auto-push only touch branches on each repo's allowlist, and push only fast-forwards to the tracked upstream.</div></div>
+                    </div>
+                    <table class="as-table">
+                        <thead><tr><th>Repository</th><th>Fetch</th><th>Commit</th><th>Push</th><th>Branch allowlist (comma-separated)</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var r in _d.GitSync.Repos)
+                            {
+                                <tr>
+                                    <td class="mono small">@r.Repo</td>
+                                    <td><input type="checkbox" @bind="r.AutoFetch" /></td>
+                                    <td><input type="checkbox" @bind="r.AutoCommit" /></td>
+                                    <td><input type="checkbox" @bind="r.AutoPush" /></td>
+                                    <td><input class="mono" value="@string.Join(", ", r.BranchAllowlist)" @onchange="e => r.BranchAllowlist = SplitList(e.Value?.ToString())" placeholder="e.g. feature/me" /></td>
+                                    <td><button class="as-icon" title="Stop syncing" @onclick="() => _d.GitSync.Repos.Remove(r)"><i class="bi bi-trash"></i></button></td>
+                                </tr>
+                            }
+                            @if (_d.GitSync.Repos.Count == 0)
+                            {
+                                <tr><td colspan="6" class="as-muted">No repositories. Turn on Auto-Sync in Repository, or add one below.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                    <div class="as-row-inline">
+                        <input class="mono grow" @bind="_newRepo" @bind:event="oninput" placeholder="D:\path\to\repo" />
+                        <button class="as-btn outline" @onclick="AddRepo" disabled="@string.IsNullOrWhiteSpace(_newRepo)"><i class="bi bi-plus-lg"></i> Add repository</button>
+                    </div>
+                </div>
+                <div class="as-card wide">
+                    <div class="as-card-head">
+                        <i class="bi bi-pc-display ic blue"></i>
+                        <div><div class="t">Platform agent (this PC)</div><div class="s">Registers this PC with Project Syncro while you're signed in. When an admin assigns you a task with a repo, this PC clones it into the workspace folder, checks out the task branch and turns on the commit scope guard — then reports back to the admin's Agents tab.</div></div>
+                        <span class="as-grow"></span>
+                        <span class="as-status @(AgentStatus.State == "online" ? "connected" : AgentStatus.State == "error" ? "failed" : "missing")">● @AgentStateText()</span>
+                    </div>
+                    <div class="as-row2">
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.PlatformAgent.Enabled" /><span class="sw"></span><span><b>Act as a platform agent</b><br /><small>Register, send heartbeats every minute and check for jobs every 30 seconds.</small></span></label>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.PlatformAgent.AutoAcceptSetupJobs" /><span class="sw"></span><span><b>Auto-accept setup jobs for my tasks</b><br /><small>Off: each setup job waits in the approval inbox. On: it runs and shows a toast. Permissions, deny lists and floors still apply.</small></span></label>
+                        <label class="as-field"><span>PC name shown to admins</span><input @bind="_d.PlatformAgent.DeviceName" placeholder="@Syncro.Desktop.Services.Agent.Platform.DeviceIdentity.DefaultName" /></label>
+                        <label class="as-field"><span>Workspace folder</span><input class="mono" @bind="_d.PlatformAgent.WorkspaceRoot" placeholder="@Syncro.Desktop.Services.Agent.Platform.SetupTaskJobHandler.WorkspaceRoot(new AgentPolicy())" /></label>
+                    </div>
+                    <div class="as-muted">
+                        Device <span class="mono small">@Device.DeviceId</span>
+                        · registered @(AgentStatus.RegisteredAt?.ToString("HH:mm:ss") ?? "—")
+                        · last heartbeat @(AgentStatus.LastHeartbeatAt?.ToString("HH:mm:ss") ?? "—")
+                        · @AgentStatus.QueuedOnPlatform job(s) waiting on the platform
+                        @if (!string.IsNullOrEmpty(AgentStatus.CurrentJob)) { <span> · now: <b>@AgentStatus.CurrentJob</b></span> }
+                    </div>
+                    @if (!string.IsNullOrEmpty(AgentStatus.LastError) && AgentStatus.State == "error")
+                    {
+                        <div class="as-alert"><i class="bi bi-exclamation-triangle"></i> @AgentStatus.LastError</div>
+                    }
+                    <div class="as-row-inline">
+                        <button class="as-btn small outline" @onclick="() => AgentWorker.CheckNow()" disabled="@(AgentStatus.State != "online")"><i class="bi bi-arrow-repeat"></i> Check for jobs now</button>
+                        @if (Dirty) { <span class="as-muted">Save changes to apply them to the agent.</span> }
+                    </div>
+                    @if (AgentStatus.Log.Count > 0)
+                    {
+                        <pre class="as-agentlog">@string.Join("\n", AgentStatus.Log)</pre>
+                    }
+                </div>
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-clock ic blue"></i><div><div class="t">Interval &amp; Pull Strategy <span class="as-notactive" title="The fetch interval is used. Pull strategy is not — pulls are fast-forward only.">Not active yet</span></div><div class="s">How often each registered repo is fetched and how pulls behave.</div></div></div>
+                        <label class="as-field"><span>Fetch interval (minutes)</span><input type="number" min="1" max="120" @bind="_d.GitSync.IntervalMinutes" /></label>
+                        <label class="as-field">
+                            <span>Pull strategy</span>
+                            <select @bind="_d.GitSync.PullStrategy">
+                                <option value="ff-only">Fast-forward only (--ff-only)</option>
+                                <option value="rebase">Rebase local commits (--rebase)</option>
+                                <option value="merge">Standard 3-way merge</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-sliders ic blue"></i><div><div class="t">Git Conflict &amp; Rerere Defaults <span class="as-notactive" title="Saved, but Syncro does not apply these to git config yet.">Not active yet</span></div><div class="s">Applied automatically to managed repositories.</div></div></div>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.GitSync.AutoStash" /><span class="sw"></span><span><b>Auto-stash dirty worktree before pull/rebase</b></span></label>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.GitSync.RerereEnabled" /><span class="sw"></span><span><b>Enable Git rerere (reuse recorded resolution)</b></span></label>
+                        <label class="as-field">
+                            <span>Conflict marker style</span>
+                            <select @bind="_d.GitSync.ConflictStyle">
+                                <option value="zdiff3">zdiff3 (includes base ancestor block)</option>
+                                <option value="diff3">diff3</option>
+                                <option value="merge">merge (standard 2-way markers)</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+                break;
+
+            case "commit":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-code-slash ic blue"></i><div><div class="t">Commit Message Format</div><div class="s">How agent-authored and conflict-resolution commits are formatted.</div></div></div>
+                        <label class="as-toggle">
+                            <input type="checkbox" @bind="_d.CommitStyle.ConventionalCommits" />
+                            <span class="sw"></span>
+                            <span><b>Enforce Conventional Commits</b><br /><small>e.g. <code>fix(db-pool): handle connection exhaustion</code></small></span>
+                        </label>
+                        <label class="as-field"><span>Commit Template</span><input class="mono" @bind="_d.CommitStyle.Template" /></label>
+                        <label class="as-field"><span>Max Subject Length</span><input type="number" min="50" max="120" @bind="_d.CommitStyle.MaxSubjectLength" /></label>
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-patch-check ic blue"></i><div><div class="t">Trailers &amp; Cryptographic Signing</div><div class="s">Audit trailers appended to automated commits.</div></div></div>
+                        <StringListEditor Items="_d.CommitStyle.Trailers" Placeholder="e.g. Signed-off-by: Syncro Agent" />
+                        <label class="as-field top">
+                            <span>Commit Signing</span>
+                            <select @bind="_d.CommitStyle.SigningMode">
+                                <option value="none">None</option>
+                                <option value="gpg">GPG Sign (-S)</option>
+                                <option value="ssh">SSH Key Sign</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+                break;
+
+            case "prs":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-git ic blue"></i><div><div class="t">Pull Request Defaults</div><div class="s">Used when the agent opens Incident PRs or Backport PRs.</div></div></div>
+                        <label class="as-field"><span>Default Base Branch</span><input class="mono" @bind="_d.PullRequests.DefaultBaseBranch" /></label>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.PullRequests.OpenAsDraft" /><span class="sw"></span><span><b>Open agent PRs as Draft by default</b></span></label>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.PullRequests.ReadGithubBranchProtection" /><span class="sw"></span><span><b>Query GitHub branch protection rules before push</b></span></label>
+                        <div class="as-sub">Default Labels</div>
+                        <StringListEditor Items="_d.PullRequests.DefaultLabels" Placeholder="e.g. sre-auto-fix" />
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-card-text ic blue"></i><div><div class="t">PR Body Template</div><div class="s">Populated with incident root cause, evidence, and verification gate results.</div></div></div>
+                        <textarea class="mono" rows="8" @bind="_d.PullRequests.BodyTemplate"></textarea>
+                    </div>
+                </div>
+                break;
+
+            case "inheritance":
+            case "overrides":
+                <div class="as-card wide">
+                    <div class="as-card-head"><i class="bi bi-stack ic blue"></i><div><div class="t">4-Tier Scope Inheritance Hierarchy</div><div class="s">Precedence: <b>Branch &gt; Project (.syncro/agent-policy.yaml) &gt; Workspace Group &gt; Global</b>. Rules marked <code>Final</code> cannot be loosened by lower scopes.</div></div></div>
+                    <table class="as-table">
+                        <thead><tr><th>Setting / Policy Key</th><th>Effective Value</th><th>Source Scope</th><th>Lock Status</th></tr></thead>
+                        <tbody>
+                            <tr><td><b>Autonomy Level</b></td><td><span class="as-cls cls-localwrite">@_d.Bypass.Level</span></td><td><span class="as-planned">@_d.Scope</span></td><td>Overridable</td></tr>
+                            <tr><td><b>Decision Bands (Auto / Notify / Ask)</b></td><td class="mono">@_d.Bypass.AutoMax / @_d.Bypass.NotifyMax / @_d.Bypass.AskMax</td><td><span class="as-planned">Global</span></td><td>Overridable</td></tr>
+                            <tr><td><b>Rule #1: secrets/env</b></td><td>Force Human Review (H1)</td><td><span class="as-planned">Global Sacred Floor</span></td><td><span class="as-cls cls-destructive">FINAL LOCKED</span></td></tr>
+                            <tr><td><b>Conflict File Order</b></td><td class="mono">@_d.Conflicts.FileOrder</td><td><span class="as-planned">@_d.Scope</span></td><td>Overridable</td></tr>
+                            <tr><td><b>Cherry-Pick Traceable (-x)</b></td><td>@(_d.CherryPick.Traceable ? "Enabled" : "Disabled")</td><td><span class="as-planned">@_d.Scope</span></td><td>Overridable</td></tr>
+                            <tr><td><b>Multi-Project Producer-First Pick</b></td><td>@(_d.CherryPick.MultiProjectGroupPick ? "Enabled" : "Disabled")</td><td><span class="as-planned">Global</span></td><td>Overridable</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                break;
+
+            case "import":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-magic ic blue"></i><div><div class="t">I3 · Plain English → Resolution Rule</div><div class="s">Describe how a conflict should be handled. A keyword match (not an AI call) drafts a rule in shadow mode for you to confirm.</div></div></div>
+                        <textarea rows="3" placeholder="e.g. For Flutter generated files (*.g.dart) always regenerate codegen or take theirs and verify build passes." @bind="_plainEnglishRulePrompt"></textarea>
+                        <div class="as-row-inline">
+                            <button class="as-btn outline" @onclick="PreviewPlainEnglishRule"><i class="bi bi-stars"></i> Draft Rule</button>
+                            @if (_draftedNlRule != null)
+                            {
+                                <button class="as-btn primary" @onclick="ConfirmDraftedNlRule"><i class="bi bi-check2"></i> Confirm &amp; Add to Rules</button>
+                            }
+                        </div>
+                        @if (_draftedNlRule != null)
+                        {
+                            <div class="as-preview dec-auto">
+                                <div class="as-preview-top"><b>Drafted: @_draftedNlRule.Name</b><span>Order #@_draftedNlRule.Order · @_draftedNlRule.ApprovalMode</span></div>
+                                <div class="as-preview-f">Chain: <b>@ConflictSvc.DescribeChain(_draftedNlRule.Chain, _d)</b></div>
+                                <div class="as-preview-f">Verify Gates: <b>@string.Join(", ", _draftedNlRule.VerifyGates)</b></div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-file-earmark-code ic blue"></i><div><div class="t">I4 · Import from .gitattributes &amp; Stack Templates (I6)</div><div class="s">Bootstrap rules from <code>merge=union</code> / <code>merge=ours</code> lines in the repository's <code>.gitattributes</code> (same folder as the history scan below), or from stack packs.</div></div></div>
+                        <div class="as-chips">
+                            <button class="as-btn small outline" @onclick='() => ApplyStackTemplate("dotnet")'><i class="bi bi-box"></i> + .NET 9 MAUI Pack</button>
+                            <button class="as-btn small outline" @onclick='() => ApplyStackTemplate("flutter")'><i class="bi bi-phone"></i> + Flutter / Dart Pack</button>
+                            <button class="as-btn small outline" @onclick='() => ApplyStackTemplate("nextjs")'><i class="bi bi-globe"></i> + Next.js / TypeScript Pack</button>
+                            <button class="as-btn small outline" @onclick="ImportRepoGitAttributes"><i class="bi bi-git"></i> Import Repo .gitattributes</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="as-card wide">
+                    <div class="as-card-head"><i class="bi bi-clock-history ic blue"></i><div><div class="t">I5 · Learn from Git Merge History</div><div class="s">Replays recent merge commits with git merge-tree to find which files really conflicted. Git doesn't record how they were resolved.</div></div></div>
+                    <div class="as-row-inline">
+                        <input class="mono grow" @bind="_simRepo" placeholder="Repository folder" />
+                        <button class="as-btn small primary" @onclick="ScanHistory" disabled="@_historyBusy"><i class="bi bi-search"></i> @(_historyBusy ? "Scanning…" : "Scan last 40 merges")</button>
+                    </div>
+                    @if (_history != null)
+                    {
+                        <div class="as-alert @(_history.Ok ? "subtle" : "")"><i class="bi bi-info-circle"></i> @_history.Message</div>
+                    }
+                    @if (_history is { Ok: true, Suggestions.Count: > 0 })
+                    {
+                        <table class="as-table">
+                            <thead><tr><th>Pattern</th><th>Type</th><th>Seen</th><th>Handled today by</th><th></th></tr></thead>
+                            <tbody>
+                                @foreach (var s in _history.Suggestions)
+                                {
+                                    <tr>
+                                        <td class="mono small"><b>@s.Pattern</b><div class="as-desc">@s.Summary</div></td>
+                                        <td><span class="as-planned">@s.ConflictTypeId</span></td>
+                                        <td><b>@s.ObservedCount×</b><div class="as-desc">@s.MergeCount merge(s)</div></td>
+                                        <td><span class="as-chain-chip">@s.SuggestedChain</span></td>
+                                        <td><button class="as-btn small primary" @onclick="() => PromoteLearnedSuggestion(s)" disabled="@(s.ChainIds.Count == 0)">+ Add Rule</button></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+                break;
+
+            case "review":
+                <div class="as-card wide">
+                    <div class="as-card-head">
+                        <i class="bi bi-inbox ic blue"></i>
+                        <div><div class="t">Pending approvals</div><div class="s">Also available from the Guard pill in the header and in the IDE window.</div></div>
+                        <span class="as-grow"></span>
+                        @if (Approvals.PendingCount > 1 && Store.Current.Approvals.AllowBatchApprove)
+                        {
+                            <button class="as-btn outline small" @onclick="() => Approvals.ApproveAllLowRisk()">Approve all low-risk</button>
+                        }
+                    </div>
+                    <div class="as-cards">
+                        @foreach (var r in Approvals.Pending) { <ApprovalCard @key="r.Id" Request="r" /> }
+                        @if (Approvals.PendingCount == 0) { <div class="as-muted">Nothing is waiting for you.</div> }
+                    </div>
+                </div>
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-hourglass-split ic blue"></i><div><div class="t">Timeout</div><div class="s">If nobody answers, the request is denied — never approved.</div></div></div>
+                        <label class="as-field"><span>Minutes</span><input type="number" min="1" max="1440" @bind="_d.Approvals.TimeoutMinutes" /></label>
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-ui-checks ic blue"></i><div><div class="t">Behaviour</div><div class="s">Batch approvals and notifications.</div></div></div>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.Approvals.AllowBatchApprove" /><span class="sw"></span><span><b>Allow "Approve all low-risk"</b><br /><small>Never applies to requests that need typed confirmation.</small></span></label>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.Approvals.NotifyOnAutoNotify" /><span class="sw"></span><span><b>Notify on Auto + notify</b><br /><small>Show a toast when the agent acts on its own in the Notify band.</small></span></label>
+                    </div>
+                </div>
+                break;
+
+            case "automation":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-robot ic blue"></i><div><div class="t">Background SRE Triggers</div><div class="s">When the agent should automatically wake up and evaluate rules.</div></div></div>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.Automation.TriggerOnConflict" /><span class="sw"></span><span><b>Trigger on Git Merge / Rebase / Cherry-Pick Conflict</b></span></label>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.Automation.TriggerOnContractDrift" /><span class="sw"></span><span><b>Trigger on Cross-Project API Contract Drift</b></span></label>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.Automation.TriggerOnBuildFail" /><span class="sw"></span><span><b>Trigger on Local Build / Test Regression</b></span></label>
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-lightbulb ic blue"></i><div><div class="t">Shadow Mode &amp; Adaptive Learning</div><div class="s">New rules can run in zero-write shadow mode before going live.</div></div></div>
+                        <label class="as-field"><span>Shadow runs required for newly created rules</span><input type="number" min="0" max="50" @bind="_d.Automation.ShadowRunsForNewRules" /></label>
+                        <label class="as-toggle"><input type="checkbox" @bind="_d.Automation.LearningSuggestOnly" /><span class="sw"></span><span><b>Suggest-only learning (never lower risk weights automatically)</b><br /><small>Proposes a rule after @_d.Automation.SuggestAfterApprovals identical approvals with 0 rollbacks.</small></span></label>
+                    </div>
+                </div>
+                break;
+
+            case "simulator":
+                @RenderSimulatorCard()
+                break;
+
+            case "audit":
+                <div class="as-card wide">
+                    <div class="as-card-head">
+                        <i class="bi bi-journal-text ic blue"></i>
+                        <div><div class="t">Recent decisions</div><div class="s">Last @Audit.Recent.Count entries. Full history: <span class="mono small">@Audit.FilePath</span></div></div>
+                        <span class="as-grow"></span>
+                        <input class="as-mini-search" placeholder="Filter…" @bind="_auditFilter" @bind:event="oninput" />
+                        <select class="as-mini-select" @bind="_auditOutcome">
+                            <option value="">All outcomes</option>
+                            <option value="ok">ok</option><option value="error">error</option><option value="blocked">blocked</option>
+                            <option value="denied">denied</option><option value="timeout">timeout</option><option value="saved">settings saved</option>
+                        </select>
+                        <button class="as-btn small" @onclick="OpenAuditFolder"><i class="bi bi-folder2-open"></i> Open folder</button>
+                    </div>
+                    <table class="as-table">
+                        <thead><tr><th>Time</th><th>Tool</th><th>Decision</th><th>Score</th><th>Outcome</th><th>By</th><th>Target</th></tr></thead>
+                        <tbody>
+                            @foreach (var e in FilteredAudit())
+                            {
+                                var key = e.Time.Ticks + e.Tool;
+                                <tr class="click" @onclick="() => _auditOpen = _auditOpen == key ? null : key">
+                                    <td class="small">@e.Time.ToString("MMM d HH:mm:ss")</td>
+                                    <td><b>@e.Tool</b><div class="as-desc">@e.Origin</div></td>
+                                    <td><span class="as-dec dec-@e.Decision.ToString().ToLowerInvariant()">@DecisionText(e.Decision)</span></td>
+                                    <td>@e.Score</td>
+                                    <td><span class="as-out out-@e.Outcome">@e.Outcome</span></td>
+                                    <td class="small">@e.Approver</td>
+                                    <td class="mono small trunc" title="@e.Target">@e.Target</td>
+                                </tr>
+                                @if (_auditOpen == key)
+                                {
+                                    <tr class="detail">
+                                        <td colspan="7">
+                                            @if (e.Floor != null) { <div><b>Why:</b> @e.Floor</div> }
+                                            @if (e.Branch != null) { <div><b>Branch:</b> @e.Branch</div> }
+                                            @foreach (var f in e.Factors) { <div>• @f</div> }
+                                            @if (e.DurationMs > 0) { <div><b>Ran for:</b> @e.DurationMs ms</div> }
+                                            <pre>@e.InputPreview</pre>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                    @if (!FilteredAudit().Any()) { <div class="as-muted pad">No entries yet. They appear as soon as the agent calls a tool or settings are saved.</div> }
+                </div>
+                break;
+
+            case "insights":
+                <div class="as-grid">
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-graph-up-arrow ic blue"></i><div><div class="t">Resolution &amp; Governance Metrics</div><div class="s">Counts from your policy and the last @Audit.Recent.Count audit entries. Auto-resolve and undo rates are not tracked yet.</div></div></div>
+                        <div class="as-row3 tight">
+                            <div><div class="as-muted">Active Rules</div><div style="font-size:22px; font-weight:700; color:#0066FF;">@_d.Conflicts.Rules.Count</div></div>
+                            <div><div class="as-muted">Techniques</div><div style="font-size:22px; font-weight:700; color:#15803D;">@_d.Conflicts.Techniques.Count</div></div>
+                            <div><div class="as-muted">Audit Decisions</div><div style="font-size:22px; font-weight:700; color:#0F172A;">@Audit.Recent.Count</div></div>
+                        </div>
+                    </div>
+                    <div class="as-card">
+                        <div class="as-card-head"><i class="bi bi-shield-check ic blue"></i><div><div class="t">Bypass Calibration Breakdown</div><div class="s">How the decider answered recent tool calls (from the audit log).</div></div></div>
+                        <div class="as-chips">
+                            <span class="as-chain-chip verify">Auto Bypass: @Audit.Recent.Count(x => x.Decision == Decision.Auto)</span>
+                            <span class="as-chain-chip">Auto + Notify: @Audit.Recent.Count(x => x.Decision == Decision.AutoNotify)</span>
+                            <span class="as-chain-chip">Asked Human: @Audit.Recent.Count(x => x.Decision is Decision.Ask or Decision.AskDoubleConfirm)</span>
+                            <span class="as-chain-chip floor">Blocked by Floor: @Audit.Recent.Count(x => x.Decision == Decision.Block)</span>
+                        </div>
+                    </div>
+                </div>
+                break;
+        }
+
+        <footer class="as-footer">
+            <span><i class="bi bi-info-circle"></i> <b>Effective scope: Global</b> · stored at <span class="mono small">@Store.FilePath</span></span>
+            <span class="as-grow"></span>
+            <span class="blue"><i class="bi bi-lock"></i> Every save is recorded in the audit log.</span>
+        </footer>
+    </section>
+
+    @if (_yaml != null)
+    {
+        <div class="as-modal-scrim" @onclick="() => _yaml = null"></div>
+        <div class="as-modal">
+            <div class="as-modal-head"><b>Agent policy (YAML export)</b><span class="as-grow"></span>
+                <button class="as-btn small" @onclick="CopyYaml"><i class="bi bi-clipboard"></i> Copy</button>
+                <button class="as-icon" @onclick="() => _yaml = null"><i class="bi bi-x-lg"></i></button></div>
+            <pre class="as-modal-body">@_yaml</pre>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string? Tab { get; set; }
+
+    private sealed record TabDef(string Id, string Label, string Icon, string Section, bool Built, string Phase, string Summary, string[] Plan, string Keywords = "");
+
+    private static readonly string[] Sections = { "AI", "Safety", "Git & Conflicts", "Projects", "Review" };
+
+    private static readonly TabDef[] Tabs =
+    {
+        new("model", "Model & Provider", "bi-database", "AI", true, "", "Choose models, budgets and context used by the Syncro agent.", Array.Empty<string>(), "key api groq temperature budget token offline"),
+        new("tools", "Tools & Capabilities", "bi-wrench", "AI", true, "", "What each tool does, and how the agent treats it.", Array.Empty<string>(), "mcp override block ask"),
+        new("context", "Context & Retrieval", "bi-file-earmark-text", "AI", false, "P6", "Select what source code and artifacts are provided to the model.", Array.Empty<string>(), "ast context pack ranking tokens"),
+        new("prompt", "System Prompt", "bi-chat-square-text", "AI", false, "P5", "Custom instructions and conflict resolver prompt templates per scope.", Array.Empty<string>(), "system prompt instructions template"),
+
+        new("privacy", "Safety & Privacy", "bi-incognito", "Safety", false, "P5", "Configure LLM data boundaries, secret redaction, and repo policy trust.", Array.Empty<string>(), "privacy redact deny local trust"),
+        new("guardrails", "Guardrails", "bi-exclamation-triangle", "Safety", true, "", "Control when the Syncro agent can bypass approval automatically and when it must never bypass.", Array.Empty<string>(), "autonomy bypass level floors protected branch risk weights"),
+        new("permissions", "Permissions", "bi-key", "Safety", true, "", "Shell commands, file paths and network hosts the agent may use.", Array.Empty<string>(), "shell allowlist deny path network domain"),
+        new("environments", "Environments & Freezes", "bi-snow", "Safety", true, "", "Which branches map to staging/production, and change freeze calendars.", Array.Empty<string>(), "production staging freeze cron"),
+
+        new("merge", "Merge & Conflict Resolution", "bi-sign-merge-left", "Git & Conflicts", true, "", "Configure conflict types, deterministic resolving order, and manual resolution rules.", Array.Empty<string>(), "conflict types resolution order cascade ast rerere zdiff3"),
+        new("cherry", "Cherry-Pick & Backport", "bi-code-slash", "Git & Conflicts", true, "", "Cherry-pick settings used by the cherry_pick tool, plus the merge simulator.", Array.Empty<string>(), "cherry-pick backport patch-id mainline"),
+        new("sync", "Sync & Pull", "bi-arrow-repeat", "Git & Conflicts", true, "", "Background fetch, guarded auto-commit and auto-push per repository.", Array.Empty<string>(), "auto-sync fetch push commit interval"),
+        new("commit", "Commit Style", "bi-file-code", "Git & Conflicts", false, "P4", "How agent commits are formatted, trailed, and cryptographically signed.", Array.Empty<string>(), "conventional commit trailers gpg ssh"),
+        new("prs", "Pull Requests", "bi-git", "Git & Conflicts", false, "P9", "Defaults for Incident and Backport pull requests opened by the agent.", Array.Empty<string>(), "pull request pr draft branch protection"),
+
+        new("inheritance", "Project Inheritance", "bi-stack", "Projects", false, "P5", "Global → Group → Project → Branch scope hierarchy and provenance.", Array.Empty<string>(), "scope inheritance hierarchy"),
+        new("overrides", "Project Overrides", "bi-folder", "Projects", false, "P5", "Inspect effective policy overrides across your workspace projects.", Array.Empty<string>(), "project overrides yaml"),
+        new("import", "Rule Import", "bi-box-arrow-in-down", "Projects", true, "", "Six ways to add conflict types and resolution rules: Form, YAML, Plain English, .gitattributes, Git History, and Stack Packs.", Array.Empty<string>(), "import plain english gitattributes history templates"),
+
+        new("review", "Human Review", "bi-person-check", "Review", true, "", "Pending approvals and how approvals behave.", Array.Empty<string>(), "approval inbox timeout batch"),
+        new("automation", "Automation", "bi-gear", "Review", false, "P4", "Shadow mode, background SRE triggers, and suggest-only learning.", Array.Empty<string>(), "automation shadow triggers learning"),
+        new("simulator", "Simulator", "bi-play-circle", "Review", true, "", "Simulate a merge with git merge-tree. Nothing in the repository changes.", Array.Empty<string>(), "simulator worktree replay test"),
+        new("audit", "Audit Log", "bi-journal-text", "Review", true, "", "Every agent decision and every settings save.", Array.Empty<string>(), "history log decisions"),
+        new("insights", "Insights", "bi-graph-up", "Review", true, "", "Counts of rules, techniques and agent decisions from the audit log.", Array.Empty<string>(), "insights metrics calibration")
+    };
+
+    private static readonly string[] Models =
+        { "openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b" };
+
+    private static readonly (string, string)[] ContextSourceOptions =
+        { ("both-sides", "Both sides"), ("base", "Base"), ("ast-neighbours", "AST neighbours"), ("commit-messages", "Commit messages"), ("linked-contract", "Linked contract") };
+
+    private static readonly (AutonomyLevel Level, int Index, string Title, string Desc)[] IndexedLevels =
+    {
+        (AutonomyLevel.Observe, 0, "Observe", "Read-only. Every change is blocked."),
+        (AutonomyLevel.Suggest, 1, "Suggest", "Asks before every change, command or network call."),
+        (AutonomyLevel.GuardedAuto, 2, "Guarded Auto", "Auto-bypass when score ≤ AutoMax & reversible."),
+        (AutonomyLevel.AutoNotify, 3, "Auto + Notify", "Runs up to the Notify band and shows a toast; the rest ask."),
+        (AutonomyLevel.FullAutoSandbox, 4, "Full Auto Sandbox", "Inside sandbox folders, runs up to the Ask band; elsewhere acts like Auto + Notify.")
+    };
+
+    /// <summary>Exactly the floors BypassDecider enforces in code (they can't be switched off here).</summary>
+    private static readonly string[] HardFloors =
+    {
+        "Destructive actions (delete a file, discard changes) are never automatic",
+        "Writes on protected branches need typed confirmation",
+        "Branches mapped to production need typed confirmation",
+        "Secrets files (.env, keys, certificates) need typed confirmation",
+        "Blocked paths and blocked shell lines are refused",
+        "Shell commands not on the allowlist ask",
+        "Hosts not on the network allowlist ask",
+        "Requests from the external editor ask",
+        "Tools not in the tool catalog ask",
+        "While Freeze now is on, every change asks",
+        "Unanswered approvals are denied at timeout",
+    };
+
+    private AgentPolicy _d = new();
+    private string _saved = "";
+    private string _tab = "model";
+    private string _search = "";
+    private string? _flash;
+    private string? _yaml;
+    private List<string> _knownProjects = new();
+
+    private enum KeyState { Unknown, Testing, Connected, Failed, Missing }
+    private KeyState _keyState = KeyState.Unknown;
+    private bool _editKey;
+    private string _keyInput = "";
+
+    private string _toolFilter = "";
+    private string _classFilter = "";
+    private string _pvTool = "WriteFile";
+    private string _pvOrigin = "agent";
+    private string _pvJson = "{ \"absolutePath\": \"D:\\\\DeveloperAI\\\\DEVOLOPER\\\\Syncro.Desktop\\\\README.md\", \"content\": \"hello\" }";
+
+    private string _testCmd = "", _testPath = "", _testUrl = "", _testBranch = "";
+    private string _newRepo = "";
+    private string _auditFilter = "", _auditOutcome = "";
+    private string? _auditOpen;
+
+    // ── Merge & Conflict Resolution manual builder state ──
+    private string _newRuleConflictType = "code-logic";
+    private string _customTypeId = "";
+    private string _customTypeSeverity = "medium";
+    private string _newRuleGlob = "**/*.cs, **/*.ts";
+    private string _ruleInputMode = "Form";
+    private string _selectedTechToAdd = "T2";
+    private List<string> _newRuleChain = new() { "T2", "S6", "A1" };
+    private List<string> _newRuleGates = new() { "build", "tests", "contract", "sast" };
+    private string _newRuleApprovalMode = "Auto + Notify";
+    private string _customScriptCommand = "";
+    private string _plainEnglishRulePrompt = "";
+    private string _yamlRuleSnippet = "id: custom-rule\nname: code-logic re-merge\nwhen:\n  conflictTypes: [code-logic]\n  gitCodes: [UU]\nchain: [T2]\nverify: [no-markers, build]\napproval: Ask\nshadow: true";
+    private ResolutionRule? _draftedNlRule;
+
+    // ── Simulator state ──
+    private string _simRepo = "";
+    private string _simSourceRef = "HEAD";
+    private string _simTargetRef = "main";
+    private SimulationReport? _simReport;
+    private bool _simBusy;
+    private HistoryScanResult? _history;
+    private bool _historyBusy;
+
+    private Syncro.Desktop.Services.Engine.LLM.GroqProvider? Groq => Llm as Syncro.Desktop.Services.Engine.LLM.GroqProvider;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Reload();
+        _keyState = Groq?.HasKey == true ? KeyState.Unknown : KeyState.Missing;
+        Approvals.Changed += Refresh;
+        Audit.Appended += OnAudit;
+        Usage.Changed += Refresh;
+        Store.Changed += OnStoreChanged;
+        AgentStatus.Changed += Refresh;
+
+        try
+        {
+            var projs = Projects.GetProjects();
+            _knownProjects = projs.Select(p => p.Name).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList();
+        }
+        catch { }
+
+        // Repository for simulator / history / import: the workspace root the app already remembers.
+        try { _simRepo = Microsoft.Maui.Storage.Preferences.Default.Get("__syncro_workspace_root__", ""); } catch { }
+        await Task.CompletedTask;
+    }
+
+    protected override void OnParametersSet()
+    {
+        if (!string.IsNullOrEmpty(Tab) && Tabs.Any(t => t.Id == Tab)) _tab = Tab!;
+    }
+
+    private string AgentStateText() => AgentStatus.State switch
+    {
+        "online" => "Online",
+        "signed-out" => "Sign in to connect",
+        "disabled" => "Off",
+        "error" => "Error",
+        _ => "Starting…",
+    };
+
+    private Task SelectTab(string id)
+    {
+        _tab = id;
+        return Task.CompletedTask;
+    }
+
+    private async Task RunSimulatorAndOpenTab()
+    {
+        if (_tab != "cherry" && _tab != "simulator") _tab = "simulator";
+        _simBusy = true;
+        StateHasChanged();
+        try { _simReport = await ConflictSvc.SimulateReplayAsync(_simRepo, _simSourceRef, _simTargetRef, _d); }
+        finally { _simBusy = false; }
+    }
+
+    private async Task RerunSimIfShown()
+    {
+        if (_simReport?.Ok == true) _simReport = await ConflictSvc.SimulateReplayAsync(_simRepo, _simSourceRef, _simTargetRef, _d);
+    }
+
+    private async Task ScanHistory()
+    {
+        _historyBusy = true;
+        StateHasChanged();
+        try { _history = await ConflictSvc.LearnFromHistoryAsync(_simRepo, _d); }
+        finally { _historyBusy = false; }
+    }
+
+    private RenderFragment RenderSimulatorCard() => __builder =>
+    {
+        <div class="as-card wide">
+            <div class="as-card-head">
+                <i class="bi bi-terminal-split ic blue"></i>
+                <div>
+                    <div class="t">Policy Simulator</div>
+                    <div class="s">Merges the source into the target with <code>git merge-tree</code> and shows what each rule would do. Nothing in the repository changes, and nothing is built or tested.</div>
+                </div>
+            </div>
+            <div class="as-row-inline">
+                <input class="mono grow" @bind="_simRepo" placeholder="Repository folder" />
+                <input class="as-mini-search mono" style="width:170px;" @bind="_simSourceRef" placeholder="Source (branch / commit)" />
+                <input class="as-mini-search mono" style="width:150px;" @bind="_simTargetRef" placeholder="Target branch" />
+                <button class="as-btn small primary" @onclick="RunSimulatorAndOpenTab" disabled="@_simBusy"><i class="bi bi-play-fill"></i> @(_simBusy ? "Running…" : "Simulate")</button>
+            </div>
+            @if (_simReport != null)
+            {
+                <div class="as-alert @(_simReport.Ok ? "subtle" : "")"><i class="bi @(_simReport.Ok ? "bi-info-circle" : "bi-exclamation-triangle")"></i> @_simReport.Message</div>
+            }
+            @if (_simReport is { Ok: true, Outcomes.Count: > 0 })
+            {
+                <table class="as-table">
+                    <thead>
+                        <tr><th>Conflicted file</th><th>Type</th><th>Rule &amp; chain</th><th>Gates</th><th>Decision</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _simReport.Outcomes)
+                        {
+                            <tr>
+                                <td class="mono"><b>@row.FilePath</b></td>
+                                <td><span class="as-planned">@row.GitCode · @row.ConflictTypeId</span></td>
+                                <td><b>@row.RuleSummary</b><div class="as-desc">@row.ChainSummary</div></td>
+                                <td>
+                                    <div class="as-chain-chips">
+                                        @foreach (var g in row.Gates)
+                                        {
+                                            <span class="as-chain-chip @(g.Status == "passed" ? "verify" : g.Status == "failed" ? "floor" : "")" title="@g.Detail">@g.Gate: @g.Status</span>
+                                        }
+                                        @if (row.Gates.Count == 0) { <span class="as-muted">none</span> }
+                                    </div>
+                                </td>
+                                <td title="@string.Join(" · ", row.Factors)">
+                                    <span class="as-badge-pill @(row.Decision == Decision.Block ? "floor" : row.Decision == Decision.Auto ? "auto" : row.Decision == Decision.AutoNotify ? "notify" : "ask")">@row.DecisionBadge</span>
+                                    @if (!string.IsNullOrEmpty(row.Floor)) { <div class="as-desc">@row.Floor</div> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            else if (_simReport == null)
+            {
+                <div class="as-muted">Pick a repository and two refs, then press Simulate.</div>
+            }
+        </div>
+    };
+
+    private void MoveRule(ResolutionRule rule, int delta)
+    {
+        var ordered = _d.Conflicts.Rules.OrderBy(r => r.Order).ToList();
+        int idx = ordered.IndexOf(rule);
+        int targetIdx = idx + delta;
+        if (idx < 0 || targetIdx < 0 || targetIdx >= ordered.Count) return;
+        if (ordered[targetIdx].Final) return; // cannot move above a locked floor rule
+
+        (ordered[idx].Order, ordered[targetIdx].Order) = (ordered[targetIdx].Order, ordered[idx].Order);
+    }
+
+    private void RemoveRule(ResolutionRule rule)
+    {
+        if (rule.Final) return;
+        _d.Conflicts.Rules.Remove(rule);
+        int order = 1;
+        foreach (var r in _d.Conflicts.Rules.OrderBy(x => x.Order))
+            r.Order = order++;
+    }
+
+    private void AddTechToDraftChain()
+    {
+        if (!string.IsNullOrWhiteSpace(_selectedTechToAdd) && !_newRuleChain.Contains(_selectedTechToAdd))
+            _newRuleChain.Add(_selectedTechToAdd);
+    }
+
+    private void ToggleNewRuleGate(string gateId)
+    {
+        if (!_newRuleGates.Remove(gateId))
+            _newRuleGates.Add(gateId);
+    }
+
+    private string? _yamlError;
+
+    private sealed class YamlRuleWhen
+    {
+        public List<string>? ConflictTypes { get; set; }
+        public List<string>? GitCodes { get; set; }
+        public List<string>? Branches { get; set; }
+        public List<string>? Operations { get; set; }
+    }
+
+    private sealed class YamlRule
+    {
+        public string? Id { get; set; }
+        public string? Name { get; set; }
+        public YamlRuleWhen? When { get; set; }
+        public List<string>? Chain { get; set; }
+        public List<string>? Verify { get; set; }
+        public string? Else { get; set; }
+        public string? Approval { get; set; }
+        public double? MinConfidence { get; set; }
+        public bool? Shadow { get; set; }
+    }
+
+    /// <summary>Parses the YAML box into a rule and checks every id against the current policy.</summary>
+    private ResolutionRule? ParseYamlRule(out string? error)
+    {
+        error = null;
+        YamlRule? y;
+        try
+        {
+            y = new YamlDotNet.Serialization.DeserializerBuilder()
+                .WithNamingConvention(YamlDotNet.Serialization.NamingConventions.CamelCaseNamingConvention.Instance)
+                .Build()
+                .Deserialize<YamlRule>(_yamlRuleSnippet ?? "");
+        }
+        catch (Exception ex) { error = "YAML error: " + (ex.InnerException?.Message ?? ex.Message); return null; }
+
+        if (y == null) { error = "The YAML is empty."; return null; }
+        var types = y.When?.ConflictTypes ?? new List<string>();
+        if (types.Count == 0) { error = "when.conflictTypes is required (use [\"*\"] for all)."; return null; }
+        var unknownTypes = types.Where(t => t != "*" && !_d.Conflicts.ConflictTypes.Any(c => c.Id.Equals(t, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (unknownTypes.Count > 0) { error = "Unknown conflict type(s): " + string.Join(", ", unknownTypes); return null; }
+        var chain = y.Chain ?? new List<string>();
+        var unknownTech = chain.Where(t => !_d.Conflicts.Techniques.Any(x => x.Id.Equals(t, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (unknownTech.Count > 0) { error = "Unknown technique(s): " + string.Join(", ", unknownTech); return null; }
+        var gates = y.Verify ?? new List<string>();
+        var unknownGates = gates.Where(g => !_d.Conflicts.Gates.Any(x => x.Id.Equals(g, StringComparison.OrdinalIgnoreCase))).ToList();
+        if (unknownGates.Count > 0) { error = "Unknown gate(s): " + string.Join(", ", unknownGates) + ". Known: " + string.Join(", ", _d.Conflicts.Gates.Select(g => g.Id)); return null; }
+        var approval = y.Approval ?? "Ask";
+        if (approval is not ("Auto Bypass" or "Auto + Notify" or "Ask" or "Locked Floor")) { error = "approval must be one of: Auto Bypass, Auto + Notify, Ask, Locked Floor."; return null; }
+
+        int nextOrder = (_d.Conflicts.Rules.Count > 0 ? _d.Conflicts.Rules.Max(r => r.Order) : 0) + 1;
+        var id = string.IsNullOrWhiteSpace(y.Id) ? $"rule-yaml-{nextOrder}" : y.Id.Trim();
+        if (_d.Conflicts.Rules.Any(r => r.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) { error = $"A rule with id '{id}' already exists."; return null; }
+
+        return new ResolutionRule
+        {
+            Order = nextOrder,
+            Id = id,
+            Name = string.IsNullOrWhiteSpace(y.Name) ? id : y.Name.Trim(),
+            ConflictTypes = types,
+            GitCodes = y.When?.GitCodes is { Count: > 0 } gc ? gc : new List<string> { "UU" },
+            Branches = y.When?.Branches is { Count: > 0 } br ? br : new List<string> { "*" },
+            Operations = y.When?.Operations is { Count: > 0 } op ? op : new List<string> { "merge", "rebase", "cherry-pick", "pull" },
+            Chain = chain,
+            VerifyGates = gates,
+            ElseAction = string.IsNullOrWhiteSpace(y.Else) ? "H1" : y.Else.Trim(),
+            MinConfidence = y.MinConfidence ?? 0.85,
+            ApprovalMode = approval,
+            ShadowMode = y.Shadow ?? false,
+        };
+    }
+
+    private async Task AddManualResolutionRule()
+    {
+        _yamlError = null;
+        if (_ruleInputMode == "YAML")
+        {
+            var rule = ParseYamlRule(out var err);
+            if (rule == null) { _yamlError = err; return; }
+            _d.Conflicts.Rules.Add(rule);
+            Flash($"Added rule #{rule.Order}: {rule.Name} (from YAML)");
+            await RerunSimIfShown();
+            return;
+        }
+
+        if (_ruleInputMode == "Plain English" && !string.IsNullOrWhiteSpace(_plainEnglishRulePrompt))
+        {
+            var nlRule = ConflictSvc.DraftRuleFromPlainEnglish(_plainEnglishRulePrompt, _d);
+            _d.Conflicts.Rules.Add(nlRule);
+            _plainEnglishRulePrompt = "";
+            Flash($"Added rule #{nlRule.Order}: {nlRule.Name}");
+            await RerunSimIfShown();
+            return;
+        }
+
+        string typeId = _newRuleConflictType;
+        if (typeId == "__custom__")
+        {
+            typeId = string.IsNullOrWhiteSpace(_customTypeId) ? "custom-type-" + (_d.Conflicts.ConflictTypes.Count + 1) : _customTypeId.Trim();
+            if (!_d.Conflicts.ConflictTypes.Any(c => c.Id.Equals(typeId, StringComparison.OrdinalIgnoreCase)))
+            {
+                _d.Conflicts.ConflictTypes.Add(new ConflictTypeDef
+                {
+                    Id = typeId,
+                    Label = typeId,
+                    Globs = SplitList(_newRuleGlob),
+                    Priority = 60,
+                    Severity = _customTypeSeverity,
+                    Description = "User-defined custom conflict type"
+                });
+            }
+            _newRuleConflictType = typeId;
+        }
+
+        if (_ruleInputMode == "Script" && !string.IsNullOrWhiteSpace(_customScriptCommand))
+        {
+            var customTechId = "C_" + (_d.Conflicts.Techniques.Count + 1);
+            _d.Conflicts.Techniques.Add(new TechniqueDef
+            {
+                Id = customTechId,
+                Label = "Custom Script (" + customTechId + ")",
+                Category = "custom",
+                CommandOrHint = _customScriptCommand.Trim(),
+                Risk = "medium",
+                Reversible = true
+            });
+            _newRuleChain = new List<string> { customTechId };
+        }
+
+        int nextOrder = (_d.Conflicts.Rules.Count > 0 ? _d.Conflicts.Rules.Max(r => r.Order) : 0) + 1;
+        var globDisplay = string.IsNullOrWhiteSpace(_newRuleGlob) ? "*" : _newRuleGlob;
+        var added = new ResolutionRule
+        {
+            Order = nextOrder,
+            Id = $"rule-{typeId}-{nextOrder}",
+            Name = $"{typeId} ({globDisplay})",
+            ConflictTypes = new List<string> { typeId },
+            GitCodes = new List<string> { "UU" },
+            Chain = _newRuleChain.Count > 0 ? new List<string>(_newRuleChain) : new List<string> { "T2", "A1" },
+            VerifyGates = new List<string>(_newRuleGates),
+            ElseAction = "H1",
+            ApprovalMode = _newRuleApprovalMode
+        };
+        _d.Conflicts.Rules.Add(added);
+        Flash($"Added Rule #{added.Order}: {added.Name}");
+        await RerunSimIfShown();
+    }
+
+    private void PreviewPlainEnglishRule()
+    {
+        _draftedNlRule = ConflictSvc.DraftRuleFromPlainEnglish(_plainEnglishRulePrompt, _d);
+    }
+
+    private void ConfirmDraftedNlRule()
+    {
+        if (_draftedNlRule == null) return;
+        _d.Conflicts.Rules.Add(_draftedNlRule);
+        Flash($"Added Rule #{_draftedNlRule.Order}: {_draftedNlRule.Name}");
+        _draftedNlRule = null;
+        _plainEnglishRulePrompt = "";
+    }
+
+    private void ApplyStackTemplate(string stack)
+    {
+        int nextOrder = (_d.Conflicts.Rules.Count > 0 ? _d.Conflicts.Rules.Max(r => r.Order) : 15) + 1;
+        if (stack == "dotnet")
+        {
+            _d.Conflicts.Rules.Add(new ResolutionRule
+            {
+                Order = nextOrder,
+                Id = "tpl-dotnet-csproj",
+                Name = "dotnet-csproj-sdk (*.csproj, Directory.Packages.props)",
+                ConflictTypes = new() { "manifest-deps" },
+                GitCodes = new() { "UU" },
+                Chain = new() { "S3", "S5", "S1" },
+                VerifyGates = new() { "build", "tests" },
+                ApprovalMode = "Auto + Notify"
+            });
+            Flash("Applied .NET 9 MAUI conflict template pack.");
+        }
+        else if (stack == "flutter")
+        {
+            _d.Conflicts.Rules.Add(new ResolutionRule
+            {
+                Order = nextOrder,
+                Id = "tpl-flutter-codegen",
+                Name = "flutter-codegen (*.g.dart, *.freezed.dart, pubspec.lock)",
+                ConflictTypes = new() { "generated", "lockfile" },
+                GitCodes = new() { "UU", "AA" },
+                Chain = new() { "S2", "S1" },
+                VerifyGates = new() { "build" },
+                ApprovalMode = "Auto Bypass"
+            });
+            Flash("Applied Flutter / Dart conflict template pack.");
+        }
+        else if (stack == "nextjs")
+        {
+            _d.Conflicts.Rules.Add(new ResolutionRule
+            {
+                Order = nextOrder,
+                Id = "tpl-nextjs-lock",
+                Name = "nextjs-lock-and-routes (pnpm-lock.yaml, app/api/**)",
+                ConflictTypes = new() { "lockfile", "api-contract" },
+                GitCodes = new() { "UU" },
+                Chain = new() { "S1", "S6", "S9" },
+                VerifyGates = new() { "contract", "build" },
+                ApprovalMode = "Auto + Notify"
+            });
+            Flash("Applied Next.js / TypeScript conflict template pack.");
+        }
+    }
+
+    private void ImportRepoGitAttributes()
+    {
+        int nextOrder = (_d.Conflicts.Rules.Count > 0 ? _d.Conflicts.Rules.Max(r => r.Order) : 15) + 1;
+        var imp = ConflictSvc.ImportFromGitAttributes(_simRepo, nextOrder);
+        foreach (var t in imp.Types.Where(t => !_d.Conflicts.ConflictTypes.Any(x => x.Id == t.Id))) _d.Conflicts.ConflictTypes.Add(t);
+        foreach (var t in imp.Techniques.Where(t => !_d.Conflicts.Techniques.Any(x => x.Id == t.Id))) _d.Conflicts.Techniques.Add(t);
+        foreach (var r in imp.Rules) _d.Conflicts.Rules.Add(r);
+        Flash(imp.Message);
+    }
+
+    private void PromoteLearnedSuggestion(LearnedRuleSuggestion s)
+    {
+        int nextOrder = (_d.Conflicts.Rules.Count > 0 ? _d.Conflicts.Rules.Max(r => r.Order) : 15) + 1;
+        _d.Conflicts.Rules.Add(new ResolutionRule
+        {
+            Order = nextOrder,
+            Id = "learned-" + s.ConflictTypeId + "-" + nextOrder,
+            Name = $"{s.ConflictTypeId} ({s.Pattern})",
+            ConflictTypes = new() { s.ConflictTypeId },
+            GitCodes = new() { "UU" },
+            Chain = new List<string>(s.ChainIds),
+            VerifyGates = new List<string>(s.Gates),
+            ElseAction = "H1",
+            ApprovalMode = "Auto + Notify"
+        });
+        Flash($"Promoted learned pattern '{s.Pattern}' to Rule #{nextOrder}.");
+    }
+
+    private static string BadgeClass(string mode) => mode switch
+    {
+        "Locked Floor" => "floor",
+        "Auto Bypass" => "auto",
+        "Auto + Notify" => "notify",
+        _ => "ask"
+    };
+
+    private static string FormatGateName(string g) => g switch
+    {
+        "build" => "Build",
+        "tests" => "Tests",
+        "contract" => "ContractEngine",
+        "sast" => "SAST",
+        "no-markers" => "NoMarkers",
+        _ => g
+    };
+
+    private void Reload()
+    {
+        _d = Store.Snapshot();
+        _saved = Store.ToJson(_d);
+    }
+
+    private bool Dirty => Store.ToJson(_d) != _saved;
+
+    private string? Invalid
+    {
+        get
+        {
+            var b = _d.Bypass;
+            if (b.AutoMax < 0 || b.AskMax > 100) return "Decision bands must be between 0 and 100.";
+            if (!(b.AutoMax <= b.NotifyMax && b.NotifyMax <= b.AskMax)) return "Decision bands must go up: Auto ≤ Notify ≤ Ask.";
+            if (_d.Model.MaxToolCalls < 1) return "Max tool calls must be at least 1.";
+            if (_d.Approvals.TimeoutMinutes < 1) return "Approval timeout must be at least 1 minute.";
+            if (_d.Environments.Branches.Any(r => string.IsNullOrWhiteSpace(r.Pattern))) return "Every environment rule needs a branch glob.";
+            return null;
+        }
+    }
+
+    private void Save()
+    {
+        if (Invalid != null) return;
+        Store.Save(_d, $"Agent Settings saved ({(Tabs.FirstOrDefault(t => t.Id == _tab)?.Label ?? _tab)})");
+        Reload();
+        Flash("Saved to AgentPolicyStore and recorded in Audit Log.");
+    }
+
+    private void Discard()
+    {
+        Reload();
+        Flash("Changes discarded.");
+    }
+
+    private void OnStoreChanged(AgentPolicy p) => InvokeAsync(() =>
+    {
+        if (!Dirty) Reload();
+        else _saved = Store.ToJson(Store.Current);
+        StateHasChanged();
+    });
+
+    private void Refresh() => InvokeAsync(StateHasChanged);
+    private void OnAudit(AuditEntry _) => InvokeAsync(StateHasChanged);
+
+    private async void Flash(string msg)
+    {
+        _flash = msg;
+        StateHasChanged();
+        await Task.Delay(2500);
+        if (_flash == msg) { _flash = null; await InvokeAsync(StateHasChanged); }
+    }
+
+    private IEnumerable<TabDef> VisibleTabs(string section) =>
+        Tabs.Where(t => t.Section == section && (string.IsNullOrWhiteSpace(_search)
+            || t.Label.Contains(_search, StringComparison.OrdinalIgnoreCase)
+            || t.Keywords.Contains(_search, StringComparison.OrdinalIgnoreCase)
+            || t.Summary.Contains(_search, StringComparison.OrdinalIgnoreCase)));
+
+    // ── model tab ──
+    private string KeySource()
+    {
+        if (Keys.Has("groq")) return "saved in Windows Credential Manager";
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GROQ_API_KEY"))) return "from GROQ_API_KEY environment variable";
+        return "not set";
+    }
+
+    private string MaskedKey() => ApiKeyStore.Mask(Keys.Get("groq") ?? Environment.GetEnvironmentVariable("GROQ_API_KEY"));
+
+    private string KeyStateText => _keyState switch
+    {
+        KeyState.Connected => "Connected",
+        KeyState.Failed => "Connection failed",
+        KeyState.Testing => "Testing…",
+        KeyState.Missing => "No key",
+        _ => Groq?.HasKey == true ? "Not tested" : "No key",
+    };
+
+    private async Task TestKey()
+    {
+        var key = Keys.Get("groq") ?? Environment.GetEnvironmentVariable("GROQ_API_KEY");
+        if (string.IsNullOrWhiteSpace(key)) { _keyState = KeyState.Missing; return; }
+        _keyState = KeyState.Testing;
+        StateHasChanged();
+        var ok = await Llm.ValidateConnectionAsync(key);
+        _keyState = ok ? KeyState.Connected : KeyState.Failed;
+    }
+
+    private async Task SaveKey()
+    {
+        var key = _keyInput.Trim();
+        _keyState = KeyState.Testing;
+        StateHasChanged();
+        if (!await Llm.ValidateConnectionAsync(key))
+        {
+            _keyState = KeyState.Failed;
+            return;
+        }
+        if (!Keys.Set("groq", key)) { Flash("Could not save the key to Windows Credential Manager."); return; }
+        Groq?.Initialize(key);
+        _keyInput = "";
+        _editKey = false;
+        _keyState = KeyState.Connected;
+        Audit.Append(new AuditEntry { Origin = "settings", Tool = "api-key", Approver = "user", Outcome = "saved", Target = "Groq API key changed" });
+    }
+
+    private void ClearKey()
+    {
+        Keys.Clear("groq");
+        var env = Environment.GetEnvironmentVariable("GROQ_API_KEY");
+        try { Groq?.Initialize(env ?? ""); } catch { }
+        _keyState = string.IsNullOrEmpty(env) ? KeyState.Missing : KeyState.Unknown;
+        Audit.Append(new AuditEntry { Origin = "settings", Tool = "api-key", Approver = "user", Outcome = "saved", Target = "Groq API key removed" });
+    }
+
+    private void ToggleSource(string id)
+    {
+        if (!_d.Model.ContextSources.Remove(id)) _d.Model.ContextSources.Add(id);
+    }
+
+    private int UsagePct() => _d.Model.DailyTokenBudget > 0 ? (int)Math.Round(100.0 * Usage.UsedToday / _d.Model.DailyTokenBudget) : 0;
+
+    private static string Short(long n) => n >= 1_000_000 ? $"{n / 1_000_000.0:0.#}M" : n >= 1000 ? $"{n / 1000.0:0.#}K" : n.ToString();
+
+    // ── tools tab ──
+    private IEnumerable<IMcpTool> FilteredTools() =>
+        Orchestrator.Tools
+            .Where(t => string.IsNullOrWhiteSpace(_toolFilter) || t.Name.Contains(_toolFilter, StringComparison.OrdinalIgnoreCase) || t.Description.Contains(_toolFilter, StringComparison.OrdinalIgnoreCase))
+            .Where(t => string.IsNullOrEmpty(_classFilter) || ToolCatalog.Classify(t.Name).ToString() == _classFilter)
+            .OrderByDescending(t => (int)ToolCatalog.Classify(t.Name)).ThenBy(t => t.Name);
+
+    private string OverrideOf(string tool) =>
+        _d.Bypass.ToolOverrides.FirstOrDefault(kv => string.Equals(kv.Key, tool, StringComparison.OrdinalIgnoreCase)).Value.ToString();
+
+    private void SetOverride(string tool, string? value)
+    {
+        foreach (var k in _d.Bypass.ToolOverrides.Keys.Where(k => string.Equals(k, tool, StringComparison.OrdinalIgnoreCase)).ToList())
+            _d.Bypass.ToolOverrides.Remove(k);
+        if (Enum.TryParse<ToolOverride>(value, out var ov) && ov != ToolOverride.Default) _d.Bypass.ToolOverrides[tool] = ov;
+    }
+
+    private DecisionResult PreviewDecision() => Decider.Decide(_pvTool, ToolCallFacts.From(_pvJson), _pvOrigin, _d);
+
+    private static string OverrideLabel(ToolOverride o) => o switch
+    {
+        ToolOverride.AlwaysAsk => "Always ask",
+        ToolOverride.AutoIfSafe => "Auto if safe",
+        ToolOverride.Block => "Blocked",
+        _ => "Default",
+    };
+
+    private static string DecisionText(Decision d) => d switch
+    {
+        Decision.Auto => "Auto",
+        Decision.AutoNotify => "Auto + notify",
+        Decision.Ask => "Ask",
+        Decision.AskDoubleConfirm => "Ask + confirm",
+        Decision.Block => "Block",
+        _ => d.ToString(),
+    };
+
+    // ── permissions tab ──
+    private RenderFragment Verdict(PermissionResult? r) => __builder =>
+    {
+        if (r == null) return;
+        var (cls, text) = r.Verdict switch
+        {
+            PermissionVerdict.Allowed => ("ok", "Allowed"),
+            PermissionVerdict.NeedsApproval => ("ask", "Needs approval"),
+            _ => ("no", "Blocked"),
+        };
+        <div class="as-verdict @cls"><b>@text</b> @(string.IsNullOrEmpty(r.Why) ? "" : "— " + r.Why)</div>
+    };
+
+    // ── sync tab ──
+    private void AddRepo()
+    {
+        var path = _newRepo.Trim().Trim('"');
+        if (path.Length == 0 || _d.GitSync.Repos.Any(r => string.Equals(r.Repo, path, StringComparison.OrdinalIgnoreCase))) return;
+        _d.GitSync.Repos.Add(new GitSyncRepo { Repo = path, AutoFetch = true });
+        _newRepo = "";
+    }
+
+    private static List<string> SplitList(string? s) =>
+        (s ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+    // ── audit tab ──
+    private IEnumerable<AuditEntry> FilteredAudit() =>
+        Audit.Recent
+            .Where(e => string.IsNullOrEmpty(_auditOutcome) || e.Outcome == _auditOutcome)
+            .Where(e => string.IsNullOrWhiteSpace(_auditFilter) || e.Tool.Contains(_auditFilter, StringComparison.OrdinalIgnoreCase)
+                        || e.Target.Contains(_auditFilter, StringComparison.OrdinalIgnoreCase) || e.Origin.Contains(_auditFilter, StringComparison.OrdinalIgnoreCase))
+            .Take(300);
+
+    private void OpenAuditFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(Audit.FilePath)!);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"\"{Path.GetDirectoryName(Audit.FilePath)}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex) { Flash($"Could not open folder: {ex.Message}"); }
+    }
+
+    // ── export ──
+    private void ExportYaml()
+    {
+        var s = new YamlDotNet.Serialization.SerializerBuilder()
+            .WithNamingConvention(YamlDotNet.Serialization.NamingConventions.CamelCaseNamingConvention.Instance)
+            .Build();
+        _yaml = "# Syncro agent policy — export only (Syncro reads %LOCALAPPDATA%/SyncroDesktop/agent/policy.json, not this file) — exported" + DateTime.Now.ToString("yyyy-MM-dd HH:mm") + (Dirty ? " (includes unsaved changes)" : "") + "\n" + s.Serialize(_d);
+    }
+
+    private async Task CopyYaml()
+    {
+        try { await JS.InvokeVoidAsync("navigator.clipboard.writeText", _yaml); Flash("Copied YAML to clipboard."); }
+        catch { Flash("Copy failed — select the text instead."); }
+    }
+
+    private static string Trunc(string s, int n) => string.IsNullOrEmpty(s) || s.Length <= n ? s : s[..n] + "…";
+
+    public void Dispose()
+    {
+        Approvals.Changed -= Refresh;
+        Audit.Appended -= OnAudit;
+        Usage.Changed -= Refresh;
+        Store.Changed -= OnStoreChanged;
+        AgentStatus.Changed -= Refresh;
+    }
+}

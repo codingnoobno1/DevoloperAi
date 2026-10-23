@@ -2,6 +2,8 @@
 @using Syncro.Desktop.SyncroUI.Components.Primitives
 @implements IDisposable
 @inject ThemeEngine ThemeEngine
+@inject Syncro.Desktop.Services.Agent.Policy.AgentPolicyStore PolicyStore
+@inject Syncro.Desktop.Services.Agent.Policy.AgentSettingsLink SettingsLink
 
 <div class="flex flex-row h-full w-full bg-editor text-textMain font-ui">
     <!-- Left Navigation Sidebar -->
@@ -74,6 +76,39 @@
                           Options="_tabOptions" />
             </div>
         }
+        else if (ActiveTab is "Models" or "Permissions" or "Notifications")
+        {
+            @* One settings source (agentsettings.md D36): these tabs show the shared agent policy and
+               open the full Agent Settings page in the main window for editing. *@
+            var pol = PolicyStore.Current;
+            <p class="text-textMuted mb-6 text-sm">These settings are shared with the main window's Agent Settings page.</p>
+            <div class="flex flex-col gap-3 mb-6 text-sm">
+                @if (ActiveTab == "Models")
+                {
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Provider</span><span class="text-textStrong">@pol.Model.Provider</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Agent model</span><span class="text-textStrong">@pol.Model.AgentModel</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Temperature</span><span class="text-textStrong">@pol.Model.AgentTemperature.ToString("0.0")</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Max tool calls per task</span><span class="text-textStrong">@pol.Model.MaxToolCalls</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Offline mode</span><span class="text-textStrong">@(pol.Model.OfflineMode ? "On" : "Off")</span></div>
+                }
+                else if (ActiveTab == "Permissions")
+                {
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Autonomy level</span><span class="text-textStrong">@Syncro.Desktop.Components.Settings.ApprovalInbox.LevelText(pol.Bypass.Level)</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Protected branches</span><span class="text-textStrong">@string.Join(", ", pol.Bypass.ProtectedBranches)</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Shell allow / deny rules</span><span class="text-textStrong">@pol.Permissions.ShellAllow.Count / @pol.Permissions.ShellDeny.Count</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Allowed hosts</span><span class="text-textStrong">@pol.Permissions.NetworkAllow.Count</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Change freeze</span><span class="text-textStrong">@(pol.Environments.FreezeNow ? "On" : "Off")</span></div>
+                }
+                else
+                {
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Approval timeout</span><span class="text-textStrong">@pol.Approvals.TimeoutMinutes min (then denied)</span></div>
+                    <div class="flex justify-between border-b border-borderBase pb-2"><span class="text-textMuted">Toast on Auto + notify</span><span class="text-textStrong">@(pol.Approvals.NotifyOnAutoNotify ? "On" : "Off")</span></div>
+                }
+            </div>
+            <button class="px-4 py-2 rounded-md text-sm bg-accent text-onAccent font-medium" @onclick="OpenAgentSettings">
+                <i class="bi bi-box-arrow-up-right"></i> Edit in Agent Settings
+            </button>
+        }
         else
         {
             <p class="text-textMuted mb-8 text-sm">Configuration for @ActiveTab goes here.</p>
@@ -138,6 +173,9 @@
     {
         ActiveTab = tab;
     }
+
+    private void OpenAgentSettings() =>
+        SettingsLink.Open(ActiveTab switch { "Permissions" => "permissions", "Notifications" => "review", _ => "model" });
 
     private async Task OnThemeChanged(string val)
     {

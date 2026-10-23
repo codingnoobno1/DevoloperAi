@@ -1,0 +1,115 @@
+@using Syncro.Desktop.Services.ProgramLogic
+@using CommunityToolkit.Maui.Storage
+@inject AiFeatureMapper FeatureMapper
+
+<MudPaper Elevation="0" Class="panel pa-6 mt-6">
+    <MudText Typo="Typo.h6" Class="mb-2" Style="font-weight: 700; font-size: 16px;">
+        <MudIcon Icon="@Icons.Material.Filled.SyncAlt" Class="mr-2 mb-1" Size="Size.Small"/> 
+        Full-Stack Feature Mapper
+    </MudText>
+    <MudText Typo="Typo.body2" Class="text-muted mb-4">
+        Generate the Flutter BLoC frontend and .NET Web API backend in parallel. The mapper will automatically wire the API endpoint to the Flutter repository.
+    </MudText>
+    
+    <MudGrid Spacing="3">
+        <MudItem xs="12" md="6">
+            <MudTextField @bind-Value="FrontendAppPath" Label="Flutter Frontend Path" Variant="Variant.Outlined" 
+                Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseFrontendFolder" />
+        </MudItem>
+        <MudItem xs="12" md="6">
+            <MudTextField @bind-Value="BackendAppPath" Label=".NET Backend Path" Variant="Variant.Outlined" 
+                Adornment="Adornment.End" AdornmentIcon="@Icons.Material.Filled.FolderOpen" OnAdornmentClick="BrowseBackendFolder" />
+        </MudItem>
+
+        <MudItem xs="12">
+            <MudTextField T="string" Label="Feature Request" @bind-Value="FeaturePrompt" Lines="3" Variant="Variant.Outlined" Placeholder="e.g. Add a wishlist feature with persistence..." />
+        </MudItem>
+
+        <MudItem xs="12" Class="d-flex justify-end gap-2">
+            <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ClearForm" Disabled="@IsLoading">
+                Clear
+            </MudButton>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="GenerateFeature" Loading="@IsLoading" StartIcon="@Icons.Material.Filled.ElectricBolt">
+                Generate Feature (Parallel)
+            </MudButton>
+        </MudItem>
+    </MudGrid>
+
+    @if (!string.IsNullOrEmpty(ResultMessage))
+    {
+        <MudAlert Severity="@(IsError ? Severity.Error : Severity.Success)" Class="mt-4">@ResultMessage</MudAlert>
+    }
+</MudPaper>
+
+@code {
+    private string FrontendAppPath { get; set; } = "";
+    private string BackendAppPath { get; set; } = "";
+    private string FeaturePrompt { get; set; } = "";
+    private string ResultMessage { get; set; } = "";
+    private bool IsError { get; set; } = false;
+    private bool IsLoading { get; set; } = false;
+
+    private async Task BrowseFrontendFolder()
+    {
+        var result = await FolderPicker.PickAsync(CancellationToken.None);
+        if (result != null && result.IsSuccessful && result.Folder != null)
+        {
+            FrontendAppPath = result.Folder.Path;
+        }
+    }
+
+    private async Task BrowseBackendFolder()
+    {
+        var result = await FolderPicker.PickAsync(CancellationToken.None);
+        if (result != null && result.IsSuccessful && result.Folder != null)
+        {
+            BackendAppPath = result.Folder.Path;
+        }
+    }
+
+    private async Task GenerateFeature()
+    {
+        if (string.IsNullOrWhiteSpace(FrontendAppPath) || string.IsNullOrWhiteSpace(BackendAppPath))
+        {
+            ResultMessage = "Please select both the frontend and backend workspace paths.";
+            IsError = true;
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(FeaturePrompt))
+        {
+            ResultMessage = "Please enter a feature prompt.";
+            IsError = true;
+            return;
+        }
+
+        IsLoading = true;
+        ResultMessage = "Executing parallel generation (Frontend + Backend)...";
+        IsError = false;
+        StateHasChanged();
+
+        try
+        {
+            var (success, message) = await FeatureMapper.GenerateFeatureAsync(FeaturePrompt, FrontendAppPath, BackendAppPath);
+            
+            ResultMessage = message;
+            IsError = !success;
+        }
+        catch (Exception ex)
+        {
+            ResultMessage = $"System Error: {ex.Message}";
+            IsError = true;
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private void ClearForm()
+    {
+        FeaturePrompt = "";
+        ResultMessage = "";
+        IsError = false;
+    }
+}

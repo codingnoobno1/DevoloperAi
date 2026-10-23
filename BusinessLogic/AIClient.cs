@@ -7,25 +7,66 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 using System.IO;
+using Syncro.Desktop.Services.Engine.Core;
+using Syncro.Desktop.Services.Engine.LLM;
 
 namespace DeveloperAI.BusinessLogic
 {
     public class AIClient
     {
-        // private readonly string _groqApiKey;
-        // private readonly string _model = "llama3-8b-8192"; // Using a common Groq model
         private readonly HttpClient _client;
+        private readonly ILLMProvider? _llmProvider;
 
-        public AIClient()
+        public AIClient(ILLMProvider? llmProvider = null)
         {
-            // _groqApiKey = Environment.GetEnvironmentVariable("GROQ_API_KEY") ??
-            //               throw new InvalidOperationException("GROQ_API_KEY environment variable is not set.");
-            _client = new HttpClient();
-            // _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _groqApiKey);
+            _llmProvider = llmProvider;
+            _client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         }
+
+        public bool IsConfigured =>
+            (_llmProvider is GroqProvider g && g.HasKey && !g.OfflineMode) ||
+            !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("GROQ_API_KEY"));
 
         public async Task<(string? script, string? error)> CallLLM(string userPrompt, string selectedAIMode, string targetWorkspacePath, string model = "gemini-2.5-flash")
         {
+            // 1. Primary path: Use the connected ILLMProvider (GroqProvider configured in Agent Settings)
+            if (_llmProvider != null && IsConfigured)
+            {
+                try
+                {
+                    string systemContext = string.Equals(selectedAIMode, "BatchFileGenerator", StringComparison.OrdinalIgnoreCase)
+                        ? GetSystemPrompt()
+                        : $"You are Syncro AI, an enterprise software architecture and SRE assistant. Workspace: {targetWorkspacePath}. Mode: {selectedAIMode}. Respond clearly and concisely.";
+
+                    string responseText = await _llmProvider.GenerateResponseAsync(systemContext, userPrompt);
+                    if (!string.IsNullOrWhiteSpace(responseText))
+                    {
+                        if (string.Equals(selectedAIMode, "BatchFileGenerator", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var cleaned = CleanBatchScriptResponse(responseText);
+                            return (!string.IsNullOrWhiteSpace(cleaned) ? cleaned : responseText, null);
+                        }
+                        return (responseText, null);
+                    }
+                }
+                catch (Exception groqEx)
+                {
+                    // Fall through to local 3020 fallback if running, otherwise surface Groq error
+                    try
+                    {
+                        using var probe = new HttpClient { Timeout = TimeSpan.FromSeconds(1.5) };
+                        var ping = await probe.GetAsync("http://localhost:3020/");
+                        if (!ping.IsSuccessStatusCode)
+                            return (null, $"Groq LLM error: {groqEx.Message}");
+                    }
+                    catch
+                    {
+                        return (null, $"Groq LLM error: {groqEx.Message}");
+                    }
+                }
+            }
+
+            // 2. Secondary fallback: Local Express server on port 3020
             try
             {
                 var requestBody = new { prompt = userPrompt, aiMode = selectedAIMode, workspacePath = targetWorkspacePath, model = model };

@@ -13,6 +13,8 @@
 @inject IWorkspaceManager WorkspaceMgr
 @inject ISnackbar Snackbar
 @inject FlutterService FlutterSvc
+@inject MauiService MauiSvc
+@inject IDialogService DialogService
 @implements IDisposable
 
 <MudDialog Class="mobile-preview-dialog">
@@ -85,7 +87,15 @@
 
                     <!-- Web Content (IFrame) -->
                     <div class="screen-content">
-                        @if (_hasError)
+                        @if (IsMaui)
+                        {
+                            <div class="d-flex flex-column align-center justify-center h-100 pa-6 text-center">
+                                <MudIcon Icon="@Icons.Material.Filled.DesktopWindows" Color="Color.Primary" Size="Size.Large" Class="mb-2" />
+                                <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Running Native Application</MudText>
+                                <MudText Typo="Typo.caption" Class="text-muted mb-4">The .NET application is running in its own native window.</MudText>
+                            </div>
+                        }
+                        else if (_hasError)
                         {
                             <div class="d-flex flex-column align-center justify-center h-100 pa-6 text-center">
                                 <MudIcon Icon="@Icons.Material.Filled.Error" Color="Color.Error" Size="Size.Large" Class="mb-2" />
@@ -193,20 +203,20 @@
 <style>
     .ai-sidebar {
         width: 320px;
-        background: #111827; /* Darker Slate */
-        border-left: 1px solid #1f2937;
+        background: var(--mud-palette-background);
+        border-left: 1px solid var(--mud-palette-lines-default);
         display: flex;
         flex-direction: column;
-        color: #f3f4f6;
+        color: var(--mud-palette-text-primary);
     }
 
     .ai-sidebar-header {
         padding: 12px 16px;
-        background: #1f2937;
-        color: #818cf8; /* Vibrant Indigo */
+        background: var(--mud-palette-surface);
+        color: var(--mud-palette-primary);
         display: flex;
         align-items: center;
-        border-bottom: 1px solid #374151;
+        border-bottom: 1px solid var(--mud-palette-lines-default);
         font-weight: 600;
     }
 
@@ -216,31 +226,22 @@
         overflow-y: auto;
     }
 
-    /* Improved MudTextField styling for dark theme */
-    .ai-sidebar-body .mud-input-root {
-        color: #f3f4f6 !important;
-        background: #1f2937 !important;
-    }
-    .ai-sidebar-body .mud-input-label {
-        color: #9ca3af !important;
-    }
-
     .terminal-sidebar {
         width: 380px;
-        background: #000000; /* Pure Black for terminal */
-        border-left: 1px solid #1f2937;
+        background: var(--mud-palette-dark);
+        border-left: 1px solid var(--mud-palette-lines-default);
         display: flex;
         flex-direction: column;
     }
 
     .terminal-sidebar-header {
         padding: 10px 16px;
-        background: #111827;
-        color: #10b981; /* Emerald Green */
+        background: var(--mud-palette-dark);
+        color: var(--mud-palette-success);
         display: flex;
         justify-content: space-between;
         align-items: center;
-        border-bottom: 1px solid #1f2937;
+        border-bottom: 1px solid var(--mud-palette-lines-default);
         font-family: 'Cascadia Code', monospace;
         font-size: 12px;
     }
@@ -289,7 +290,7 @@
     }
 
     .device-frame {
-        background: #0f172a;
+        background: var(--mud-palette-surface);
         border-radius: 48px;
         padding: 14px;
         box-shadow: 0 50px 100px -20px rgba(0, 0, 0, 0.5), 0 30px 60px -30px rgba(0, 0, 0, 0.6);
@@ -297,7 +298,9 @@
         flex-direction: column;
         position: relative;
         transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        border: 8px solid #334155;
+        border: 8px solid var(--mud-palette-lines-default);
+        transform: scale(min(1, calc(100vh / 1000)));
+        transform-origin: center center;
     }
 
     .device-header {
@@ -348,12 +351,12 @@
     /* Terminal animation styles from before */
     .terminal-animation {
         width: 100%;
-        background: #0f172a;
+        background: var(--mud-palette-dark);
         border-radius: 8px;
         overflow: hidden;
         text-align: left;
     }
-    .terminal-header { background: #1e293b; padding: 6px 10px; display: flex; align-items: center; color: #94a3b8; }
+    .terminal-header { background: var(--mud-palette-surface); padding: 6px 10px; display: flex; align-items: center; color: var(--mud-palette-text-secondary); }
     .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; }
     .red { background: #ef4444; }
     .yellow { background: #f59e0b; }
@@ -372,6 +375,7 @@
     [CascadingParameter] MudBlazor.IMudDialogInstance MudDialog { get; set; } = default!;
     [Parameter] public string PreviewUrl { get; set; } = "";
     [Parameter] public string ProjectPath { get; set; } = "";
+    [Parameter] public bool IsMaui { get; set; } = false;
 
     private string SelectedDevice = "iphone";
     private bool _isLandscape = false;
@@ -382,6 +386,8 @@
     private string _errorMessage = "";
     private List<string> _logs = new();
     private System.Threading.Timer? _checkTimer;
+    private System.Timers.Timer _renderThrottleTimer = new(250);
+    private bool _renderPending = false;
 
     // AI Variables
     private string _aiPrompt = "";
@@ -393,9 +399,25 @@
     protected override void OnInitialized()
     {
         FlutterSvc.OnOutput += HandleOutput;
+        MauiSvc.OnOutput += HandleOutput;
         
-        // Start polling for URL readiness
-        _checkTimer = new System.Threading.Timer(async _ => await CheckUrl(), null, 2000, 2000);
+        _renderThrottleTimer.Elapsed += (s, e) => {
+            if (_renderPending) {
+                _renderPending = false;
+                InvokeAsync(StateHasChanged);
+            }
+        };
+        _renderThrottleTimer.Start();
+
+        if (IsMaui)
+        {
+            _isReady = true;
+        }
+        else
+        {
+            // Start polling for URL readiness
+            _checkTimer = new System.Threading.Timer(async _ => await CheckUrl(), null, 2000, 2000);
+        }
     }
 
     private async Task ProcessAiRequest()
@@ -491,6 +513,20 @@
 
             if (changes != null)
             {
+                var changeCount = changes.Count;
+                var confirmed = await DialogService.ShowMessageBoxAsync(
+                    "Confirm AI Changes", 
+                    $"The AI generated {changeCount} file change(s).\nDo you want to apply them?", 
+                    yesText: "Apply", cancelText: "Cancel");
+
+                if (confirmed != true)
+                {
+                    _aiStatus = "Changes cancelled by user.";
+                    _isAiLoading = false;
+                    StateHasChanged();
+                    return;
+                }
+
                 // 2. Transactional Write (all or nothing - simulated by writing to disk)
                 foreach (var change in changes)
                 {
@@ -521,7 +557,14 @@
                 _aiStatus = json["explanation"]?.ToString() ?? "Applied changes successfully.";
                 
                 // 3. Smart Reload
-                await FlutterSvc.SmartReload(changedFiles);
+                if (IsMaui)
+                {
+                    await MauiSvc.SmartReload(changedFiles);
+                }
+                else
+                {
+                    await FlutterSvc.SmartReload(changedFiles);
+                }
             }
         }
         catch (Exception ex)
@@ -557,8 +600,14 @@
         return true;
     }
 
-    private async Task TriggerHotReload() => await FlutterSvc.HotReload();
-    private async Task TriggerHotRestart() => await FlutterSvc.HotRestart();
+    private async Task TriggerHotReload() 
+    {
+        if (!IsMaui) await FlutterSvc.HotReload();
+    }
+    private async Task TriggerHotRestart() 
+    {
+        if (!IsMaui) await FlutterSvc.HotRestart();
+    }
 
     private string GetLogClass(string log)
     {
@@ -588,7 +637,7 @@
                 _errorMessage = "Build folder is locked. Click Repair to fix.";
             }
 
-            StateHasChanged();
+            _renderPending = true;
         });
     }
 
@@ -598,8 +647,16 @@
         _logs.Clear();
         _logs.Add("Attempting repair...");
         
-        await FlutterSvc.CleanProject(ProjectPath);
-        await FlutterSvc.RunProject(ProjectPath, "web");
+        if (IsMaui)
+        {
+            await MauiSvc.CleanProject(ProjectPath);
+            await MauiSvc.RunProject(ProjectPath, "windows");
+        }
+        else
+        {
+            await FlutterSvc.CleanProject(ProjectPath);
+            await FlutterSvc.RunProject(ProjectPath, "web");
+        }
         
         StateHasChanged();
     }
@@ -650,7 +707,10 @@
 
     public void Dispose()
     {
+        _renderThrottleTimer.Stop();
+        _renderThrottleTimer.Dispose();
         FlutterSvc.OnOutput -= HandleOutput;
+        MauiSvc.OnOutput -= HandleOutput;
         _checkTimer?.Dispose();
     }
 }

@@ -1,127 +1,970 @@
 @page "/agent-tasks"
 @page "/agent-tasks/{TaskId}"
+@using System
+@using System.Collections.Generic
+@using System.IO
+@using System.Linq
+@using System.Threading.Tasks
+@using MudBlazor
 @using Syncro.Desktop.Services
 @using Syncro.Desktop.Services.Git
 @using Syncro.Desktop.Services.Mcp
+@using Syncro.Desktop.Services.Build
+@using Syncro.Desktop.Services.Security
+@using Syncro.Desktop.Services.Connector.Scan
 @inject PixelService PixelSvc
-@inject GitAutomationService GitSvc
+@inject GitAutomationService GitAutoSvc
+@inject IGitEngine Git
+@inject GitTaskScopeService ScopeSvc
 @inject LocalMcpServer McpSvc
+@inject ProjectService ProjSvc
+@inject IBuildEngine BuildEng
+@inject Syncro.Desktop.Services.Build.ITestEngine TestEng
+@inject SecurityScanner SecScanner
+@inject MultiProjectScanService ContractScanner
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
 
-<div class="agent-dashboard">
-    <div class="header-section">
-        <h2>Developer AI: Incoming Scopes</h2>
-        <p class="text-muted">Review tasks assigned by your Project Manager and let Syncro auto-configure your environment.</p>
+<div class="gtd-shell">
+    <!-- ════════════════ 1. TOP ENTERPRISE HEADER & MODE SWITCHER ════════════════ -->
+    <div class="gtd-header-card">
+        <div class="gtd-header-top">
+            <div>
+                <div class="gtd-eyebrow">S.A.N.K.A.L.P. PLATFORM · GIT TASK DISTRIBUTION &amp; TEAM CONTROL PLANE</div>
+                <h1 class="gtd-title">Team Management &amp; Git File Task Distribution</h1>
+                <p class="gtd-subtitle">
+                    Assign developers their tasks and exact sets of Git files with collision-safe file locks—or receive your assigned Git scope, checkout your task branch, and verify before commit.
+                </p>
+            </div>
+            <div class="gtd-kpi-strip">
+                <div class="gtd-kpi-pill">
+                    <span class="gtd-kpi-num text-blue">@_myTasks.Count</span>
+                    <span class="gtd-kpi-lbl">My Tasks</span>
+                </div>
+                <div class="gtd-kpi-pill">
+                    <span class="gtd-kpi-num text-purple">@(_teamRoster?.Members.Count ?? 0)</span>
+                    <span class="gtd-kpi-lbl">Team Members</span>
+                </div>
+                <div class="gtd-kpi-pill">
+                    <span class="gtd-kpi-num text-amber">@_projectFileLocks.Count</span>
+                    <span class="gtd-kpi-lbl">Locked Git Files</span>
+                </div>
+                <button class="gtd-btn gtd-btn-outline" @onclick="RefreshAllAsync" disabled="@_isLoading">
+                    <i class="bi @(_isLoading ? "bi-arrow-repeat gtd-spin" : "bi-arrow-clockwise")"></i>
+                    Sync Platform
+                </button>
+            </div>
+        </div>
+
+        <div class="gtd-mode-tabs">
+            <button class="gtd-mode-tab @(_activeMode == "receiver" ? "active" : "")"
+                    @onclick='() => SwitchMode("receiver")'>
+                <i class="bi bi-inbox-fill"></i>
+                <span>Receiver Module — My Assigned Git Scopes</span>
+                <span class="gtd-tab-badge">@_myTasks.Count</span>
+            </button>
+            <button class="gtd-mode-tab @(_activeMode == "dispatcher" ? "active" : "")"
+                    @onclick='() => SwitchMode("dispatcher")'>
+                <i class="bi bi-diagram-3-fill"></i>
+                <span>Team &amp; Git Task Dispatcher — Assign People &amp; Git Files</span>
+                <span class="gtd-tab-badge">@_projectTasks.Count</span>
+            </button>
+        </div>
     </div>
 
-    @if (_isLoading)
+    @if (!string.IsNullOrEmpty(_bannerMessage))
     {
-        <div class="d-flex align-items-center mt-5">
-            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Class="me-3" />
-            <span>Fetching assignments from Pixel Platform...</span>
+        <div class="gtd-alert @(_bannerIsError ? "gtd-alert-error" : "gtd-alert-success")">
+            <div>
+                <i class="bi @(_bannerIsError ? "bi-exclamation-triangle-fill" : "bi-check-circle-fill")"></i>
+                <span>@_bannerMessage</span>
+            </div>
+            <button class="gtd-alert-close" @onclick='() => _bannerMessage = null'>✕</button>
         </div>
     }
-    else if (_tasks == null || _tasks.Count == 0)
+
+    <!-- ══════════════════════════════════════════════════════════════════════════════ -->
+    <!-- MODE 1: RECEIVER MODULE (DEVELOPER WORKBENCH FOR ASSIGNED TASKS & GIT FILES)   -->
+    <!-- ══════════════════════════════════════════════════════════════════════════════ -->
+    @if (_activeMode == "receiver")
     {
-        <MudAlert Severity="Severity.Info" Class="mt-5">No tasks assigned to you right now. You are all caught up!</MudAlert>
-    }
-    else
-    {
-        <div class="task-grid mt-4">
-            <!-- Left Side: Incoming Tasks -->
-            <div class="tasks-list">
-                @foreach (var task in _tasks)
-                {
-                    <MudCard Elevation="2" Class="@(_selectedTask?.Id == task.Id ? "task-card selected" : "task-card")" @onclick="() => SelectTask(task)">
-                        <MudCardContent>
-                            <div class="d-flex justify-content-between align-items-center">
-                                <h5>@task.Title</h5>
-                                <MudChip T="string" Size="Size.Small" Color="Color.Primary">@task.Status</MudChip>
-                            </div>
-                            <p class="text-muted small mt-2 mb-0">Due: @task.Deadline.ToString("MMM dd, yyyy")</p>
-                        </MudCardContent>
-                    </MudCard>
-                }
-            </div>
-
-            <!-- Right Side: AI Setup & Methodology -->
-            <div class="task-details">
-                @if (_selectedTask != null)
-                {
-                    <MudPaper Elevation="0" Outlined="true" Class="p-4 detail-panel">
-                        <div class="d-flex justify-content-between align-items-start mb-4">
-                            <div>
-                                <h3>@_selectedTask.Title</h3>
-                                <p class="text-muted">Repository: <code>@_selectedTask.RepoUrl</code></p>
-                                <div class="mt-2">
-                                    @if (_gitStatus == "Cloned")
-                                    {
-                                        <MudChip T="string" Color="Color.Success" Size="Size.Small" Icon="@Icons.Material.Filled.Folder">Git Cloned</MudChip>
-                                        <p class="text-muted small mt-1">@_localPath</p>
-                                    }
-                                    else
-                                    {
-                                        <MudChip T="string" Color="Color.Dark" Size="Size.Small" Icon="@Icons.Material.Filled.CloudDownload">Not Cloned</MudChip>
-                                    }
-                                </div>
-                            </div>
-                            
-                            @if (_isSetupComplete)
-                            {
-                                <MudChip T="string" Color="Color.Success" Icon="@Icons.Material.Filled.CheckCircle">Setup Complete</MudChip>
-                            }
-                            else if (_isSettingUp)
-                            {
-                                <MudButton Variant="Variant.Filled" Color="Color.Primary" Disabled="true">
-                                    <MudProgressCircular Size="Size.Small" Color="Color.Default" Indeterminate="true" Class="me-2"/>
-                                    Setting up...
-                                </MudButton>
-                            }
-                            else
-                            {
-                                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="AcceptAndSetup" StartIcon="@Icons.Material.Filled.AutoAwesome">
-                                    Accept & Auto-Setup
-                                </MudButton>
-                            }
-                        </div>
-
-                        <MudText Typo="Typo.subtitle2" Class="mb-2 font-weight-bold">Scope / Assignment:</MudText>
-                        <MudPaper Elevation="0" Class="p-3 bg-light mb-4 rounded">
-                            @_selectedTask.ScopeDescription
-                        </MudPaper>
-
-                        @if (_methodology != null)
+        <div class="gtd-receiver-grid">
+            <!-- LEFT COLUMN: INCOMING ASSIGNED GIT TASKS -->
+            <div class="gtd-card gtd-task-list-card">
+                <div class="gtd-card-header">
+                    <span class="gtd-card-title">INCOMING ASSIGNED TASKS</span>
+                    <div class="gtd-filter-pills">
+                        @foreach (var f in new[] { ("all", "All"), ("pending", "Pending"), ("in-progress", "Active"), ("completed", "Done") })
                         {
-                            <MudDivider Class="my-4" />
-                            
-                            <h4 class="mb-3 d-flex align-items-center">
-                                <MudIcon Icon="@Icons.Material.Filled.Lightbulb" Color="Color.Warning" Class="me-2" />
-                                AI Proposed Methodology
-                            </h4>
-                            <MudPaper Elevation="0" Class="p-4 bg-dark text-white rounded mb-4" Style="font-family: 'Consolas', monospace; font-size: 14px;">
-                                <pre style="white-space: pre-wrap;">@_methodology.Methodology</pre>
-                            </MudPaper>
-
-                            <h5 class="text-danger d-flex align-items-center mb-2">
-                                <MudIcon Icon="@Icons.Material.Filled.Lock" Class="me-2" />
-                                Restricted File Scope
-                            </h5>
-                            <p class="text-muted small">To prevent merge conflicts with other developers, please only modify these files:</p>
-                            <MudList T="string" Clickable="false" Dense="true" Class="bg-light rounded p-2">
-                                @foreach(var file in _methodology.RestrictedFiles)
-                                {
-                                    <MudListItem T="string" Icon="@Icons.Material.Filled.Code">@file</MudListItem>
-                                }
-                            </MudList>
+                            <button class="gtd-filter-pill @(_receiverFilter == f.Item1 ? "active" : "")"
+                                    @onclick="() => _receiverFilter = f.Item1">
+                                @f.Item2
+                            </button>
                         }
-                    </MudPaper>
+                    </div>
+                </div>
+
+                @if (FilteredMyTasks.Count == 0)
+                {
+                    <div class="gtd-empty-box">
+                        <i class="bi bi-check2-all"></i>
+                        <div class="gtd-empty-title">No tasks in this filter</div>
+                        <div class="gtd-empty-sub">Switch to the Dispatcher tab to assign a new Git task.</div>
+                    </div>
                 }
                 else
                 {
-                    <div class="empty-state">
-                        <MudIcon Icon="@Icons.Material.Filled.Assignment" Style="font-size: 64px; color: #E2E8F0;" />
-                        <h4 class="mt-3 text-muted">Select a task to view details</h4>
+                    <div class="gtd-task-scroll">
+                        @foreach (var task in FilteredMyTasks)
+                        {
+                            bool selected = _selectedTask?.Id == task.Id;
+                            bool isActiveScope = ScopeSvc.CurrentActiveTask?.Id == task.Id;
+                            <div class="gtd-task-item @(selected ? "selected" : "")" @onclick="() => SelectTaskAsync(task)">
+                                <div class="gtd-task-item-top">
+                                    <span class="gtd-prio-pill @GetPriorityClass(task.Priority)">@task.Priority.ToUpperInvariant()</span>
+                                    <span class="gtd-status-pill @GetStatusClass(task.Status)">@task.Status</span>
+                                </div>
+                                <div class="gtd-task-item-title">@task.Title</div>
+                                <div class="gtd-task-item-proj">
+                                    <i class="bi bi-folder2"></i>
+                                    <span>@(string.IsNullOrEmpty(task.ProjectTitle) ? "Syncro Project" : task.ProjectTitle)</span>
+                                </div>
+                                <div class="gtd-task-item-meta">
+                                    <span class="gtd-branch-chip">
+                                        <i class="bi bi-git"></i> @task.TargetBranch
+                                    </span>
+                                    <span class="gtd-files-chip">
+                                        <i class="bi bi-file-earmark-code"></i> @task.AssignedFiles.Count files
+                                    </span>
+                                    <span class="gtd-lock-chip @(task.FileLockMode == "strict" ? "strict" : "advisory")">
+                                        <i class="bi bi-shield-lock"></i> @task.FileLockMode
+                                    </span>
+                                </div>
+                                <div class="gtd-progress-row">
+                                    <div class="gtd-progress-track">
+                                        <div class="gtd-progress-fill" style="width: @(task.Progress)%;"></div>
+                                    </div>
+                                    <span class="gtd-progress-pct">@task.Progress%</span>
+                                </div>
+                                <div class="gtd-task-item-foot">
+                                    <span>By @task.AssignedByName</span>
+                                    <span>Due @task.Deadline.ToString("dd MMM yyyy")</span>
+                                </div>
+                                @if (isActiveScope)
+                                {
+                                    <div class="gtd-active-scope-tag">
+                                        <i class="bi bi-broadcast"></i> Active Guard in Repository Workbench
+                                    </div>
+                                }
+                            </div>
+                        }
                     </div>
                 }
+            </div>
+
+            <!-- RIGHT COLUMN: RECEIVER EXECUTION & GIT SCOPE WORKBENCH -->
+            <div class="gtd-receiver-detail">
+                @if (_selectedTask == null)
+                {
+                    <div class="gtd-card gtd-empty-box" style="min-height: 460px;">
+                        <i class="bi bi-inboxes" style="font-size: 40px;"></i>
+                        <div class="gtd-empty-title">Select an Assigned Task</div>
+                        <div class="gtd-empty-sub">Inspect your assigned Git file set, teammate file locks, and branch setup controls.</div>
+                    </div>
+                }
+                else
+                {
+                    <!-- CARD A: TASK HEADER, WORKSPACE REPO BINDING & 1-CLICK RECEIVER ACTIONS -->
+                    <div class="gtd-card">
+                        <div class="gtd-detail-head">
+                            <div>
+                                <div class="gtd-detail-badges">
+                                    <span class="gtd-prio-pill @GetPriorityClass(_selectedTask.Priority)">@_selectedTask.Priority.ToUpperInvariant() PRIORITY</span>
+                                    <span class="gtd-status-pill @GetStatusClass(_selectedTask.Status)">@_selectedTask.Status.ToUpperInvariant()</span>
+                                    <span class="gtd-lock-chip @(_selectedTask.FileLockMode == "strict" ? "strict" : "advisory")">
+                                        <i class="bi bi-lock-fill"></i> LOCK MODE: @_selectedTask.FileLockMode.ToUpperInvariant()
+                                    </span>
+                                    <span class="gtd-branch-chip">
+                                        <i class="bi bi-git"></i> @_selectedTask.BaseBranch → <b>@_selectedTask.TargetBranch</b>
+                                    </span>
+                                </div>
+                                <h2 class="gtd-detail-title">@_selectedTask.Title</h2>
+                                <p class="gtd-detail-desc">@_selectedTask.ScopeDescription</p>
+                            </div>
+
+                            <div class="gtd-detail-actions">
+                                <button class="gtd-btn gtd-btn-primary"
+                                        @onclick="AcceptAndSetupReceiverAsync"
+                                        disabled="@_isSettingUp">
+                                    <i class="bi @(_isSettingUp ? "bi-arrow-repeat gtd-spin" : "bi-terminal-plus")"></i>
+                                    @(_isSettingUp ? "Configuring Repo & Branch…" : "Accept & Checkout Branch")
+                                </button>
+                                <button class="gtd-btn gtd-btn-outline"
+                                        @onclick="OpenInScopedGitManager">
+                                    <i class="bi bi-source"></i>
+                                    Open Scoped Git Workbench
+                                </button>
+                                <button class="gtd-btn gtd-btn-emerald"
+                                        @onclick="VerifyAndCompleteTaskAsync"
+                                        disabled="@_isVerifyingTask">
+                                    <i class="bi @(_isVerifyingTask ? "bi-arrow-repeat gtd-spin" : "bi-patch-check-fill")"></i>
+                                    @(_isVerifyingTask ? "Running gates…" : "Verify & Complete")
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Local Workspace Path Binding Bar -->
+                        <div class="gtd-repo-bind-bar">
+                            <div class="gtd-repo-bind-left">
+                                <span class="gtd-field-lbl">LOCAL GIT WORKSPACE</span>
+                                <input class="gtd-input"
+                                       placeholder="Local repository path (e.g. D:\DeveloperAI\DEVOLOPER\Syncro.Desktop)"
+                                       @bind="_receiverRepoPath" />
+                                @if (_knownProjects.Count > 0)
+                                {
+                                    <select class="gtd-select" style="max-width: 240px;" @onchange="OnReceiverWorkspacePicked">
+                                        <option value="">Switch local workspace…</option>
+                                        @foreach (var kp in _knownProjects)
+                                        {
+                                            <option value="@kp.Path">@kp.Name — @kp.Path</option>
+                                        }
+                                    </select>
+                                }
+                                <button class="gtd-btn gtd-btn-sm gtd-btn-outline" @onclick="RefreshReceiverGitStatusAsync">
+                                    <i class="bi bi-arrow-repeat"></i> Inspect Tree
+                                </button>
+                            </div>
+                            <div class="gtd-repo-bind-right">
+                                @if (_receiverGitStatus is { IsRepo: true })
+                                {
+                                    <span class="gtd-git-ready-pill">
+                                        <i class="bi bi-check-circle-fill"></i>
+                                        Branch: <b>@_receiverGitStatus.Branch</b> · @_receiverGitStatus.Files.Count changed
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="gtd-git-warn-pill">
+                                        <i class="bi bi-cloud-arrow-down"></i> Will clone on Accept
+                                    </span>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- Progress, Commit SHA & 4 SRE Verification Gates -->
+                        <div class="gtd-telemetry-strip">
+                            <div class="gtd-telemetry-col">
+                                <label class="gtd-field-lbl">TASK STATUS &amp; PROGRESS (@_selectedTask.Progress%)</label>
+                                <div class="gtd-status-progress-row">
+                                    <select class="gtd-select" style="width: 145px;"
+                                            value="@_selectedTask.Status"
+                                            @onchange="OnReceiverStatusChangedAsync">
+                                        <option value="pending">Pending</option>
+                                        <option value="in-progress">In Progress</option>
+                                        <option value="completed">Completed</option>
+                                        <option value="delayed">Delayed</option>
+                                    </select>
+                                    <input type="range" min="0" max="100" step="5"
+                                           class="gtd-range"
+                                           @bind="_selectedTask.Progress"
+                                           @bind:after="SaveReceiverProgressAsync" />
+                                    <span class="gtd-pct-badge">@_selectedTask.Progress%</span>
+                                </div>
+                            </div>
+
+                            <div class="gtd-telemetry-col">
+                                <label class="gtd-field-lbl">VERIFICATION GATE &amp; COMMIT TELEMETRY</label>
+                                <div class="gtd-gate-pills">
+                                    <span class="gtd-gate-pill @GateCss(_selectedTask.VerificationGate.BuildStatus)" title="@_selectedTask.VerificationGate.BuildStatus">
+                                        <i class="bi bi-hammer"></i> Build: @GateText(_selectedTask.VerificationGate.BuildStatus)
+                                    </span>
+                                    <span class="gtd-gate-pill @GateCss(_selectedTask.VerificationGate.TestsStatus)" title="@_selectedTask.VerificationGate.TestsStatus">
+                                        <i class="bi bi-check2-square"></i> Tests: @GateText(_selectedTask.VerificationGate.TestsStatus)
+                                    </span>
+                                    <span class="gtd-gate-pill @GateCss(_selectedTask.VerificationGate.SastStatus)" title="@_selectedTask.VerificationGate.SastStatus">
+                                        <i class="bi bi-shield-check"></i> SAST: @GateText(_selectedTask.VerificationGate.SastStatus)
+                                    </span>
+                                    <span class="gtd-gate-pill @GateCss(_selectedTask.VerificationGate.ContractsStatus)" title="@_selectedTask.VerificationGate.ContractsStatus">
+                                        <i class="bi bi-diagram-3"></i> Contracts: @GateText(_selectedTask.VerificationGate.ContractsStatus)
+                                    </span>
+                                    @if (!string.IsNullOrEmpty(_selectedTask.LatestCommitSha))
+                                    {
+                                        <span class="gtd-sha-pill" title="Latest verified commit synced to platform">
+                                            <i class="bi bi-git"></i> @_selectedTask.LatestCommitSha[..Math.Min(7, _selectedTask.LatestCommitSha.Length)]
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CARD B: 3-COLUMN GIT FILE SCOPE & LOCK INSPECTOR -->
+                    <div class="gtd-three-col-scope">
+                        <!-- COLUMN 1: AUTHORITATIVE ASSIGNED GIT FILES -->
+                        <div class="gtd-card">
+                            <div class="gtd-card-header">
+                                <div>
+                                    <span class="gtd-card-title text-emerald">
+                                        <i class="bi bi-file-earmark-check-fill"></i>
+                                        ASSIGNED GIT FILES (@_selectedTask.AssignedFiles.Count)
+                                    </span>
+                                    <div class="gtd-card-sub">Files you are authorized to modify in this task</div>
+                                </div>
+                            </div>
+
+                            @if (_selectedTask.AssignedFiles.Count == 0 && _selectedTask.AllowedGlobs.Count == 0)
+                            {
+                                <div class="gtd-empty-box small">No explicit file restrictions on this task.</div>
+                            }
+                            else
+                            {
+                                <div class="gtd-file-scope-list">
+                                    @foreach (var file in _selectedTask.AssignedFiles)
+                                    {
+                                        var localState = GetLocalFileState(file);
+                                        <div class="gtd-scope-file-row in-scope">
+                                            <div class="gtd-scope-file-main">
+                                                <span class="gtd-scope-badge scope-in">IN SCOPE</span>
+                                                <code class="gtd-file-code" title="@file">@file</code>
+                                            </div>
+                                            <div class="gtd-scope-file-right">
+                                                <span class="gtd-git-state-tag @localState.Css">@localState.Label</span>
+                                            </div>
+                                        </div>
+                                    }
+
+                                    @if (_selectedTask.AllowedGlobs.Count > 0)
+                                    {
+                                        <div class="gtd-sub-section-lbl">ALLOWED DIRECTORY GLOBS</div>
+                                        @foreach (var glob in _selectedTask.AllowedGlobs)
+                                        {
+                                            <div class="gtd-scope-file-row glob-row">
+                                                <span class="gtd-scope-badge scope-glob">GLOB</span>
+                                                <code class="gtd-file-code">@glob</code>
+                                            </div>
+                                        }
+                                    }
+
+                                    @if (_selectedTask.ReadOnlyFiles.Count > 0)
+                                    {
+                                        <div class="gtd-sub-section-lbl">READ-ONLY REFERENCE FILES</div>
+                                        @foreach (var ro in _selectedTask.ReadOnlyFiles)
+                                        {
+                                            <div class="gtd-scope-file-row ro-row">
+                                                <span class="gtd-scope-badge scope-ro">READ-ONLY</span>
+                                                <code class="gtd-file-code">@ro</code>
+                                            </div>
+                                        }
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <!-- COLUMN 2: TEAMMATE-LOCKED GIT FILES (CONFLICT PREVENTION) -->
+                        <div class="gtd-card">
+                            <div class="gtd-card-header">
+                                <div>
+                                    <span class="gtd-card-title text-crimson">
+                                        <i class="bi bi-shield-lock-fill"></i>
+                                        TEAMMATE-LOCKED FILES (@_selectedTask.TeammateLockedFiles.Count)
+                                    </span>
+                                    <div class="gtd-card-sub">Protected files claimed by other active team tasks</div>
+                                </div>
+                            </div>
+
+                            @if (_selectedTask.TeammateLockedFiles.Count == 0)
+                            {
+                                <div class="gtd-empty-box small">
+                                    <i class="bi bi-shield-check text-emerald"></i>
+                                    <div>No conflicting teammate locks in this project.</div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="gtd-file-scope-list">
+                                    @foreach (var lk in _selectedTask.TeammateLockedFiles)
+                                    {
+                                        <div class="gtd-scope-file-row locked-scope">
+                                            <div class="gtd-scope-file-main">
+                                                <span class="gtd-scope-badge scope-locked">
+                                                    <i class="bi bi-lock-fill"></i> @lk.LockedByName
+                                                </span>
+                                                <code class="gtd-file-code" title="@lk.FilePath">@lk.FilePath</code>
+                                            </div>
+                                            <div class="gtd-lock-task-caption">
+                                                Task: <b>@lk.TaskTitle</b> · Branch: <code>@lk.TargetBranch</code>
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+
+                        <!-- COLUMN 3: AI SCOPED IMPLEMENTATION METHODOLOGY -->
+                        <div class="gtd-card">
+                            <div class="gtd-card-header">
+                                <div>
+                                    <span class="gtd-card-title text-purple">
+                                        <i class="bi bi-stars"></i>
+                                        AI SCOPED METHODOLOGY
+                                    </span>
+                                    <div class="gtd-card-sub">Step-by-step plan constrained to your assigned files</div>
+                                </div>
+                                <button class="gtd-btn gtd-btn-sm gtd-btn-outline"
+                                        @onclick="GenerateScopedMethodologyAsync"
+                                        disabled="@_isGeneratingPlan">
+                                    <i class="bi @(_isGeneratingPlan ? "bi-arrow-repeat gtd-spin" : "bi-magic")"></i>
+                                    @(_isGeneratingPlan ? "Analyzing…" : "Draft Plan")
+                                </button>
+                            </div>
+
+                            @if (_methodology != null)
+                            {
+                                <div class="gtd-methodology-box">
+                                    <pre class="gtd-methodology-pre">@_methodology.Methodology</pre>
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="gtd-empty-box small">
+                                    <i class="bi bi-lightbulb"></i>
+                                    <div>Click <b>Accept &amp; Checkout Branch</b> or <b>Draft Plan</b> to generate a step-by-step execution guide for your assigned Git file set.</div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <!-- ══════════════════════════════════════════════════════════════════════════════ -->
+    <!-- MODE 2: TEAM & GIT TASK DISPATCHER (ASSIGN PEOPLE THEIR TASK & GIT FILE SET)   -->
+    <!-- ══════════════════════════════════════════════════════════════════════════════ -->
+    @if (_activeMode == "dispatcher")
+    {
+        <!-- PROJECT & LOCAL REPOSITORY TREE SYNC BAR -->
+        <div class="gtd-card gtd-project-bar">
+            <div class="gtd-project-bar-left">
+                <div class="gtd-field-group">
+                    <label class="gtd-field-lbl">ACTIVE PROJECT</label>
+                    <select class="gtd-select" style="min-width: 290px;"
+                            value="@_selectedProjectId"
+                            @onchange="OnProjectChangedAsync">
+                        @foreach (var p in _projects)
+                        {
+                            <option value="@p.Id">@p.Title (@p.Status.ToUpperInvariant())</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="gtd-field-group" style="flex: 1; min-width: 280px;">
+                    <label class="gtd-field-lbl">LOCAL GIT REPOSITORY FOR FILE PICKER</label>
+                    <div class="d-flex gap-2">
+                        <input class="gtd-input"
+                               placeholder="D:\DeveloperAI\DEVOLOPER\Syncro.Desktop"
+                               @bind="_dispatchRepoPath" />
+                        @if (_knownProjects.Count > 0)
+                        {
+                            <select class="gtd-select" style="max-width: 210px;" @onchange="OnDispatchWorkspacePickedAsync">
+                                <option value="">Quick pick repo…</option>
+                                @foreach (var kp in _knownProjects)
+                                {
+                                    <option value="@kp.Path">@kp.Name</option>
+                                }
+                            </select>
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="gtd-project-bar-right">
+                <button class="gtd-btn gtd-btn-outline" @onclick="LoadRepoTreeForDispatcherAsync" disabled="@_isSyncingTree">
+                    <i class="bi @(_isSyncingTree ? "bi-arrow-repeat gtd-spin" : "bi-folder2-open")"></i>
+                    Load Repo Files (@_repoTrackedFiles.Count)
+                </button>
+                <button class="gtd-btn gtd-btn-primary" @onclick="SyncRepoTreeToPlatformAsync" disabled="@_isSyncingTree">
+                    <i class="bi @(_isSyncingTree ? "bi-arrow-repeat gtd-spin" : "bi-cloud-upload")"></i>
+                    Sync Tree to Platform
+                </button>
+            </div>
+        </div>
+
+        <div class="gtd-dispatcher-grid">
+            <!-- LEFT COLUMN: TEAM ROSTER, ROLES & DEFAULT MODULE OWNERSHIP -->
+            <div class="gtd-card gtd-team-panel">
+                <div class="gtd-card-header">
+                    <div>
+                        <span class="gtd-card-title">
+                            <i class="bi bi-people-fill"></i>
+                            PROJECT TEAM ROSTER (@(_teamRoster?.Members.Count ?? 0))
+                        </span>
+                        <div class="gtd-card-sub">Manage roles, owned directory globs, and pick an assignee</div>
+                    </div>
+                    <button class="gtd-btn gtd-btn-sm gtd-btn-outline"
+                            @onclick="() => _showAddMemberForm = !_showAddMemberForm">
+                        <i class="bi @(_showAddMemberForm ? "bi-x-lg" : "bi-person-plus-fill")"></i>
+                        @(_showAddMemberForm ? "Close" : "+ Add Member")
+                    </button>
+                </div>
+
+                @if (_showAddMemberForm)
+                {
+                    <div class="gtd-add-member-box">
+                        <div class="gtd-sub-section-lbl">ADD OR UPDATE TEAM MEMBER</div>
+                        <div class="gtd-form-grid-2">
+                            <div>
+                                <label class="gtd-field-lbl">FULL NAME *</label>
+                                <input class="gtd-input" placeholder="e.g. Ananya Verma" @bind="_newMemberName" />
+                            </div>
+                            <div>
+                                <label class="gtd-field-lbl">EMAIL / HANDLE *</label>
+                                <input class="gtd-input" placeholder="ananya@sankalp.dev" @bind="_newMemberEmail" />
+                            </div>
+                            <div>
+                                <label class="gtd-field-lbl">PROJECT ROLE</label>
+                                <select class="gtd-select" @bind="_newMemberRole">
+                                    <option value="backend">Backend Engineer</option>
+                                    <option value="frontend">Frontend Engineer</option>
+                                    <option value="sre">Site Reliability (SRE)</option>
+                                    <option value="architect">System Architect</option>
+                                    <option value="mobile">Mobile Engineer</option>
+                                    <option value="qa">QA &amp; Verification</option>
+                                    <option value="contributor">Contributor</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="gtd-field-lbl">SKILLS (COMMA SEPARATED)</label>
+                                <input class="gtd-input" placeholder="C#, Blazor, Git, AST" @bind="_newMemberSkills" />
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <label class="gtd-field-lbl">DEFAULT OWNED GIT GLOBS (COMMA SEPARATED)</label>
+                            <input class="gtd-input" placeholder="Services/Git/**, Components/Pages/Git/**" @bind="_newMemberOwnedGlobs" />
+                        </div>
+                        <button class="gtd-btn gtd-btn-primary w-100 mt-3" @onclick="SaveTeamMemberAsync">
+                            <i class="bi bi-check2-circle"></i> Save Team Member &amp; Ownership Scope
+                        </button>
+                    </div>
+                }
+
+                @if (_teamRoster != null && !_teamRoster.FromPlatform)
+                {
+                    <div class="gtd-local-note" title="The web platform has no /api/mobile/projects/{id}/team endpoint yet.">
+                        <i class="bi bi-hdd"></i> Team list is stored on this computer only — the platform has no team API yet.
+                    </div>
+                }
+                <div class="gtd-member-list">
+                    @if (_teamRoster != null)
+                    {
+                        @foreach (var member in _teamRoster.Members)
+                        {
+                            bool isPicked = string.Equals(_draftAssigneeId, member.UserId, StringComparison.OrdinalIgnoreCase);
+                            <div class="gtd-member-card @(isPicked ? "picked" : "")">
+                                <div class="gtd-member-top">
+                                    <div class="gtd-avatar">@GetInitials(member.Name)</div>
+                                    <div class="gtd-member-info">
+                                        <div class="gtd-member-name-row">
+                                            <span class="gtd-member-name">@member.Name</span>
+                                            @if (member.IsLead)
+                                            {
+                                                <span class="gtd-role-badge lead">LEAD</span>
+                                            }
+                                            <span class="gtd-role-badge">@member.ProjectRole.ToUpperInvariant()</span>
+                                        </div>
+                                        <div class="gtd-member-email">@member.Email</div>
+                                    </div>
+                                    <div class="gtd-member-actions">
+                                        <button class="gtd-btn gtd-btn-sm @(isPicked ? "gtd-btn-primary" : "gtd-btn-outline")"
+                                                @onclick="() => PickMemberForTask(member)">
+                                            @(isPicked ? "✓ Assigning" : "Assign Task →")
+                                        </button>
+                                        @if (!member.IsLead)
+                                        {
+                                            <button class="gtd-icon-btn danger" title="Remove from team"
+                                                    @onclick="() => RemoveMemberAsync(member.UserId)">
+                                                <i class="bi bi-trash3"></i>
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+
+                                @if (member.OwnedPaths.Count > 0)
+                                {
+                                    <div class="gtd-owned-globs-row">
+                                        <span class="gtd-owned-lbl">Owned Globs:</span>
+                                        @foreach (var g in member.OwnedPaths)
+                                        {
+                                            <code class="gtd-glob-pill" @onclick="() => AddGlobToDraft(g)" title="Click to add to task globs">@g</code>
+                                        }
+                                    </div>
+                                }
+
+                                <div class="gtd-member-stats">
+                                    <div class="gtd-mstat">
+                                        <b>@member.ActiveTaskCount</b>
+                                        <span>Active</span>
+                                    </div>
+                                    <div class="gtd-mstat">
+                                        <b>@member.CompletedTaskCount</b>
+                                        <span>Completed</span>
+                                    </div>
+                                    <div class="gtd-mstat">
+                                        <b>@member.LockedFiles.Count</b>
+                                        <span>Locked Files</span>
+                                    </div>
+                                    <div class="gtd-mstat">
+                                        <b>@member.AvgProgress%</b>
+                                        <span>Avg Progress</span>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+
+            <!-- RIGHT COLUMN: VISUAL GIT FILE-SET TASK DISPATCHER + ACTIVE FILE-LOCK MATRIX -->
+            <div class="gtd-dispatcher-right">
+                <!-- COMPOSER CARD: ASSIGN PERSON + TASK + GIT FILES -->
+                <div class="gtd-card">
+                    <div class="gtd-card-header">
+                        <div>
+                            <span class="gtd-card-title text-blue">
+                                <i class="bi bi-send-check-fill"></i>
+                                DISPATCH NEW GIT-SCOPED TASK
+                            </span>
+                            <div class="gtd-card-sub">Select a team member, define the task, and check the exact Git files or folder globs they own</div>
+                        </div>
+                        @if (_draftAssignedFiles.Count > 0 || _draftAllowedGlobs.Count > 0)
+                        {
+                            <button class="gtd-btn gtd-btn-sm gtd-btn-outline" @onclick="ClearDraftFiles">
+                                Clear Selection (@_draftAssignedFiles.Count files, @_draftAllowedGlobs.Count globs)
+                            </button>
+                        }
+                    </div>
+
+                    <!-- Step 1: Task & Assignee Metadata -->
+                    <div class="gtd-form-grid-3">
+                        <div>
+                            <label class="gtd-field-lbl">1. ASSIGN TO TEAM MEMBER *</label>
+                            <select class="gtd-select" value="@_draftAssigneeId" @onchange="OnDraftAssigneeSelected">
+                                <option value="">Select team member…</option>
+                                @if (_teamRoster != null)
+                                {
+                                    @foreach (var m in _teamRoster.Members)
+                                    {
+                                        <option value="@m.UserId">@m.Name (@m.ProjectRole · @m.ActiveTaskCount active)</option>
+                                    }
+                                }
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="gtd-field-lbl">2. PRIORITY &amp; DEADLINE *</label>
+                            <div class="d-flex gap-2">
+                                <select class="gtd-select" style="width: 115px;" @bind="_draftPriority">
+                                    <option value="high">High</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low</option>
+                                </select>
+                                <input type="date" class="gtd-input" @bind="_draftDeadline" />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="gtd-field-lbl">3. GIT FILE LOCK ENFORCEMENT</label>
+                            <select class="gtd-select" @bind="_draftLockMode">
+                                <option value="strict">Strict Guard (Block out-of-scope commits)</option>
+                                <option value="exclusive">Exclusive Lock (Block all overlapping tasks)</option>
+                                <option value="advisory">Advisory Warning Only</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="gtd-form-grid-2 mt-3">
+                        <div>
+                            <label class="gtd-field-lbl">TASK TITLE *</label>
+                            <input class="gtd-input"
+                                   placeholder="e.g. Implement JWT Role Guard & Contract Verification on Auth Endpoints"
+                                   @bind="_draftTitle"
+                                   @bind:event="oninput" />
+                        </div>
+                        <div class="gtd-form-grid-2">
+                            <div>
+                                <label class="gtd-field-lbl">BASE BRANCH</label>
+                                <input class="gtd-input" placeholder="main" @bind="_draftBaseBranch" />
+                            </div>
+                            <div>
+                                <label class="gtd-field-lbl">TARGET TASK BRANCH</label>
+                                <input class="gtd-input"
+                                       placeholder="@SuggestedTargetBranch"
+                                       @bind="_draftTargetBranch" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <label class="gtd-field-lbl">TASK SCOPE &amp; ACCEPTANCE INSTRUCTIONS</label>
+                        <textarea class="gtd-textarea" rows="2"
+                                  placeholder="Describe what the assignee should build, verify, and test within the assigned Git files…"
+                                  @bind="_draftDescription"></textarea>
+                    </div>
+
+                    <!-- Step 2: Interactive Git File-Set & Directory Glob Picker -->
+                    <div class="gtd-file-picker-section mt-3">
+                        <div class="gtd-picker-toolbar">
+                            <div class="gtd-picker-tabs">
+                                <button class="gtd-picker-tab @(_pickerSource == "modified" ? "active" : "")"
+                                        @onclick='() => _pickerSource = "modified"'>
+                                    <i class="bi bi-file-earmark-diff"></i>
+                                    Working Tree Changed (@_repoModifiedFiles.Count)
+                                </button>
+                                <button class="gtd-picker-tab @(_pickerSource == "all" ? "active" : "")"
+                                        @onclick='() => _pickerSource = "all"'>
+                                    <i class="bi bi-files"></i>
+                                    All Tracked Repo Files (@_repoTrackedFiles.Count)
+                                </button>
+                            </div>
+
+                            <div class="gtd-picker-search">
+                                <i class="bi bi-search"></i>
+                                <input class="gtd-search-input"
+                                       placeholder="Filter files by path, folder, or extension (e.g. Services/Git, .razor, .ts)…"
+                                       @bind="_fileSearchQuery"
+                                       @bind:event="oninput" />
+                            </div>
+
+                            <div class="gtd-Manual-add">
+                                <input class="gtd-input" style="width: 220px;"
+                                       placeholder="Add path or glob (e.g. src/api/**)"
+                                       @bind="_manualPathOrGlob" />
+                                <button class="gtd-btn gtd-btn-sm gtd-btn-outline" @onclick="AddManualPathOrGlob">
+                                    + Add Scope
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Quick Directory Glob Bar -->
+                        @if (VisibleTopDirectories.Count > 0)
+                        {
+                            <div class="gtd-dir-glob-bar">
+                                <span class="gtd-owned-lbl">Quick Assign Directory Glob:</span>
+                                @foreach (var dir in VisibleTopDirectories)
+                                {
+                                    string glob = $"{dir}/**";
+                                    bool hasGlob = _draftAllowedGlobs.Contains(glob, StringComparer.OrdinalIgnoreCase);
+                                    <button class="gtd-dir-chip @(hasGlob ? "active" : "")"
+                                            @onclick="() => ToggleDraftGlob(glob)">
+                                        <i class="bi @(hasGlob ? "bi-check2-square" : "bi-folder-plus")"></i>
+                                        @glob
+                                    </button>
+                                }
+                            </div>
+                        }
+
+                        <!-- File Tree Checkbox List with Live Teammate Lock Badges -->
+                        <div class="gtd-picker-list">
+                            @if (FilteredPickerFiles.Count == 0)
+                            {
+                                <div class="gtd-empty-box small">
+                                    No matching files. Switch between "Working Tree Changed" and "All Tracked Repo Files" or click "Load Repo Files".
+                                </div>
+                            }
+                            else
+                            {
+                                @foreach (var filePath in FilteredPickerFiles.Take(120))
+                                {
+                                    bool isChecked = _draftAssignedFiles.Contains(filePath, StringComparer.OrdinalIgnoreCase);
+                                    var activeLock = GetExistingFileLock(filePath);
+                                    bool isLockedByOther = activeLock != null &&
+                                        !string.Equals(activeLock.LockedByUserId, _draftAssigneeId, StringComparison.OrdinalIgnoreCase);
+
+                                    <div class="gtd-picker-row @(isChecked ? "checked" : "") @(isLockedByOther ? "locked-warning" : "")"
+                                         @onclick="() => ToggleDraftFile(filePath)">
+                                        <input type="checkbox"
+                                               checked="@isChecked"
+                                               @onclick:stopPropagation="true"
+                                               @onchange="() => ToggleDraftFile(filePath)" />
+                                        <i class="bi bi-file-earmark-code gtd-file-icon"></i>
+                                        <code class="gtd-picker-path">@filePath</code>
+
+                                        <div class="gtd-picker-row-right">
+                                            @if (activeLock != null)
+                                            {
+                                                <span class="gtd-lock-pill @(isLockedByOther ? "conflict" : "same-owner")"
+                                                      title="Task: @activeLock.TaskTitle (@activeLock.TargetBranch)">
+                                                    <i class="bi bi-lock-fill"></i>
+                                                    Locked by @activeLock.LockedByName (@activeLock.TaskTitle)
+                                                </span>
+                                            }
+                                            @if (_repoModifiedSet.Contains(filePath))
+                                            {
+                                                <span class="gtd-mod-pill">MODIFIED</span>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        </div>
+
+                        <!-- Selected Assigned Files & Globs Summary Chips -->
+                        @if (_draftAssignedFiles.Count > 0 || _draftAllowedGlobs.Count > 0)
+                        {
+                            <div class="gtd-selected-summary">
+                                <div class="gtd-sub-section-lbl">
+                                    SELECTED GIT SCOPE FOR THIS TASK (@_draftAssignedFiles.Count FILES · @_draftAllowedGlobs.Count GLOBS)
+                                </div>
+                                <div class="gtd-chip-wrap">
+                                    @foreach (var f in _draftAssignedFiles)
+                                    {
+                                        <span class="gtd-sel-chip file">
+                                            <i class="bi bi-file-earmark-check"></i> @f
+                                            <button @onclick="() => _draftAssignedFiles.Remove(f)">✕</button>
+                                        </span>
+                                    }
+                                    @foreach (var g in _draftAllowedGlobs)
+                                    {
+                                        <span class="gtd-sel-chip glob">
+                                            <i class="bi bi-folder-check"></i> @g
+                                            <button @onclick="() => _draftAllowedGlobs.Remove(g)">✕</button>
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+                        }
+
+                        <!-- Collision Warning & Override Toggle -->
+                        @if (DraftCollisions.Count > 0)
+                        {
+                            <div class="gtd-collision-banner">
+                                <div class="gtd-collision-text">
+                                    <i class="bi bi-exclamation-octagon-fill"></i>
+                                    <div>
+                                        <b>Git File-Lock Collision Detected (@DraftCollisions.Count file(s)):</b>
+                                        <span>
+                                            @string.Join(", ", DraftCollisions.Select(c => $"'{c.FilePath}' (locked by {c.LockedByName})"))
+                                        </span>
+                                    </div>
+                                </div>
+                                <label class="gtd-override-chk">
+                                    <input type="checkbox" @bind="_draftForceAssign" />
+                                    <span>Force Override File Lock</span>
+                                </label>
+                            </div>
+                        }
+
+                        <div class="gtd-dispatch-submit-row">
+                            <button class="gtd-btn gtd-btn-primary gtd-btn-lg"
+                                    @onclick="DispatchGitTaskAsync"
+                                    disabled="@_isDispatching">
+                                <i class="bi @(_isDispatching ? "bi-arrow-repeat gtd-spin" : "bi-send-fill")"></i>
+                                @(_isDispatching
+                                    ? "Dispatching Task & Locking Git Scope…"
+                                    : $"Assign Task & Lock {_draftAssignedFiles.Count} Git File(s)")
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CARD 2: ACTIVE PROJECT TASKS & GIT FILE-LOCK MATRIX -->
+                <div class="gtd-card">
+                    <div class="gtd-card-header">
+                        <div>
+                            <span class="gtd-card-title">
+                                <i class="bi bi-table"></i>
+                                DISTRIBUTED GIT TASKS &amp; FILE-LOCK MATRIX (@_projectTasks.Count)
+                            </span>
+                            <div class="gtd-card-sub">Live status of every assigned task, branch, file ownership lock, and SRE verification gate</div>
+                        </div>
+                    </div>
+
+                    @if (_projectTasks.Count == 0)
+                    {
+                        <div class="gtd-empty-box small">No tasks distributed for this project yet.</div>
+                    }
+                    else
+                    {
+                        <div class="gtd-matrix-table-wrap">
+                            <table class="gtd-matrix-table">
+                                <thead>
+                                    <tr>
+                                        <th>TASK &amp; BRANCH</th>
+                                        <th>ASSIGNEE</th>
+                                        <th>ASSIGNED GIT FILES &amp; GLOBS</th>
+                                        <th>LOCK MODE</th>
+                                        <th>PROGRESS &amp; GATES</th>
+                                        <th>ACTIONS</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var pt in _projectTasks)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div class="gtd-matrix-title">@pt.Title</div>
+                                                <div class="gtd-matrix-sub">
+                                                    <span class="gtd-prio-pill @GetPriorityClass(pt.Priority)">@pt.Priority</span>
+                                                    <code class="ms-1">@pt.TargetBranch</code>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="gtd-matrix-user">@(string.IsNullOrEmpty(pt.AssignedToName) ? pt.AssignedTo : pt.AssignedToName)</div>
+                                                <div class="gtd-matrix-sub">Due @pt.Deadline.ToString("dd MMM")</div>
+                                            </td>
+                                            <td>
+                                                <div class="gtd-matrix-files">
+                                                    @foreach (var af in pt.AssignedFiles.Take(4))
+                                                    {
+                                                        <code class="gtd-mini-file-pill" title="@af">@Path.GetFileName(af)</code>
+                                                    }
+                                                    @if (pt.AssignedFiles.Count > 4)
+                                                    {
+                                                        <span class="gtd-mini-more">+@(pt.AssignedFiles.Count - 4) more</span>
+                                                    }
+                                                    @foreach (var ag in pt.AllowedGlobs)
+                                                    {
+                                                        <code class="gtd-mini-glob-pill">@ag</code>
+                                                    }
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <span class="gtd-lock-chip @(pt.FileLockMode == "strict" ? "strict" : "advisory")">
+                                                    @pt.FileLockMode
+                                                </span>
+                                            </td>
+                                            <td>
+                                                <div class="d-flex align-items-center gap-2">
+                                                    <span class="gtd-status-pill @GetStatusClass(pt.Status)">@pt.Status</span>
+                                                    <b>@pt.Progress%</b>
+                                                </div>
+                                                <div class="gtd-mini-gates mt-1">
+                                                    <span class="@(pt.VerificationGate.BuildPassed ? "text-emerald" : "text-muted")" title="Build">● Build</span>
+                                                    <span class="@(pt.VerificationGate.SastPassed ? "text-emerald" : "text-muted")" title="SAST">● SAST</span>
+                                                    <span class="@(pt.VerificationGate.ContractsPassed ? "text-emerald" : "text-muted")" title="Contracts">● Contracts</span>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <div class="d-flex gap-1">
+                                                    <button class="gtd-btn gtd-btn-sm gtd-btn-outline"
+                                                            title="Open in Receiver View"
+                                                            @onclick="() => OpenTaskInReceiverAsync(pt)">
+                                                        Inspect
+                                                    </button>
+                                                    <button class="gtd-icon-btn danger"
+                                                            title="Delete task & release file locks"
+                                                            @onclick="() => DeleteProjectTaskAsync(pt.Id)">
+                                                        <i class="bi bi-trash3"></i>
+                                                    </button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
             </div>
         </div>
     }
@@ -132,86 +975,309 @@
     public string? TaskId { get; set; }
 
     private bool _isLoading = true;
-    private List<AgentTaskModel> _tasks = new();
+    private string _activeMode = "receiver"; // "receiver" | "dispatcher"
+    private string _receiverFilter = "all";
+    private string? _bannerMessage;
+    private bool _bannerIsError;
+
+    // Projects & Known Local Workspaces
+    private List<PlatformProjectModel> _projects = new();
+    private string _selectedProjectId = "";
+    private List<ProjectModel> _knownProjects = new();
+
+    // Receiver State
+    private List<AgentTaskModel> _myTasks = new();
     private AgentTaskModel? _selectedTask;
-    
-    private bool _isSettingUp = false;
-    private bool _isSetupComplete = false;
+    private string _receiverRepoPath = @"D:\DeveloperAI\DEVOLOPER\Syncro.Desktop";
+    private Syncro.Desktop.Services.Git.GitStatus? _receiverGitStatus;
+    private bool _isSettingUp;
+    private bool _isVerifyingTask;
+    private bool _isGeneratingPlan;
     private LocalMcpServer.MethodologyResponse? _methodology;
 
-    private string _gitStatus = "";
-    private string _localPath = "";
+    // Dispatcher & Team State
+    private ProjectTeamRosterResponse? _teamRoster;
+    private List<AgentTaskModel> _projectTasks = new();
+    private List<GitFileLockModel> _projectFileLocks = new();
+    private string _dispatchRepoPath = @"D:\DeveloperAI\DEVOLOPER\Syncro.Desktop";
+    private List<string> _repoTrackedFiles = new();
+    private List<string> _repoModifiedFiles = new();
+    private HashSet<string> _repoModifiedSet = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isSyncingTree;
+
+    // Add Member Form
+    private bool _showAddMemberForm;
+    private string _newMemberName = "";
+    private string _newMemberEmail = "";
+    private string _newMemberRole = "backend";
+    private string _newMemberSkills = "C#, .NET 9, Git";
+    private string _newMemberOwnedGlobs = "";
+
+    // Task Dispatcher Form
+    private string _draftAssigneeId = "";
+    private string _draftAssigneeName = "";
+    private string _draftTitle = "";
+    private string _draftDescription = "";
+    private string _draftPriority = "high";
+    private DateTime _draftDeadline = DateTime.Now.AddDays(3);
+    private string _draftBaseBranch = "main";
+    private string _draftTargetBranch = "";
+    private string _draftLockMode = "strict";
+    private List<string> _draftAssignedFiles = new();
+    private List<string> _draftAllowedGlobs = new();
+    private bool _draftForceAssign;
+    private bool _isDispatching;
+
+    // Picker Controls
+    private string _pickerSource = "modified"; // "modified" | "all"
+    private string _fileSearchQuery = "";
+    private string _manualPathOrGlob = "";
+
+    private List<AgentTaskModel> FilteredMyTasks =>
+        _receiverFilter == "all"
+            ? _myTasks
+            : _myTasks.Where(t => string.Equals(t.Status, _receiverFilter, StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private string SuggestedTargetBranch
+    {
+        get
+        {
+            string who = !string.IsNullOrWhiteSpace(_draftAssigneeName)
+                ? _draftAssigneeName.Split(' ')[0].ToLowerInvariant()
+                : "dev";
+            string slug = string.IsNullOrWhiteSpace(_draftTitle)
+                ? "scoped-task"
+                : new string(_draftTitle.ToLowerInvariant().Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-');
+            while (slug.Contains("--")) slug = slug.Replace("--", "-");
+            if (slug.Length > 22) slug = slug[..22].Trim('-');
+            return $"task/{who}-{slug}";
+        }
+    }
+
+    private List<string> FilteredPickerFiles
+    {
+        get
+        {
+            IEnumerable<string> src = _pickerSource == "modified" && _repoModifiedFiles.Count > 0
+                ? _repoModifiedFiles
+                : _repoTrackedFiles;
+
+            if (!string.IsNullOrWhiteSpace(_fileSearchQuery))
+            {
+                var q = _fileSearchQuery.Trim();
+                src = src.Where(f => f.Contains(q, StringComparison.OrdinalIgnoreCase));
+            }
+            return src.ToList();
+        }
+    }
+
+    private List<string> VisibleTopDirectories =>
+        _repoTrackedFiles
+            .Select(f => f.Contains('/') ? f[..f.IndexOf('/')] : "")
+            .Where(d => !string.IsNullOrEmpty(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .ToList();
+
+    private List<GitFileLockModel> DraftCollisions =>
+        _projectFileLocks
+            .Where(lk =>
+                !string.Equals(lk.LockedByUserId, _draftAssigneeId, StringComparison.OrdinalIgnoreCase) &&
+                _draftAssignedFiles.Any(f => GitTaskScopeService.PathsMatch(f, lk.FilePath)))
+            .ToList();
 
     protected override async Task OnInitializedAsync()
     {
-        _tasks = await PixelSvc.GetAssignedTasksAsync();
-        
-        if (!string.IsNullOrEmpty(TaskId))
+        _knownProjects = ProjSvc.GetProjects() ?? new List<ProjectModel>();
+        if (_knownProjects.Count > 0 && Directory.Exists(_knownProjects[0].Path))
         {
-            var task = _tasks.FirstOrDefault(t => t.Id == TaskId);
-            if (task != null) SelectTask(task);
+            _receiverRepoPath = _knownProjects[0].Path;
+            _dispatchRepoPath = _knownProjects[0].Path;
         }
-        
-        _isLoading = false;
+
+        // Check if GitManager handed off selected files for dispatch
+        var handoff = ScopeSvc.ConsumePendingDispatch();
+        if (handoff.Files.Count > 0)
+        {
+            _activeMode = "dispatcher";
+            if (!string.IsNullOrWhiteSpace(handoff.RepoPath))
+            {
+                _dispatchRepoPath = handoff.RepoPath;
+            }
+            _draftAssignedFiles = handoff.Files;
+            _bannerMessage = $"Loaded {handoff.Files.Count} selected file(s) from Repository Workbench for team assignment.";
+            _bannerIsError = false;
+        }
+
+        await RefreshAllAsync();
     }
 
-    protected override void OnParametersSet()
+    protected override async Task OnParametersSetAsync()
     {
-        if (_tasks.Any() && !string.IsNullOrEmpty(TaskId) && _selectedTask?.Id != TaskId)
+        if (!string.IsNullOrEmpty(TaskId) && _myTasks.Count > 0 && _selectedTask?.Id != TaskId)
         {
-            var task = _tasks.FirstOrDefault(t => t.Id == TaskId);
-            if (task != null) SelectTask(task);
-        }
-    }
-
-    private void SelectTask(AgentTaskModel task)
-    {
-        _selectedTask = task;
-        _isSetupComplete = false;
-        _methodology = null;
-        
-        _localPath = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), 
-            "SyncroWorkspaces", 
-            _selectedTask.Id);
-            
-        if (System.IO.Directory.Exists(System.IO.Path.Combine(_localPath, ".git")))
-        {
-            _gitStatus = "Cloned";
-            _isSetupComplete = true; // if already cloned, maybe setup is partway done
-        }
-        else
-        {
-            _gitStatus = "Not Cloned";
+            var match = _myTasks.FirstOrDefault(t => t.Id == TaskId);
+            if (match != null)
+            {
+                _activeMode = "receiver";
+                await SelectTaskAsync(match);
+            }
         }
     }
 
-    private async Task AcceptAndSetup()
+    private async Task RefreshAllAsync()
     {
-        if (_selectedTask == null) return;
-        
-        _isSettingUp = true;
+        _isLoading = true;
         StateHasChanged();
 
         try
         {
-            // 1. Auto Clone Repo using GitAutomationService
-            if (_gitStatus != "Cloned")
+            _projects = await PixelSvc.GetProjectsAsync();
+            if (string.IsNullOrEmpty(_selectedProjectId) && _projects.Count > 0)
             {
-                bool cloned = await GitSvc.CloneRepositoryAsync(_selectedTask.RepoUrl, _localPath);
-                if (cloned) _gitStatus = "Cloned";
+                _selectedProjectId = _projects[0].Id;
             }
 
-            string combinedScope = _selectedTask.ScopeDescription;
+            _myTasks = await PixelSvc.GetAssignedTasksAsync();
+            if (_selectedTask != null)
+            {
+                _selectedTask = _myTasks.FirstOrDefault(t => t.Id == _selectedTask.Id) ?? _myTasks.FirstOrDefault();
+            }
+            else if (!string.IsNullOrEmpty(TaskId))
+            {
+                _selectedTask = _myTasks.FirstOrDefault(t => t.Id == TaskId) ?? _myTasks.FirstOrDefault();
+            }
+            else
+            {
+                _selectedTask = _myTasks.FirstOrDefault();
+            }
 
-            // 2. Invoke Local MCP Server to analyze codebase and provide methodology
-            _methodology = await McpSvc.GenerateMethodologyAsync(_localPath, combinedScope);
+            if (_selectedTask != null)
+            {
+                await RefreshReceiverGitStatusAsync();
+            }
 
-            _isSetupComplete = true;
+            if (!string.IsNullOrEmpty(_selectedProjectId))
+            {
+                await LoadProjectDispatchDataAsync(_selectedProjectId);
+            }
+
+            await LoadRepoTreeForDispatcherAsync();
+        }
+        finally
+        {
+            _isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void SwitchMode(string mode)
+    {
+        _activeMode = mode;
+    }
+
+    private async Task SelectTaskAsync(AgentTaskModel task)
+    {
+        _selectedTask = task;
+        _methodology = null;
+
+        var matchingProj = _projects.FirstOrDefault(p => p.Id == task.ProjectId);
+        if (matchingProj != null && !string.IsNullOrWhiteSpace(matchingProj.LocalRepoPath) && Directory.Exists(matchingProj.LocalRepoPath))
+        {
+            _receiverRepoPath = matchingProj.LocalRepoPath;
+        }
+
+        await RefreshReceiverGitStatusAsync();
+    }
+
+    private async Task RefreshReceiverGitStatusAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_receiverRepoPath) || !Directory.Exists(_receiverRepoPath))
+        {
+            _receiverGitStatus = null;
+            return;
+        }
+
+        try
+        {
+            _receiverGitStatus = await Git.StatusAsync(_receiverRepoPath);
         }
         catch
         {
-            // Handle error in real app
+            _receiverGitStatus = null;
+        }
+    }
+
+    private async Task OnReceiverWorkspacePicked(ChangeEventArgs e)
+    {
+        var path = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            _receiverRepoPath = path;
+            await RefreshReceiverGitStatusAsync();
+        }
+    }
+
+    private async Task AcceptAndSetupReceiverAsync()
+    {
+        if (_selectedTask == null) return;
+        _isSettingUp = true;
+        _bannerMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            // 1. Ensure local repository exists (or clone if missing)
+            if (string.IsNullOrWhiteSpace(_receiverRepoPath) || !Directory.Exists(Path.Combine(_receiverRepoPath, ".git")))
+            {
+                string fallbackCloneDir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                    "SyncroWorkspaces",
+                    _selectedTask.Id);
+
+                if (!string.IsNullOrWhiteSpace(_selectedTask.RepoUrl))
+                {
+                    bool cloned = await GitAutoSvc.CloneRepositoryAsync(_selectedTask.RepoUrl, fallbackCloneDir);
+                    if (cloned)
+                    {
+                        _receiverRepoPath = fallbackCloneDir;
+                    }
+                }
+            }
+
+            // 2. Checkout or create the task's dedicated TargetBranch
+            string branchMsg = "";
+            if (Directory.Exists(Path.Combine(_receiverRepoPath, ".git")) && !string.IsNullOrWhiteSpace(_selectedTask.TargetBranch))
+            {
+                var (ok, msg) = await ScopeSvc.CheckoutTaskBranchAsync(_receiverRepoPath, _selectedTask.TargetBranch, _selectedTask.BaseBranch);
+                branchMsg = msg;
+            }
+
+            // 3. Activate task scope guard in GitTaskScopeService
+            ScopeSvc.ActivateTaskForRepo(_receiverRepoPath, _selectedTask);
+
+            // 4. Mark task as in-progress on Pixel Platform
+            if (_selectedTask.Status == "pending")
+            {
+                _selectedTask.Status = "in-progress";
+                if (_selectedTask.Progress < 15) _selectedTask.Progress = 15;
+                await PixelSvc.UpdateGitTaskAsync(_selectedTask.Id, new UpdateGitTaskRequest
+                {
+                    Status = _selectedTask.Status,
+                    Progress = _selectedTask.Progress
+                });
+            }
+
+            await RefreshReceiverGitStatusAsync();
+            await GenerateScopedMethodologyAsync();
+
+            _bannerIsError = false;
+            _bannerMessage = $"Task '{_selectedTask.Title}' accepted! Active scope guard enabled for {_selectedTask.AssignedFiles.Count} file(s). {branchMsg}";
+        }
+        catch (Exception ex)
+        {
+            _bannerIsError = true;
+            _bannerMessage = $"Setup failed: {ex.Message}";
         }
         finally
         {
@@ -219,72 +1285,1854 @@
             StateHasChanged();
         }
     }
+
+    private void OpenInScopedGitManager()
+    {
+        if (_selectedTask != null && !string.IsNullOrWhiteSpace(_receiverRepoPath))
+        {
+            ScopeSvc.ActivateTaskForRepo(_receiverRepoPath, _selectedTask);
+        }
+        Nav.NavigateTo("/gitmanager");
+    }
+
+    private async Task GenerateScopedMethodologyAsync()
+    {
+        if (_selectedTask == null) return;
+        _isGeneratingPlan = true;
+        StateHasChanged();
+
+        try
+        {
+            string scopedPrompt =
+                $"{_selectedTask.ScopeDescription}\n\n" +
+                $"AUTHORITATIVE ASSIGNED GIT FILES:\n{string.Join("\n", _selectedTask.AssignedFiles)}\n" +
+                $"ALLOWED GLOBS:\n{string.Join("\n", _selectedTask.AllowedGlobs)}";
+
+            _methodology = await McpSvc.GenerateMethodologyAsync(_receiverRepoPath, scopedPrompt);
+            if (_selectedTask.AssignedFiles.Count > 0)
+            {
+                _methodology.RestrictedFiles = new List<string>(_selectedTask.AssignedFiles);
+            }
+        }
+        catch { }
+        finally
+        {
+            _isGeneratingPlan = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnReceiverStatusChangedAsync(ChangeEventArgs e)
+    {
+        if (_selectedTask == null) return;
+        _selectedTask.Status = e.Value?.ToString() ?? "in-progress";
+        if (_selectedTask.Status == "completed") _selectedTask.Progress = 100;
+        await SaveReceiverProgressAsync();
+    }
+
+    private async Task SaveReceiverProgressAsync()
+    {
+        if (_selectedTask == null) return;
+        await PixelSvc.UpdateGitTaskAsync(_selectedTask.Id, new UpdateGitTaskRequest
+        {
+            Status = _selectedTask.Status,
+            Progress = _selectedTask.Progress
+        });
+    }
+
+    /// <summary>
+    /// Runs SAST, build, tests and the contract scan for real. A gate that can't run is reported as
+    /// "not run" (never as passed), errors count as failures, and the task is only marked complete
+    /// when every gate that ran passed and at least the build or the tests actually ran.
+    /// </summary>
+    private async Task VerifyAndCompleteTaskAsync()
+    {
+        if (_selectedTask == null) return;
+        _isVerifyingTask = true;
+        _bannerMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            if (string.IsNullOrWhiteSpace(_receiverRepoPath) || !Directory.Exists(_receiverRepoPath))
+            {
+                _bannerIsError = true;
+                _bannerMessage = "Nothing verified: the task's local repository folder doesn't exist. Bind a workspace path first.";
+                return;
+            }
+
+            var gate = new TaskVerificationGateModel { VerifiedAt = DateTime.Now };
+
+            // 1. SAST
+            try
+            {
+                var sast = await SecScanner.ScanAsync(_receiverRepoPath);
+                gate.SastPassed = sast.GatePassed;
+                gate.SastStatus = sast.GatePassed ? "passed" : $"failed: {sast.Findings.Count} finding(s)";
+            }
+            catch (Exception ex) { gate.SastStatus = "failed: " + ex.Message; }
+
+            // 2. Build
+            try
+            {
+                var b = await BuildEng.BuildAsync(_receiverRepoPath);
+                if (b.Stack == Syncro.Desktop.Services.Build.BuildStack.Unknown) gate.BuildStatus = "not run: no build system detected";
+                else { gate.BuildPassed = b.Ok; gate.BuildStatus = b.Ok ? "passed" : $"failed: {b.ErrorCount} error(s)"; }
+            }
+            catch (Exception ex) { gate.BuildStatus = "failed: " + ex.Message; }
+
+            // 3. Tests (run for real — not copied from the build)
+            try
+            {
+                var t = await TestEng.TestAsync(_receiverRepoPath);
+                if (t.Skipped || t.TotalCount == 0) gate.TestsStatus = "not run: no test suite found";
+                else { gate.TestsPassed = t.Ok; gate.TestsStatus = t.Ok ? $"passed: {t.PassedCount}/{t.TotalCount}" : $"failed: {t.PassedCount}/{t.TotalCount}"; }
+            }
+            catch (Exception ex) { gate.TestsStatus = "failed: " + ex.Message; }
+
+            // 4. Contracts across sibling projects
+            try
+            {
+                var parentDir = Directory.GetParent(_receiverRepoPath)?.FullName ?? _receiverRepoPath;
+                var c = await ContractScanner.ScanAsync(parentDir);
+                if (c.Projects.Count == 0) gate.ContractsStatus = "not run: no projects found";
+                else { gate.ContractsPassed = c.Missing == 0; gate.ContractsStatus = c.Missing == 0 ? $"passed: {c.Matched} matched" : $"failed: {c.Missing} broken call(s)"; }
+            }
+            catch (Exception ex) { gate.ContractsStatus = "failed: " + ex.Message; }
+
+            string latestSha = _selectedTask.LatestCommitSha;
+            var commits = await Git.LogAsync(_receiverRepoPath, 1);
+            if (commits.Count > 0) latestSha = commits[0].ShortSha;
+
+            var statuses = new[] { gate.SastStatus, gate.BuildStatus, gate.TestsStatus, gate.ContractsStatus };
+            bool anyFailed = statuses.Any(x => x.StartsWith("failed"));
+            bool somethingProved = gate.BuildStatus.StartsWith("passed") || gate.TestsStatus.StartsWith("passed");
+            bool complete = !anyFailed && somethingProved;
+
+            var summary = $"Build: {gate.BuildStatus} · Tests: {gate.TestsStatus} · SAST: {gate.SastStatus} · Contracts: {gate.ContractsStatus}";
+            _selectedTask.VerificationGate = gate;
+            _selectedTask.LatestCommitSha = latestSha;
+
+            // Persist evidence before asking the platform to create a PR; its endpoint independently
+            // enforces these gates and will refuse an unverified task.
+            await PixelSvc.UpdateGitTaskAsync(_selectedTask.Id, new UpdateGitTaskRequest
+            {
+                LatestCommitSha = latestSha,
+                VerificationGate = gate
+            });
+
+            if (!complete)
+            {
+                _bannerIsError = true;
+                _bannerMessage = $"Task '{_selectedTask.Title}' not completed — " +
+                    (anyFailed ? "a gate failed. " : "neither the build nor the tests could run, so nothing proves it works. ") + summary;
+                return;
+            }
+
+            // Phase 3: only committed work on the assigned task branch may be pushed.
+            var status = await Git.StatusAsync(_receiverRepoPath);
+            if (!status.IsRepo)
+            {
+                _bannerIsError = true;
+                _bannerMessage = "Verification passed, but this workspace is not a Git repository. Nothing was pushed.";
+                return;
+            }
+            if (!status.IsClean)
+            {
+                _bannerIsError = true;
+                _bannerMessage = $"Verification passed, but {status.Files.Count} uncommitted change(s) remain. Commit them in the scoped Git workbench, then verify again.";
+                return;
+            }
+            if (!string.Equals(status.Branch, _selectedTask.TargetBranch, StringComparison.OrdinalIgnoreCase))
+            {
+                _bannerIsError = true;
+                _bannerMessage = $"Verification passed, but branch '{status.Branch}' is active instead of assigned branch '{_selectedTask.TargetBranch}'. Nothing was pushed.";
+                return;
+            }
+
+            var push = await Git.PushAsync(_receiverRepoPath, setUpstream: string.IsNullOrWhiteSpace(status.Upstream));
+            if (!push.Ok)
+            {
+                _bannerIsError = true;
+                _bannerMessage = "Verification passed, but Git push failed. Check this PC's GitHub credentials and retry. " +
+                    (string.IsNullOrWhiteSpace(push.Error) ? push.Output : push.Error);
+                return;
+            }
+
+            var pr = await PixelSvc.OpenTaskPullRequestAsync(_selectedTask.Id);
+            if (!pr.Success)
+            {
+                _bannerIsError = true;
+                _bannerMessage = $"Branch '{_selectedTask.TargetBranch}' was pushed, but the platform could not open its pull request: {pr.Error}";
+                return;
+            }
+
+            _selectedTask.PullRequestUrl = pr.Url;
+            _selectedTask.Progress = 100;
+            _selectedTask.Status = "completed";
+            await PixelSvc.UpdateGitTaskAsync(_selectedTask.Id, new UpdateGitTaskRequest
+            {
+                Status = "completed",
+                Progress = 100,
+                PullRequestUrl = pr.Url
+            });
+            await LoadProjectDispatchDataAsync(_selectedTask.ProjectId);
+
+            _bannerIsError = false;
+            _bannerMessage = $"Task '{_selectedTask.Title}' verified, pushed, and opened as PR #{pr.Number}. {summary}";
+        }
+        catch (Exception ex)
+        {
+            _bannerIsError = true;
+            _bannerMessage = $"Verification error: {ex.Message}";
+        }
+        finally
+        {
+            _isVerifyingTask = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string GateCss(string status) =>
+        status.StartsWith("passed") ? "pass" : status.StartsWith("failed") ? "fail" : "neutral";
+
+    private static string GateText(string status, string never = "Not verified") =>
+        string.IsNullOrEmpty(status) ? never : status;
+
+    private (string Label, string Css) GetLocalFileState(string relativePath)
+    {
+        if (_receiverGitStatus == null || !_receiverGitStatus.IsRepo)
+            return ("Tracked", "state-clean");
+
+        var match = _receiverGitStatus.Files.FirstOrDefault(f =>
+            GitTaskScopeService.PathsMatch(f.Path, relativePath));
+        if (match == null)
+            return ("Clean", "state-clean");
+
+        return match.State switch
+        {
+            "M" => ("Modified", "state-mod"),
+            "A" or "??" => ("Added", "state-add"),
+            "D" => ("Deleted", "state-del"),
+            _ => (match.State, "state-mod")
+        };
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // DISPATCHER & TEAM MANAGEMENT METHODS
+    // ═════════════════════════════════════════════════════════════════════════
+
+    private async Task OnProjectChangedAsync(ChangeEventArgs e)
+    {
+        _selectedProjectId = e.Value?.ToString() ?? "";
+        if (!string.IsNullOrEmpty(_selectedProjectId))
+        {
+            var proj = _projects.FirstOrDefault(p => p.Id == _selectedProjectId);
+            if (proj != null && !string.IsNullOrWhiteSpace(proj.LocalRepoPath) && Directory.Exists(proj.LocalRepoPath))
+            {
+                _dispatchRepoPath = proj.LocalRepoPath;
+            }
+            await LoadProjectDispatchDataAsync(_selectedProjectId);
+            await LoadRepoTreeForDispatcherAsync();
+        }
+    }
+
+    private async Task OnDispatchWorkspacePickedAsync(ChangeEventArgs e)
+    {
+        var path = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            _dispatchRepoPath = path;
+            await LoadRepoTreeForDispatcherAsync();
+        }
+    }
+
+    private async Task LoadProjectDispatchDataAsync(string projectId)
+    {
+        _teamRoster = await PixelSvc.GetProjectTeamAsync(projectId);
+        var tasksAndLocks = await PixelSvc.GetProjectTasksAndLocksAsync(projectId);
+        _projectTasks = tasksAndLocks.Tasks;
+        _projectFileLocks = tasksAndLocks.FileLocks;
+
+        if (string.IsNullOrEmpty(_draftAssigneeId) && _teamRoster.Members.Count > 0)
+        {
+            var firstMember = _teamRoster.Members.FirstOrDefault(m => !m.IsLead) ?? _teamRoster.Members[0];
+            _draftAssigneeId = firstMember.UserId;
+            _draftAssigneeName = firstMember.Name;
+        }
+    }
+
+    private async Task LoadRepoTreeForDispatcherAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_dispatchRepoPath) || !Directory.Exists(_dispatchRepoPath))
+            return;
+
+        _isSyncingTree = true;
+        StateHasChanged();
+
+        try
+        {
+            _repoTrackedFiles = await ScopeSvc.GetTrackedRepoFilesAsync(_dispatchRepoPath);
+            var status = await Git.StatusAsync(_dispatchRepoPath);
+            if (status.IsRepo)
+            {
+                _draftBaseBranch = string.IsNullOrWhiteSpace(status.Branch) ? "main" : status.Branch;
+                _repoModifiedFiles = status.Files
+                    .Select(f => GitTaskScopeService.NormalizeRelativePath(f.Path))
+                    .Where(f => !string.IsNullOrEmpty(f))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                _repoModifiedSet = new HashSet<string>(_repoModifiedFiles, StringComparer.OrdinalIgnoreCase);
+
+                if (_repoModifiedFiles.Count == 0)
+                {
+                    _pickerSource = "all";
+                }
+            }
+        }
+        finally
+        {
+            _isSyncingTree = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SyncRepoTreeToPlatformAsync()
+    {
+        if (string.IsNullOrEmpty(_selectedProjectId)) return;
+        await LoadRepoTreeForDispatcherAsync();
+
+        _isSyncingTree = true;
+        StateHasChanged();
+
+        try
+        {
+            var branches = await Git.BranchesAsync(_dispatchRepoPath);
+            var branchNames = branches.Where(b => !b.IsRemote).Select(b => b.Name).ToList();
+            if (branchNames.Count == 0) branchNames.Add("main");
+
+            var proj = _projects.FirstOrDefault(p => p.Id == _selectedProjectId);
+            var treeSynced = await PixelSvc.SyncRepoFileTreeAsync(
+                _selectedProjectId,
+                proj?.GithubRepo ?? "",
+                _dispatchRepoPath,
+                _draftBaseBranch,
+                branchNames,
+                _repoTrackedFiles);
+
+            _bannerIsError = !treeSynced;
+            _bannerMessage = treeSynced
+                ? $"Synced {_repoTrackedFiles.Count} tracked files and {branchNames.Count} branch(es) from '{_dispatchRepoPath}' to the platform."
+                : $"Loaded {_repoTrackedFiles.Count} tracked files and {branchNames.Count} branch(es) from '{_dispatchRepoPath}' on this computer. Not sent to the platform — it has no file-tree API yet.";
+        }
+        finally
+        {
+            _isSyncingTree = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveTeamMemberAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newMemberName) || string.IsNullOrWhiteSpace(_newMemberEmail))
+        {
+            _bannerIsError = true;
+            _bannerMessage = "Member name and email are required.";
+            return;
+        }
+
+        var globs = _newMemberOwnedGlobs
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(g => g.Replace('\\', '/').Trim())
+            .Where(g => !string.IsNullOrEmpty(g))
+            .ToList();
+
+        var skills = _newMemberSkills
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(s => s.Trim())
+            .Where(s => !string.IsNullOrEmpty(s))
+            .ToList();
+
+        _teamRoster = await PixelSvc.AddOrUpdateTeamMemberAsync(_selectedProjectId, new TeamMemberModel
+        {
+            UserId = "dev-" + _newMemberName.ToLowerInvariant().Replace(" ", "-"),
+            Name = _newMemberName.Trim(),
+            Email = _newMemberEmail.Trim(),
+            ProjectRole = _newMemberRole,
+            OwnedPaths = globs,
+            Skills = skills
+        });
+
+        _newMemberName = "";
+        _newMemberEmail = "";
+        _newMemberOwnedGlobs = "";
+        _showAddMemberForm = false;
+
+        _bannerIsError = _teamRoster.LastChangeSyncedToPlatform != true;
+        _bannerMessage = _teamRoster.LastChangeSyncedToPlatform == true
+            ? "Team roster and module ownership updated on the platform."
+            : "Team member saved on this computer only — the platform didn't accept it (no team API yet).";
+    }
+
+    private async Task RemoveMemberAsync(string userId)
+    {
+        _teamRoster = await PixelSvc.RemoveTeamMemberAsync(_selectedProjectId, userId);
+    }
+
+    private void PickMemberForTask(TeamMemberModel member)
+    {
+        _draftAssigneeId = member.UserId;
+        _draftAssigneeName = member.Name;
+        if (member.OwnedPaths.Count > 0 && _draftAllowedGlobs.Count == 0)
+        {
+            foreach (var g in member.OwnedPaths)
+            {
+                if (!_draftAllowedGlobs.Contains(g, StringComparer.OrdinalIgnoreCase))
+                    _draftAllowedGlobs.Add(g);
+            }
+        }
+    }
+
+    private void OnDraftAssigneeSelected(ChangeEventArgs e)
+    {
+        _draftAssigneeId = e.Value?.ToString() ?? "";
+        var m = _teamRoster?.Members.FirstOrDefault(x => x.UserId == _draftAssigneeId);
+        _draftAssigneeName = m?.Name ?? _draftAssigneeId;
+    }
+
+    private void ToggleDraftFile(string relativePath)
+    {
+        var existing = _draftAssignedFiles.FirstOrDefault(f => string.Equals(f, relativePath, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+            _draftAssignedFiles.Remove(existing);
+        else
+            _draftAssignedFiles.Add(relativePath);
+    }
+
+    private void ToggleDraftGlob(string glob)
+    {
+        var existing = _draftAllowedGlobs.FirstOrDefault(g => string.Equals(g, glob, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+            _draftAllowedGlobs.Remove(existing);
+        else
+            _draftAllowedGlobs.Add(glob);
+    }
+
+    private void AddGlobToDraft(string glob)
+    {
+        if (!_draftAllowedGlobs.Contains(glob, StringComparer.OrdinalIgnoreCase))
+            _draftAllowedGlobs.Add(glob);
+    }
+
+    private void AddManualPathOrGlob()
+    {
+        if (string.IsNullOrWhiteSpace(_manualPathOrGlob)) return;
+        var clean = GitTaskScopeService.NormalizeRelativePath(_manualPathOrGlob);
+        if (clean.Contains('*'))
+        {
+            if (!_draftAllowedGlobs.Contains(clean, StringComparer.OrdinalIgnoreCase))
+                _draftAllowedGlobs.Add(clean);
+        }
+        else
+        {
+            if (!_draftAssignedFiles.Contains(clean, StringComparer.OrdinalIgnoreCase))
+                _draftAssignedFiles.Add(clean);
+        }
+        _manualPathOrGlob = "";
+    }
+
+    private void ClearDraftFiles()
+    {
+        _draftAssignedFiles.Clear();
+        _draftAllowedGlobs.Clear();
+    }
+
+    private GitFileLockModel? GetExistingFileLock(string filePath)
+    {
+        return _projectFileLocks.FirstOrDefault(lk => GitTaskScopeService.PathsMatch(lk.FilePath, filePath));
+    }
+
+    private async Task DispatchGitTaskAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_draftTitle) || string.IsNullOrWhiteSpace(_draftAssigneeId))
+        {
+            _bannerIsError = true;
+            _bannerMessage = "Please provide a Task Title and select a Team Member.";
+            return;
+        }
+
+        if (_draftAssignedFiles.Count == 0 && _draftAllowedGlobs.Count == 0)
+        {
+            _bannerIsError = true;
+            _bannerMessage = "Please select at least one Git file or directory glob to assign to this developer.";
+            return;
+        }
+
+        _isDispatching = true;
+        _bannerMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            var proj = _projects.FirstOrDefault(p => p.Id == _selectedProjectId);
+            var res = await PixelSvc.CreateGitTaskAsync(new CreateGitTaskRequest
+            {
+                ProjectId = _selectedProjectId,
+                Title = _draftTitle,
+                Description = string.IsNullOrWhiteSpace(_draftDescription)
+                    ? $"Scoped implementation on {string.Join(", ", _draftAssignedFiles.Take(4))}."
+                    : _draftDescription,
+                AssignedTo = _draftAssigneeId,
+                AssignedToName = _draftAssigneeName,
+                Priority = _draftPriority,
+                Deadline = _draftDeadline,
+                RepoUrl = proj?.GithubRepo ?? "",
+                BaseBranch = _draftBaseBranch,
+                TargetBranch = string.IsNullOrWhiteSpace(_draftTargetBranch) ? SuggestedTargetBranch : _draftTargetBranch,
+                AssignedFiles = new List<string>(_draftAssignedFiles),
+                AllowedGlobs = new List<string>(_draftAllowedGlobs),
+                FileLockMode = _draftLockMode,
+                ForceAssign = _draftForceAssign
+            });
+
+            if (!res.Success)
+            {
+                _bannerIsError = true;
+                _bannerMessage = res.Error ?? "Failed to dispatch task due to file lock conflict.";
+                return;
+            }
+
+            _bannerIsError = false;
+            _bannerMessage = $"Dispatched '{res.Task?.Title}' to {_draftAssigneeName} with {_draftAssignedFiles.Count} locked Git file(s) on branch '{res.Task?.TargetBranch}'!";
+
+            // Reset composer
+            _draftTitle = "";
+            _draftDescription = "";
+            _draftTargetBranch = "";
+            _draftAssignedFiles.Clear();
+            _draftAllowedGlobs.Clear();
+            _draftForceAssign = false;
+
+            await RefreshAllAsync();
+        }
+        finally
+        {
+            _isDispatching = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OpenTaskInReceiverAsync(AgentTaskModel task)
+    {
+        if (!_myTasks.Any(t => t.Id == task.Id))
+        {
+            _myTasks.Insert(0, task);
+        }
+        _activeMode = "receiver";
+        await SelectTaskAsync(task);
+    }
+
+    private async Task DeleteProjectTaskAsync(string taskId)
+    {
+        await PixelSvc.DeleteGitTaskAsync(taskId);
+        await RefreshAllAsync();
+    }
+
+    private static string GetInitials(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2
+            ? $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[1][0])}"
+            : char.ToUpperInvariant(parts[0][0]).ToString();
+    }
+
+    private static string GetPriorityClass(string priority) => (priority ?? "").ToLowerInvariant() switch
+    {
+        "high" => "prio-high",
+        "low" => "prio-low",
+        _ => "prio-med"
+    };
+
+    private static string GetStatusClass(string status) => (status ?? "").ToLowerInvariant() switch
+    {
+        "completed" => "st-done",
+        "in-progress" => "st-active",
+        "delayed" => "st-delayed",
+        _ => "st-pending"
+    };
 }
 
 <style>
-    .agent-dashboard {
-        padding: 24px;
-        height: 100%;
+    .gtd-shell {
+        background: #F8FAFC;
+        min-height: 100%;
+        padding: 18px 22px 32px;
+        color: #0F172A;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         display: flex;
         flex-direction: column;
+        gap: 16px;
     }
-    
-    .header-section h2 {
-        font-weight: 700;
+
+    .gtd-header-card, .gtd-card {
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 12px;
+        padding: 16px 18px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+    }
+
+    .gtd-header-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .gtd-eyebrow {
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        color: #0066FF;
+        margin-bottom: 4px;
+    }
+
+    .gtd-title {
+        font-size: 22px;
+        font-weight: 800;
         letter-spacing: -0.02em;
-        margin-bottom: 8px;
+        margin: 0;
+        color: #0F172A;
     }
-    
-    .task-grid {
+
+    .gtd-subtitle {
+        font-size: 13px;
+        color: #64748B;
+        margin: 4px 0 0;
+    }
+
+    .gtd-kpi-strip {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .gtd-kpi-pill {
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-radius: 10px;
+        padding: 6px 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-width: 90px;
+    }
+
+    .gtd-kpi-num {
+        font-size: 18px;
+        font-weight: 800;
+        line-height: 1.1;
+    }
+
+    .gtd-kpi-lbl {
+        font-size: 10px;
+        font-weight: 700;
+        color: #64748B;
+        text-transform: uppercase;
+    }
+
+    .gtd-mode-tabs {
+        display: flex;
+        gap: 8px;
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid #F1F5F9;
+    }
+
+    .gtd-mode-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 9px 16px;
+        border-radius: 9px;
+        border: 1px solid #E2E8F0;
+        background: #F8FAFC;
+        color: #475569;
+        font-size: 13px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+    .gtd-mode-tab.active {
+        background: #EFF6FF;
+        border-color: #0066FF;
+        color: #0066FF;
+    }
+
+    .gtd-tab-badge {
+        background: #FFFFFF;
+        border: 1px solid #CBD5E1;
+        border-radius: 99px;
+        padding: 1px 8px;
+        font-size: 11px;
+        font-weight: 800;
+    }
+
+    .gtd-alert {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 11px 16px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+    }
+
+    .gtd-alert-success {
+        background: #ECFDF5;
+        border: 1px solid #A7F3D0;
+        color: #065F46;
+    }
+
+    .gtd-alert-error {
+        background: #FEF2F2;
+        border: 1px solid #FECACA;
+        color: #991B1B;
+    }
+
+    .gtd-alert-close {
+        background: transparent;
+        border: none;
+        font-weight: 800;
+        cursor: pointer;
+        color: inherit;
+    }
+
+    /* Grids */
+    .gtd-receiver-grid {
         display: grid;
         grid-template-columns: 350px 1fr;
-        gap: 24px;
-        flex: 1;
-        overflow: hidden;
+        gap: 16px;
+        align-items: start;
     }
-    
-    .tasks-list {
+
+    .gtd-receiver-detail {
         display: flex;
         flex-direction: column;
-        gap: 12px;
-        overflow-y: auto;
-        padding-right: 8px;
+        gap: 14px;
     }
-    
-    .task-card {
+
+    .gtd-three-col-scope {
+        display: grid;
+        grid-template-columns: 1.15fr 1fr 1fr;
+        gap: 14px;
+        align-items: start;
+    }
+
+    .gtd-dispatcher-grid {
+        display: grid;
+        grid-template-columns: 390px 1fr;
+        gap: 16px;
+        align-items: start;
+    }
+
+    .gtd-dispatcher-right {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    /* Card Headers */
+    .gtd-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #F1F5F9;
+    }
+
+    .gtd-card-title {
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        color: #0F172A;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .gtd-card-sub {
+        font-size: 11px;
+        color: #64748B;
+        margin-top: 2px;
+    }
+
+    /* Filter Pills */
+    .gtd-filter-pills {
+        display: flex;
+        gap: 4px;
+    }
+
+    .gtd-filter-pill {
+        border: 1px solid #E2E8F0;
+        background: #F8FAFC;
+        color: #64748B;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
         cursor: pointer;
-        transition: all 0.2s ease;
-        border: 2px solid transparent;
     }
-    
-    .task-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+
+    .gtd-filter-pill.active {
+        background: #0066FF;
+        border-color: #0066FF;
+        color: #FFFFFF;
     }
-    
-    .task-card.selected {
-        border-color: var(--mud-palette-primary);
-        background-color: rgba(14, 165, 233, 0.05);
-    }
-    
-    .task-details {
+
+    /* Task List Items */
+    .gtd-task-scroll {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        max-height: 680px;
         overflow-y: auto;
-        height: 100%;
     }
-    
-    .detail-panel {
-        min-height: 100%;
-        border-radius: 12px;
+
+    .gtd-task-item {
+        border: 1px solid #E2E8F0;
+        background: #F8FAFC;
+        border-radius: 10px;
+        padding: 12px;
+        cursor: pointer;
+        transition: all 0.15s ease;
     }
-    
-    .empty-state {
+
+    .gtd-task-item:hover {
+        border-color: #93C5FD;
+        background: #FFFFFF;
+    }
+
+    .gtd-task-item.selected {
+        border: 2px solid #0066FF;
+        background: #EFF6FF;
+    }
+
+    .gtd-task-item-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+    }
+
+    .gtd-task-item-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #0F172A;
+        line-height: 1.3;
+    }
+
+    .gtd-task-item-proj {
+        font-size: 11px;
+        color: #64748B;
+        margin-top: 4px;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .gtd-task-item-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 8px;
+    }
+
+    .gtd-branch-chip, .gtd-files-chip, .gtd-lock-chip {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .gtd-branch-chip {
+        background: #EEF2FF;
+        color: #4338CA;
+        border: 1px solid #C7D2FE;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+    }
+
+    .gtd-files-chip {
+        background: #F0FDF4;
+        color: #15803D;
+        border: 1px solid #BBF7D0;
+    }
+
+    .gtd-lock-chip.strict {
+        background: #FEF2F2;
+        color: #B91C1C;
+        border: 1px solid #FECACA;
+    }
+
+    .gtd-lock-chip.advisory {
+        background: #FFFBEB;
+        color: #B45309;
+        border: 1px solid #FDE68A;
+    }
+
+    .gtd-progress-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+    }
+
+    .gtd-progress-track {
+        flex: 1;
+        height: 6px;
+        background: #E2E8F0;
+        border-radius: 99px;
+        overflow: hidden;
+    }
+
+    .gtd-progress-fill {
         height: 100%;
+        background: linear-gradient(90deg, #0066FF, #10B981);
+        border-radius: 99px;
+    }
+
+    .gtd-progress-pct {
+        font-size: 11px;
+        font-weight: 800;
+        color: #334155;
+    }
+
+    .gtd-task-item-foot {
+        display: flex;
+        justify-content: space-between;
+        font-size: 10px;
+        color: #64748B;
+        margin-top: 6px;
+    }
+
+    .gtd-active-scope-tag {
+        margin-top: 8px;
+        padding: 4px 8px;
+        border-radius: 6px;
+        background: #ECFDF5;
+        color: #047857;
+        font-size: 10px;
+        font-weight: 800;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    /* Priority & Status Pills */
+    .gtd-prio-pill, .gtd-status-pill {
+        font-size: 10px;
+        font-weight: 800;
+        padding: 2px 8px;
+        border-radius: 6px;
+        text-transform: uppercase;
+    }
+
+    .prio-high { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+    .prio-med  { background: #FFFBEB; color: #D97706; border: 1px solid #FDE68A; }
+    .prio-low  { background: #F1F5F9; color: #475569; border: 1px solid #CBD5E1; }
+
+    .st-done    { background: #ECFDF5; color: #059669; border: 1px solid #A7F3D0; }
+    .st-active  { background: #EFF6FF; color: #2563EB; border: 1px solid #BFDBFE; }
+    .st-delayed { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+    .st-pending { background: #F8FAFC; color: #475569; border: 1px solid #E2E8F0; }
+
+    /* Receiver Detail Header */
+    .gtd-detail-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        flex-wrap: wrap;
+        padding-bottom: 14px;
+        border-bottom: 1px solid #F1F5F9;
+    }
+
+    .gtd-detail-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 8px;
+    }
+
+    .gtd-detail-title {
+        font-size: 18px;
+        font-weight: 800;
+        margin: 0;
+        color: #0F172A;
+    }
+
+    .gtd-detail-desc {
+        font-size: 13px;
+        color: #475569;
+        margin: 6px 0 0;
+        max-width: 760px;
+    }
+
+    .gtd-detail-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .gtd-repo-bind-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        padding: 10px 12px;
+        background: #F8FAFC;
+        border: 1px solid #E2E8F0;
+        border-radius: 9px;
+        margin-top: 12px;
+    }
+
+    .gtd-repo-bind-left {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex: 1;
+        flex-wrap: wrap;
+    }
+
+    .gtd-git-ready-pill {
+        font-size: 12px;
+        color: #047857;
+        background: #ECFDF5;
+        border: 1px solid #A7F3D0;
+        padding: 4px 10px;
+        border-radius: 7px;
+    }
+
+    .gtd-git-warn-pill {
+        font-size: 12px;
+        color: #B45309;
+        background: #FFFBEB;
+        border: 1px solid #FDE68A;
+        padding: 4px 10px;
+        border-radius: 7px;
+    }
+
+    .gtd-telemetry-strip {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 16px;
+        margin-top: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #F1F5F9;
+    }
+
+    .gtd-status-progress-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 4px;
+    }
+
+    .gtd-range {
+        flex: 1;
+        accent-color: #0066FF;
+    }
+
+    .gtd-pct-badge {
+        font-size: 12px;
+        font-weight: 800;
+        color: #0066FF;
+        min-width: 38px;
+    }
+
+    .gtd-gate-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 4px;
+    }
+
+    .gtd-gate-pill {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 7px;
+        border: 1px solid #E2E8F0;
+        background: #F8FAFC;
+        color: #64748B;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .gtd-gate-pill.pass {
+        background: #ECFDF5;
+        border-color: #A7F3D0;
+        color: #047857;
+    }
+
+    .gtd-local-note {
+        font-size: 12px;
+        color: #92400E;
+        background: #FFFBEB;
+        border: 1px solid #FDE68A;
+        border-radius: 8px;
+        padding: 6px 10px;
+        margin: 8px 0;
+    }
+
+    .gtd-gate-pill.fail {
+        background: #FEF2F2;
+        border-color: #FECACA;
+        color: #B91C1C;
+    }
+
+    .gtd-sha-pill {
+        font-size: 11px;
+        font-weight: 800;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        padding: 4px 10px;
+        border-radius: 7px;
+        background: #EEF2FF;
+        border: 1px solid #C7D2FE;
+        color: #4338CA;
+    }
+
+    /* Scope File Rows */
+    .gtd-file-scope-list {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        max-height: 360px;
+        overflow-y: auto;
+    }
+
+    .gtd-scope-file-row {
+        border: 1px solid #E2E8F0;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #F8FAFC;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .gtd-scope-file-row.in-scope {
+        border-left: 3px solid #10B981;
+    }
+
+    .gtd-scope-file-row.locked-scope {
+        border-left: 3px solid #EF4444;
+        background: #FEF2F2;
+    }
+
+    .gtd-scope-file-main {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        overflow: hidden;
+    }
+
+    .gtd-scope-badge {
+        font-size: 9px;
+        font-weight: 800;
+        padding: 2px 6px;
+        border-radius: 4px;
+        white-space: nowrap;
+    }
+
+    .scope-in     { background: #D1FAE5; color: #065F46; }
+    .scope-glob   { background: #DBEAFE; color: #1E40AF; }
+    .scope-ro     { background: #E2E8F0; color: #334155; }
+    .scope-locked { background: #FEE2E2; color: #991B1B; }
+
+    .gtd-file-code {
+        font-size: 11.5px;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        color: #0F172A;
+        word-break: break-all;
+    }
+
+    .gtd-scope-file-right {
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    .gtd-git-state-tag {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 4px;
+    }
+
+    .state-mod   { background: #FEF3C7; color: #B45309; }
+    .state-add   { background: #D1FAE5; color: #047857; }
+    .state-del   { background: #FEE2E2; color: #B91C1C; }
+    .state-clean { background: #F1F5F9; color: #64748B; }
+
+    .gtd-lock-task-caption {
+        font-size: 10.5px;
+        color: #7F1D1D;
+    }
+
+    .gtd-methodology-box {
+        background: #0F172A;
+        color: #F8FAFC;
+        border-radius: 9px;
+        padding: 12px;
+        max-height: 350px;
+        overflow-y: auto;
+    }
+
+    .gtd-methodology-pre {
+        margin: 0;
+        white-space: pre-wrap;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: 11.5px;
+        line-height: 1.5;
+    }
+
+    /* Dispatcher Mode Styles */
+    .gtd-project-bar {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+
+    .gtd-project-bar-left {
+        display: flex;
+        align-items: flex-end;
+        gap: 14px;
+        flex: 1;
+        flex-wrap: wrap;
+    }
+
+    .gtd-project-bar-right {
+        display: flex;
+        gap: 8px;
+    }
+
+    .gtd-field-lbl {
+        display: block;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        color: #64748B;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+    }
+
+    .gtd-sub-section-lbl {
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        color: #475569;
+        margin: 8px 0 4px;
+        text-transform: uppercase;
+    }
+
+    .gtd-input, .gtd-select, .gtd-textarea {
+        width: 100%;
+        border: 1px solid #CBD5E1;
+        background: #FFFFFF;
+        color: #0F172A;
+        border-radius: 8px;
+        padding: 7px 10px;
+        font-size: 12.5px;
+        outline: none;
+    }
+
+    .gtd-input:focus, .gtd-select:focus, .gtd-textarea:focus {
+        border-color: #0066FF;
+        box-shadow: 0 0 0 2px rgba(0, 102, 255, 0.12);
+    }
+
+    .gtd-form-grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .gtd-form-grid-3 {
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1fr;
+        gap: 10px;
+    }
+
+    /* Team Roster Cards */
+    .gtd-add-member-box {
+        background: #F8FAFC;
+        border: 1px solid #BFDBFE;
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 12px;
+    }
+
+    .gtd-member-list {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .gtd-member-card {
+        border: 1px solid #E2E8F0;
+        border-radius: 10px;
+        padding: 12px;
+        background: #F8FAFC;
+        transition: all 0.15s ease;
+    }
+
+    .gtd-member-card.picked {
+        border: 2px solid #0066FF;
+        background: #EFF6FF;
+    }
+
+    .gtd-member-top {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .gtd-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 9px;
+        background: linear-gradient(135deg, #0066FF, #7C3AED);
+        color: #FFFFFF;
+        font-weight: 800;
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+
+    .gtd-member-info {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .gtd-member-name-row {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex-wrap: wrap;
+    }
+
+    .gtd-member-name {
+        font-size: 13.5px;
+        font-weight: 800;
+        color: #0F172A;
+    }
+
+    .gtd-member-email {
+        font-size: 11px;
+        color: #64748B;
+    }
+
+    .gtd-role-badge {
+        font-size: 9px;
+        font-weight: 800;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: #E2E8F0;
+        color: #334155;
+    }
+
+    .gtd-role-badge.lead {
+        background: #DBEAFE;
+        color: #1D4ED8;
+    }
+
+    .gtd-member-actions {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .gtd-owned-globs-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 8px;
+    }
+
+    .gtd-owned-lbl {
+        font-size: 10px;
+        font-weight: 700;
+        color: #64748B;
+    }
+
+    .gtd-glob-pill {
+        font-size: 10.5px;
+        padding: 2px 6px;
+        border-radius: 5px;
+        background: #FFFFFF;
+        border: 1px solid #CBD5E1;
+        color: #0F172A;
+        cursor: pointer;
+    }
+
+    .gtd-member-stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid #E2E8F0;
+        text-align: center;
+    }
+
+    .gtd-mstat b {
+        display: block;
+        font-size: 13px;
+        color: #0F172A;
+    }
+
+    .gtd-mstat span {
+        font-size: 10px;
+        color: #64748B;
+    }
+
+    /* Interactive File Picker */
+    .gtd-file-picker-section {
+        border: 1px solid #E2E8F0;
+        border-radius: 10px;
+        padding: 12px;
+        background: #F8FAFC;
+    }
+
+    .gtd-picker-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .gtd-picker-tabs {
+        display: flex;
+        gap: 6px;
+    }
+
+    .gtd-picker-tab {
+        border: 1px solid #CBD5E1;
+        background: #FFFFFF;
+        color: #475569;
+        padding: 6px 12px;
+        border-radius: 7px;
+        font-size: 12px;
+        font-weight: 700;
+        cursor: pointer;
+    }
+
+    .gtd-picker-tab.active {
+        background: #0066FF;
+        border-color: #0066FF;
+        color: #FFFFFF;
+    }
+
+    .gtd-picker-search {
+        flex: 1;
+        min-width: 220px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #FFFFFF;
+        border: 1px solid #CBD5E1;
+        border-radius: 8px;
+        padding: 5px 10px;
+    }
+
+    .gtd-search-input {
+        border: none;
+        outline: none;
+        width: 100%;
+        font-size: 12px;
+    }
+
+    .gtd-Manual-add {
+        display: flex;
+        gap: 6px;
+    }
+
+    .gtd-dir-glob-bar {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+    }
+
+    .gtd-dir-chip {
+        border: 1px solid #CBD5E1;
+        background: #FFFFFF;
+        color: #334155;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 9px;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .gtd-dir-chip.active {
+        background: #DBEAFE;
+        border-color: #2563EB;
+        color: #1D4ED8;
+    }
+
+    .gtd-picker-list {
+        margin-top: 10px;
+        max-height: 240px;
+        overflow-y: auto;
+        background: #FFFFFF;
+        border: 1px solid #E2E8F0;
+        border-radius: 8px;
+        divide-y: 1px solid #F1F5F9;
+    }
+
+    .gtd-picker-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-bottom: 1px solid #F1F5F9;
+        cursor: pointer;
+        font-size: 12px;
+    }
+
+    .gtd-picker-row:hover {
+        background: #F8FAFC;
+    }
+
+    .gtd-picker-row.checked {
+        background: #EFF6FF;
+    }
+
+    .gtd-picker-row.locked-warning {
+        background: #FFFBEB;
+    }
+
+    .gtd-picker-path {
+        flex: 1;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: 11.5px;
+        color: #0F172A;
+    }
+
+    .gtd-picker-row-right {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .gtd-lock-pill {
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 5px;
+    }
+
+    .gtd-lock-pill.conflict {
+        background: #FEE2E2;
+        color: #991B1B;
+        border: 1px solid #FECACA;
+    }
+
+    .gtd-lock-pill.same-owner {
+        background: #E0E7FF;
+        color: #3730A3;
+    }
+
+    .gtd-mod-pill {
+        font-size: 9.5px;
+        font-weight: 800;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: #FEF3C7;
+        color: #B45309;
+    }
+
+    .gtd-selected-summary {
+        margin-top: 10px;
+    }
+
+    .gtd-chip-wrap {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .gtd-sel-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        font-weight: 700;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        padding: 3px 8px;
+        border-radius: 6px;
+    }
+
+    .gtd-sel-chip.file {
+        background: #DCFCE7;
+        color: #166534;
+        border: 1px solid #86EFAC;
+    }
+
+    .gtd-sel-chip.glob {
+        background: #DBEAFE;
+        color: #1E40AF;
+        border: 1px solid #93C5FD;
+    }
+
+    .gtd-sel-chip button {
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        font-weight: 800;
+        color: inherit;
+    }
+
+    .gtd-collision-banner {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        background: #FEF2F2;
+        border: 1px solid #FECACA;
+        color: #991B1B;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 12px;
+    }
+
+    .gtd-collision-text {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .gtd-override-chk {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 800;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+
+    .gtd-dispatch-submit-row {
+        margin-top: 12px;
+        display: flex;
+        justify-content: flex-end;
+    }
+
+    /* Matrix Table */
+    .gtd-matrix-table-wrap {
+        overflow-x: auto;
+    }
+
+    .gtd-matrix-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+    }
+
+    .gtd-matrix-table th {
+        text-align: left;
+        font-size: 10px;
+        font-weight: 800;
+        color: #64748B;
+        letter-spacing: 0.05em;
+        padding: 8px 10px;
+        border-bottom: 1px solid #E2E8F0;
+        background: #F8FAFC;
+    }
+
+    .gtd-matrix-table td {
+        padding: 10px;
+        border-bottom: 1px solid #F1F5F9;
+        vertical-align: middle;
+    }
+
+    .gtd-matrix-title {
+        font-weight: 700;
+        color: #0F172A;
+    }
+
+    .gtd-matrix-user {
+        font-weight: 700;
+        color: #1E293B;
+    }
+
+    .gtd-matrix-sub {
+        font-size: 11px;
+        color: #64748B;
+        margin-top: 2px;
+    }
+
+    .gtd-matrix-files {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    .gtd-mini-file-pill, .gtd-mini-glob-pill {
+        font-size: 10.5px;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+    }
+
+    .gtd-mini-file-pill {
+        background: #F0FDF4;
+        color: #166534;
+        border: 1px solid #BBF7D0;
+    }
+
+    .gtd-mini-glob-pill {
+        background: #EFF6FF;
+        color: #1E40AF;
+        border: 1px solid #BFDBFE;
+    }
+
+    .gtd-mini-gates {
+        display: flex;
+        gap: 8px;
+        font-size: 10px;
+        font-weight: 700;
+    }
+
+    /* Buttons & Utilities */
+    .gtd-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border-radius: 8px;
+        font-size: 12.5px;
+        font-weight: 700;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: all 0.15s ease;
+    }
+
+    .gtd-btn-sm {
+        padding: 5px 10px;
+        font-size: 11.5px;
+    }
+
+    .gtd-btn-lg {
+        padding: 10px 20px;
+        font-size: 13px;
+    }
+
+    .gtd-btn-primary {
+        background: #0066FF;
+        color: #FFFFFF;
+    }
+
+    .gtd-btn-primary:hover {
+        background: #0052CC;
+    }
+
+    .gtd-btn-emerald {
+        background: #10B981;
+        color: #FFFFFF;
+    }
+
+    .gtd-btn-emerald:hover {
+        background: #059669;
+    }
+
+    .gtd-btn-outline {
+        background: #FFFFFF;
+        border-color: #CBD5E1;
+        color: #334155;
+    }
+
+    .gtd-btn-outline:hover {
+        border-color: #0066FF;
+        color: #0066FF;
+    }
+
+    .gtd-icon-btn {
+        border: 1px solid #E2E8F0;
+        background: #FFFFFF;
+        border-radius: 6px;
+        padding: 4px 8px;
+        cursor: pointer;
+    }
+
+    .gtd-icon-btn.danger:hover {
+        background: #FEF2F2;
+        border-color: #FECACA;
+        color: #DC2626;
+    }
+
+    .gtd-empty-box {
         display: flex;
         flex-direction: column;
         align-items: center;
         justify-content: center;
-        background: rgba(255,255,255,0.5);
-        border-radius: 12px;
-        border: 2px dashed #E2E8F0;
+        text-align: center;
+        padding: 36px 18px;
+        color: #64748B;
+        border: 1px dashed #CBD5E1;
+        border-radius: 10px;
+        background: #F8FAFC;
+    }
+
+    .gtd-empty-box.small {
+        padding: 20px 12px;
+        font-size: 12px;
+    }
+
+    .gtd-empty-title {
+        font-size: 15px;
+        font-weight: 800;
+        color: #334155;
+        margin-top: 8px;
+    }
+
+    .gtd-empty-sub {
+        font-size: 12px;
+        color: #64748B;
+        margin-top: 4px;
+    }
+
+    .text-blue    { color: #0066FF; }
+    .text-purple  { color: #7C3AED; }
+    .text-emerald { color: #10B981; }
+    .text-amber   { color: #D97706; }
+    .text-crimson { color: #DC2626; }
+
+    @@keyframes gtdSpin {
+        to { transform: rotate(360deg); }
+    }
+    .gtd-spin {
+        display: inline-block;
+        animation: gtdSpin 0.9s linear infinite;
     }
 </style>

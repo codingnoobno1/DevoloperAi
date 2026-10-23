@@ -10,13 +10,37 @@ namespace Syncro.Desktop.Services.Connector.Models
     /// </summary>
     public sealed class ConnectorProject
     {
-        public int Version { get; set; } = 1;
+        public int Version { get; set; } = 2;
 
         public FrontendConfig? Frontend { get; set; }
 
         public BackendConfig? Backend { get; set; }
 
         public List<ConnectionMappingEntry> Mappings { get; set; } = new();
+
+        /// <summary>Phase P9 (connector.json v2): N-project workspace graph nodes (Frontend, Backend, FullStack, SharedLib).</summary>
+        public List<ConnectorProjectNode> Projects { get; set; } = new();
+
+        /// <summary>Phase P9 (connector.json v2): Explicit (Consumer -> Producer) links with optional BaseUrlSymbol disambiguation.</summary>
+        public List<ConnectorLinkEntry> Links { get; set; } = new();
+    }
+
+    public sealed class ConnectorProjectNode
+    {
+        public string Id { get; set; } = "";
+        public string Path { get; set; } = "";
+        public string Role { get; set; } = "Backend";      // Frontend | Backend | FullStack | SharedLib
+        public string Stack { get; set; } = "";
+        public int? Port { get; set; }
+    }
+
+    public sealed class ConnectorLinkEntry
+    {
+        public string Consumer { get; set; } = "";
+        public string Producer { get; set; } = "";
+        public string? BaseUrlSymbol { get; set; }
+        public int MatchedRoutes { get; set; }
+        public int MissingRoutes { get; set; }
     }
 
     public sealed class FrontendConfig

@@ -60,22 +60,39 @@ namespace Syncro.Desktop.Services.Connector.Backend
             contract.Routes = scanned;
 
             if (scanned.Count == 0)
-                contract.Notes.Add("No routes detected. The connector can AI-generate a backend from the frontend's calls.");
+                contract.Notes.Add("No routes detected.");
 
             return contract;
         }
 
-        // ── stack detection from manifest files ─────────────────────────────────────────
-        // Recursively finds manifests (skipping node_modules/bin/obj/etc via SourceWalker) so a
-        // solution with its projects in subfolders is still classified correctly — the previous
-        // top-directory-only .csproj search was why a real ASP.NET repo read as "Unknown".
         private static readonly Regex ControllerMarkerRx = new(
             @"\[ApiController\]|\[Route\s*\(|\[Http(?:Get|Post|Put|Patch|Delete)\b|ControllerBase\b|:\s*Controller\b|MapControllers\b",
             RegexOptions.Compiled);
 
         private static BackendStack DetectStack(string root, BackendContract contract)
         {
-            // .NET — any .csproj (searched recursively) that references the web SDK / ASP.NET Core.
+            // Rust — Cargo.toml
+            if (SourceWalker.FindFirst(root, new[] { "Cargo.toml" }, maxDepth: 2) != null)
+            {
+                contract.Notes.Add("Detected Rust (Cargo.toml).");
+                return BackendStack.RustAxum;
+            }
+
+            // Go — go.mod
+            if (SourceWalker.FindFirst(root, new[] { "go.mod" }, maxDepth: 2) != null)
+            {
+                contract.Notes.Add("Detected Go (go.mod).");
+                return BackendStack.GoHttp;
+            }
+
+            // C++ — CMakeLists.txt / vcpkg.json / conanfile.txt
+            if (SourceWalker.FindFirst(root, new[] { "CMakeLists.txt", "vcpkg.json", "conanfile.txt" }, maxDepth: 2) != null)
+            {
+                contract.Notes.Add("Detected C++ (CMake/vcpkg/conan).");
+                return BackendStack.CppCrow;
+            }
+
+            // .NET — any .csproj that references the web SDK / ASP.NET Core.
             var csprojs = SourceWalker.EnumerateFiles(root, new[] { ".csproj" }, maxFiles: 200).ToList();
             foreach (var csproj in csprojs)
             {
@@ -89,12 +106,27 @@ namespace Syncro.Desktop.Services.Connector.Backend
                 }
             }
 
-            // Node / Express — package.json with an express dependency.
+            // Node / TS — Next.js API, NestJS, or Express/Fastify
             var packageJson = SourceWalker.FindFirst(root, new[] { "package.json" }, maxDepth: 3);
-            if (packageJson != null && SafeRead(packageJson).Contains("\"express\"", StringComparison.OrdinalIgnoreCase))
+            if (packageJson != null)
             {
-                contract.Notes.Add("Detected Express (package.json).");
-                return BackendStack.Express;
+                var pkgText = SafeRead(packageJson);
+                if (pkgText.Contains("\"@nestjs/core\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    contract.Notes.Add("Detected NestJS (package.json).");
+                    return BackendStack.NestJs;
+                }
+                if (pkgText.Contains("\"next\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    contract.Notes.Add("Detected Next.js API Routes (package.json).");
+                    return BackendStack.NextJsApi;
+                }
+                if (pkgText.Contains("\"express\"", StringComparison.OrdinalIgnoreCase) ||
+                    pkgText.Contains("\"fastify\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    contract.Notes.Add("Detected Express/Fastify (package.json).");
+                    return BackendStack.Express;
+                }
             }
 
             // Python — requirements.txt / pyproject.toml mentioning fastapi or flask/django.
@@ -107,11 +139,16 @@ namespace Syncro.Desktop.Services.Connector.Backend
                 if (text.Contains("django")) { contract.Notes.Add("Detected Django."); return BackendStack.Django; }
             }
 
-            // Java — Spring Boot via build.gradle / pom.xml.
+            // Java / Kotlin — Spring Boot or Ktor via build.gradle / pom.xml.
             var javaBuild = SourceWalker.FindFirst(root, new[] { "build.gradle", "build.gradle.kts", "pom.xml" }, maxDepth: 3);
             if (javaBuild != null)
             {
                 var text = SafeRead(javaBuild);
+                if (text.Contains("io.ktor", StringComparison.OrdinalIgnoreCase))
+                {
+                    contract.Notes.Add("Detected Kotlin Ktor.");
+                    return BackendStack.KotlinKtor;
+                }
                 if (text.Contains("spring-boot", StringComparison.OrdinalIgnoreCase) ||
                     text.Contains("springframework", StringComparison.OrdinalIgnoreCase))
                 {
@@ -120,8 +157,7 @@ namespace Syncro.Desktop.Services.Connector.Backend
                 }
             }
 
-            // .NET fallback — a C# project whose source carries controller/route attributes even when
-            // the web SDK line lives in a host project we didn't open directly.
+            // .NET fallback — a C# project whose source carries controller/route attributes
             if (csprojs.Count > 0 && HasAspNetControllers(root))
             {
                 contract.Notes.Add("Detected ASP.NET Core (controller/route attributes in source).");

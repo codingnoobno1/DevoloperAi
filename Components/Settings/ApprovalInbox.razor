@@ -1,0 +1,134 @@
+@using Syncro.Desktop.Services.Agent.Policy
+@implements IDisposable
+@inject ApprovalService Approvals
+@inject AgentPolicyStore Store
+@inject AgentSettingsLink SettingsLink
+
+@* Header pill + slide-over approval inbox. Used in the main window header and (Floating) in the IDE window. *@
+
+<div class="aib-wrap @(Dark ? "dark" : "") @(Floating ? "floating" : "")">
+    <button class="aib-pill @(_count > 0 ? "has" : "") lvl-@Store.Current.Bypass.Level.ToString().ToLowerInvariant()"
+            title="Agent guard: @LevelText(Store.Current.Bypass.Level). Click to see pending approvals."
+            @onclick="Toggle">
+        <i class="bi @(Store.Current.Environments.FreezeNow ? "bi-snow" : "bi-shield-check")"></i>
+        <span>@(Store.Current.Environments.FreezeNow ? "Freeze on" : $"Guard · {LevelText(Store.Current.Bypass.Level)}")</span>
+        @if (_count > 0) { <span class="aib-badge">@_count</span> }
+    </button>
+
+    @if (_open)
+    {
+        <div class="aib-scrim" @onclick="Close"></div>
+        <aside class="aib-panel">
+            <header class="aib-head">
+                <div>
+                    <div class="aib-title">Approvals</div>
+                    <div class="aib-sub">@(_count == 0 ? "Nothing waiting" : $"{_count} waiting · unanswered requests are denied after {Store.Current.Approvals.TimeoutMinutes} min")</div>
+                </div>
+                <button class="aib-icon" title="Close" @onclick="Close"><i class="bi bi-x-lg"></i></button>
+            </header>
+
+            @if (_count > 1)
+            {
+                <div class="aib-bulk">
+                    @if (Store.Current.Approvals.AllowBatchApprove)
+                    {
+                        <button class="aib-bulk-btn" @onclick="ApproveLow" title="Approves plain 'Ask' requests. Requests that need a typed confirmation are left for you.">Approve all low-risk</button>
+                    }
+                    <button class="aib-bulk-btn deny" @onclick="() => Approvals.DenyAll()">Deny all</button>
+                </div>
+            }
+
+            <div class="aib-list">
+                @foreach (var r in Approvals.Pending)
+                {
+                    <ApprovalCard @key="r.Id" Request="r" />
+                }
+                @if (_count == 0)
+                {
+                    <div class="aib-empty">
+                        <i class="bi bi-check2-circle"></i>
+                        <div>When the agent wants to change files, run commands or reach the network, it waits here for you.</div>
+                    </div>
+                }
+            </div>
+
+            <footer class="aib-foot">
+                <button class="aib-link" @onclick='() => { SettingsLink.Open("guardrails"); Close(); }'><i class="bi bi-sliders"></i> Guardrails</button>
+                <button class="aib-link" @onclick='() => { SettingsLink.Open("audit"); Close(); }'><i class="bi bi-journal-text"></i> Audit log</button>
+            </footer>
+        </aside>
+    }
+
+    @if (_toasts.Count > 0)
+    {
+        <div class="aib-toasts">
+            @foreach (var t in _toasts)
+            {
+                <div class="aib-toast"><i class="bi bi-lightning-charge"></i> @t</div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    /// <summary>Dark styling for the IDE window.</summary>
+    [Parameter] public bool Dark { get; set; }
+    /// <summary>Fixed bottom-right instead of inline (IDE window has no header slot).</summary>
+    [Parameter] public bool Floating { get; set; }
+
+    private bool _open;
+    private int _count;
+    private readonly List<string> _toasts = new();
+    private System.Threading.Timer? _tick;
+
+    protected override void OnInitialized()
+    {
+        _count = Approvals.PendingCount;
+        Approvals.Changed += OnChanged;
+        Approvals.Notified += OnNotified;
+        Store.Changed += OnPolicy;
+        _tick = new System.Threading.Timer(_ => { if (_open) InvokeAsync(StateHasChanged); }, null, 15000, 15000);
+    }
+
+    private void OnChanged() => InvokeAsync(() =>
+    {
+        var before = _count;
+        _count = Approvals.PendingCount;
+        if (_count > before) _open = true;     // new request: bring it to the user's attention
+        if (_count == 0 && before > 0) _open = false;
+        StateHasChanged();
+    });
+
+    private void OnPolicy(AgentPolicy _) => InvokeAsync(StateHasChanged);
+
+    private void OnNotified(string msg) => InvokeAsync(async () =>
+    {
+        _toasts.Add(msg);
+        StateHasChanged();
+        await Task.Delay(6000);
+        _toasts.Remove(msg);
+        StateHasChanged();
+    });
+
+    private void Toggle() => _open = !_open;
+    private void Close() => _open = false;
+    private void ApproveLow() => Approvals.ApproveAllLowRisk();
+
+    public static string LevelText(AutonomyLevel l) => l switch
+    {
+        AutonomyLevel.Observe => "Observe",
+        AutonomyLevel.Suggest => "Suggest",
+        AutonomyLevel.GuardedAuto => "Guarded auto",
+        AutonomyLevel.AutoNotify => "Auto + notify",
+        AutonomyLevel.FullAutoSandbox => "Sandbox auto",
+        _ => l.ToString(),
+    };
+
+    public void Dispose()
+    {
+        Approvals.Changed -= OnChanged;
+        Approvals.Notified -= OnNotified;
+        Store.Changed -= OnPolicy;
+        _tick?.Dispose();
+    }
+}

@@ -1,0 +1,946 @@
+@using System
+@using System.Collections.Generic
+@using System.IO
+@using System.Linq
+@using Syncro.Desktop.Services.Connector.Scan
+@using Syncro.Desktop.Services.Connector.ProjectDomain
+@using Syncro.Desktop.Services.Engine.Mcp
+@using Syncro.Desktop.Services.AgentCli.Models
+@using Syncro.Desktop.Services.AgentCli.Loop
+@using Syncro.Desktop.Services.AgentCli.Nlp
+@using Syncro.Desktop.Services.Verification
+@using Syncro.Desktop.Services.Workspace.Diagnostics
+@inject MultiProjectScanService Scanner
+@inject McpOrchestrator Mcp
+@inject TaskRouter Router
+@inject TaskStore Tasks
+@inject TaskLoopEngine Loop
+@inject IVerificationEngine Verifier
+@inject IProblemsHub Problems
+
+<div class="mc-root">
+    <!-- LEFT COLUMN: MULTI-PROJECT ECOSYSTEM & CONTRACT SCOPE -->
+    <div class="mc-col mc-left">
+        <div class="mc-section-header">
+            <span>ECOSYSTEM SCOPE</span>
+            <button class="mc-icon-btn" title="Rescan Multi-Project AST" @onclick="RunUniverseScanAsync" disabled="@_scanning">
+                <i class="bi @(_scanning ? "bi-arrow-repeat mc-spin" : "bi-radar")"></i>
+            </button>
+        </div>
+
+        <div class="mc-root-bar">
+            <i class="bi bi-folder2-open" style="color:var(--accent);"></i>
+            <span class="mc-root-path" title="@WorkspaceRoot">@(string.IsNullOrEmpty(WorkspaceRoot) ? "No folder opened" : WorkspaceRoot)</span>
+            <button class="mc-mini-btn" @onclick="OnPickFolder">Change</button>
+        </div>
+
+        <div class="mc-scroll">
+            @if (_scanning)
+            {
+                <div class="mc-empty">
+                    <i class="bi bi-cpu mc-spin" style="font-size:20px; color:var(--accent);"></i>
+                    <div>Running Zero-GPU AST Scan across workspace…</div>
+                </div>
+            }
+            else if (ScanReport == null || ScanReport.Projects.Count == 0)
+            {
+                <div class="mc-empty">
+                    <div>No sub-projects scanned yet.</div>
+                    <button class="mc-primary-btn" style="margin-top:8px;" @onclick="RunUniverseScanAsync" disabled="@string.IsNullOrEmpty(WorkspaceRoot)">
+                        <i class="bi bi-radar"></i> Scan Multi-Project AST
+                    </button>
+                </div>
+            }
+            else
+            {
+                <!-- KPI Strip -->
+                <div class="mc-kpi-grid">
+                    <div class="mc-kpi">
+                        <div class="mc-kpi-val">@ScanReport.ProjectCount</div>
+                        <div class="mc-kpi-lbl">Projects</div>
+                    </div>
+                    <div class="mc-kpi">
+                        <div class="mc-kpi-val" style="color:#10b981;">@ScanReport.Matched</div>
+                        <div class="mc-kpi-lbl">Matched</div>
+                    </div>
+                    <div class="mc-kpi">
+                        <div class="mc-kpi-val" style="color:#ef4444;">@ScanReport.Missing</div>
+                        <div class="mc-kpi-lbl">Broken</div>
+                    </div>
+                    <div class="mc-kpi">
+                        <div class="mc-kpi-val" style="color:#f59e0b;">@ScanReport.OrphanRoutes</div>
+                        <div class="mc-kpi-lbl">Orphan</div>
+                    </div>
+                </div>
+
+                <div class="mc-sub-title">DISCOVERED PROJECTS (CLICK TO TAG @("@"))</div>
+                @foreach (var proj in ScanReport.Projects)
+                {
+                    bool inScope = _scopedProjects.Contains(proj.Name);
+                    <div class="mc-proj-card @(inScope ? "active" : "")" @onclick="() => ToggleProjectScope(proj)">
+                        <div class="mc-proj-top">
+                            <span class="mc-dot" style="background:@DomainDetector.GetColor(proj.Domain)"></span>
+                            <span class="mc-proj-name">@proj.Name</span>
+                            <span class="mc-stack-pill">@proj.Stack</span>
+                        </div>
+                        <div class="mc-proj-meta">
+                            <span><i class="bi bi-Broadcast"></i> @proj.Routes routes</span>
+                            <span><i class="bi bi-arrow-up-right-circle"></i> @proj.Calls calls</span>
+                            @if (!proj.Data.IsEmpty)
+                            {
+                                <span><i class="bi bi-database"></i> @(proj.Data.Store ?? "Data")</span>
+                            }
+                        </div>
+                        <div class="mc-proj-actions" @onclick:stopPropagation="true">
+                            <button class="mc-link-btn" @onclick="() => AddContextTag(proj.Name)">+@proj.Name</button>
+                            <button class="mc-link-btn" @onclick="() => OnOpenProjectInEditor.InvokeAsync(proj.Path)">Open in IDE →</button>
+                        </div>
+                    </div>
+                }
+
+                <!-- Contract & Auth Breakages -->
+                <div class="mc-sub-title" style="margin-top:14px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>CONTRACT &amp; AUTH BREAKS (@BrokenEdges.Count())</span>
+                    @if (BrokenEdges.Any())
+                    {
+                        <button class="mc-fix-all-btn" @onclick="QueueAllBreaksIntoAgent">
+                            <i class="bi bi-magic"></i> Auto-Fix All
+                        </button>
+                    }
+                </div>
+
+                @if (!BrokenEdges.Any())
+                {
+                    <div class="mc-ok-banner">
+                        <i class="bi bi-shield-check"></i> All cross-project routes &amp; calls aligned!
+                    </div>
+                }
+                else
+                {
+                    @foreach (var edge in BrokenEdges.Take(12))
+                    {
+                        <div class="mc-break-card" @onclick="() => QueueSingleBreakIntoAgent(edge)">
+                            <div class="mc-break-head">
+                                <span class="mc-verb">@edge.Method</span>
+                                <code class="mc-path">@edge.CallPath</code>
+                                <span class="mc-state-tag">@edge.State</span>
+                            </div>
+                            <div class="mc-break-sub">
+                                <b>@edge.FromProject</b> → @(edge.ToProject ?? "No Producer Found")
+                            </div>
+                        </div>
+                    }
+                }
+            }
+        </div>
+    </div>
+
+    <!-- CENTER COLUMN: AUTONOMOUS AGENT STREAM, PLAN GRAPH & MULTI-REPO COMPOSER -->
+    <div class="mc-col mc-center">
+        <!-- Agent Header Bar -->
+        <div class="mc-agent-topbar">
+            <div class="mc-agent-identity">
+                <span class="mc-pulse-dot @(_busy ? "busy" : "ready")"></span>
+                <b>SYNCRO AUTONOMOUS AGENT</b>
+                <span class="mc-badge">Antigravity 2.0 / Claude Code Mode</span>
+            </div>
+
+            <div class="mc-mode-pills">
+                <button class="mc-pill @(_executionStyle == "agent" ? "active" : "")" @onclick='() => _executionStyle = "agent"'>
+                    <i class="bi bi-stars"></i> Full Agent (MCP + LLM)
+                </button>
+                <button class="mc-pill @(_executionStyle == "deterministic" ? "active" : "")" @onclick='() => _executionStyle = "deterministic"'>
+                    <i class="bi bi-cpu"></i> Deterministic Loop (Zero-GPU)
+                </button>
+            </div>
+        </div>
+
+        <!-- Quick Mission Templates -->
+        <div class="mc-quick-bar">
+            <span class="mc-quick-lbl">Missions:</span>
+            <button class="mc-chip" @onclick='() => SetPrompt("Scan all projects in this workspace, map frontend/mobile calls to backend routes, and report any broken endpoints or auth mismatches.")'>
+                🔍 Audit Multi-Project Contracts
+            </button>
+            <button class="mc-chip" @onclick='() => SetPrompt("Check all missing backend routes called by the frontend/mobile apps and draft the missing controller endpoints.")'>
+                ⚡ Generate Missing Routes
+            </button>
+            <button class="mc-chip" @onclick='() => SetPrompt("Verify authentication headers, JWT bearer tokens, and DTO field types across all connected apps.")'>
+                🛡️ Verify Auth &amp; DTO Shapes
+            </button>
+            <button class="mc-chip" @onclick='() => SetPrompt("Analyze workspace dependencies and run a safe build & verification check.")'>
+                🔨 Safe Build &amp; Verify
+            </button>
+        </div>
+
+        <!-- Conversation & Execution Timeline -->
+        <div class="mc-stream">
+            @if (_entries.Count == 0)
+            {
+                <div class="mc-hero-empty">
+                    <div class="mc-hero-icon"><i class="bi bi-boxes"></i></div>
+                    <h3>Multi-Project Agent Mission Control</h3>
+                    <p>
+                        Orchestrate across <b>C++ Crow, Rust, Go, Kotlin, Spring, Flutter, React, Next.js, and .NET MAUI</b> simultaneously.
+                        Tag projects with <code>@@project</code>, run zero-GPU AST contract checks, or dispatch multi-file repairs gated by the Safe Verification Engine.
+                    </p>
+                </div>
+            }
+            else
+            {
+                @foreach (var entry in _entries)
+                {
+                    <div class="mc-msg @entry.Role">
+                        <div class="mc-msg-head">
+                            <i class="bi @entry.Icon"></i>
+                            <span class="mc-msg-title">@entry.Title</span>
+                            <span class="mc-msg-time">@entry.Timestamp</span>
+                        </div>
+                        <div class="mc-msg-body">@entry.Body</div>
+
+                        @if (entry.Steps.Count > 0)
+                        {
+                            <div class="mc-step-list">
+                                @foreach (var s in entry.Steps)
+                                {
+                                    <div class="mc-step-item">
+                                        <i class="bi @(s.Done ? "bi-check-circle-fill ok" : "bi-arrow-right-circle accent")"></i>
+                                        <span>@s.Text</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        </div>
+
+        <!-- Composer Box (Cursor / Claude Code style with @context chips) -->
+        <div class="mc-composer-wrap">
+            @if (_contextTags.Count > 0)
+            {
+                <div class="mc-context-strip">
+                    @foreach (var tag in _contextTags)
+                    {
+                        <span class="mc-ctx-tag">
+                            <i class="bi bi-at"></i>@tag.TrimStart('@')
+                            <button @onclick="() => _contextTags.Remove(tag)">×</button>
+                        </span>
+                    }
+                </div>
+            }
+
+            <div class="mc-composer-box">
+                <textarea class="mc-textarea"
+                          rows="3"
+                          placeholder="Ask Syncro Agent to map endpoints, fix auth breaks across projects, or scaffold features… (Enter to send, Shift+Enter for newline)"
+                          @bind="_prompt"
+                          @bind:event="oninput"
+                          @onkeydown="OnComposerKeyDown"
+                          disabled="@_busy"></textarea>
+
+                <div class="mc-composer-footer">
+                    <div class="mc-composer-left">
+                        <span class="mc-hint">
+                            <i class="bi bi-shield-lock-fill" style="color:#10b981;"></i>
+                            Safe Verification Gate Active (Auto-Rollback on Build Error)
+                        </span>
+                    </div>
+                    <div class="mc-composer-right">
+                        @if (_entries.Count > 0)
+                        {
+                            <button class="mc-ghost-btn" @onclick="() => _entries.Clear()" disabled="@_busy">Clear</button>
+                        }
+                        <button class="mc-send-btn" @onclick="ExecuteMissionAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_prompt))">
+                            <i class="bi @(_busy ? "bi-hourglass-split mc-spin" : "bi-send-fill")"></i>
+                            <span>@(_busy ? "Running Mission…" : "Dispatch Agent")</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT COLUMN: MCP TOOLS, VERIFICATION GATE & LIVE DIAGNOSTICS -->
+    <div class="mc-col mc-right">
+        <div class="mc-section-header">
+            <span>MCP &amp; VERIFICATION GATE</span>
+            <span class="mc-badge-green">@Mcp.Tools.Count Tools</span>
+        </div>
+
+        <div class="mc-scroll">
+            <!-- Safe Patch Verification Gate Card -->
+            <div class="mc-gate-card">
+                <div class="mc-gate-title">
+                    <i class="bi bi-patch-check-fill" style="color:#10b981;"></i>
+                    <span>Patch → Build → Test Gate</span>
+                </div>
+                <div class="mc-gate-desc">
+                    Every AI file modification is validated against the project's compiler &amp; test suite before keeping changes.
+                </div>
+                <div class="mc-gate-stats">
+                    <div><span>Workspace Problems:</span> <b style="color:@(Problems.ErrorCount > 0 ? "#ef4444" : "#10b981")">@Problems.ErrorCount errors, @Problems.WarningCount warnings</b></div>
+                    <div><span>Contract Alignment:</span> <b>@(ScanReport == null ? "Not scanned" : $"{ScanReport.Matched} matched / {ScanReport.Missing} missing")</b></div>
+                </div>
+            </div>
+
+            <!-- Live Cross-Project Connection Matrix Preview -->
+            @if (ScanReport != null && ScanReport.Connections.Count > 0)
+            {
+                <div class="mc-sub-title" style="margin-top:14px;">LIVE CONNECTION MATRIX (@ScanReport.Connections.Count)</div>
+                <div class="mc-conn-list">
+                    @foreach (var conn in ScanReport.Connections.Take(15))
+                    {
+                        <div class="mc-conn-row">
+                            <span class="mc-conn-dot @conn.State.ToLowerInvariant()"></span>
+                            <span class="mc-conn-from">@conn.FromProject</span>
+                            <code class="mc-conn-path">@conn.Method @conn.CallPath</code>
+                            <span class="mc-conn-to">→ @(conn.ToProject ?? "MISSING")</span>
+                        </div>
+                    }
+                </div>
+            }
+
+            <!-- Registered MCP Tools Catalog -->
+            <div class="mc-sub-title" style="margin-top:14px;">ACTIVE MCP ENGINE TOOLS (@Mcp.Tools.Count)</div>
+            <div class="mc-tool-list">
+                @foreach (var tool in Mcp.Tools.Take(18))
+                {
+                    <div class="mc-tool-row" title="@tool.Description" @onclick="() => InvokeToolQuick(tool.Name)">
+                        <i class="bi @(tool.RequiresAdminApproval ? "bi-lock-fill warn" : "bi-lightning-charge-fill ok")"></i>
+                        <span class="mc-tool-name">@tool.Name</span>
+                        <span class="mc-tool-run">Run →</span>
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .mc-root {
+        display: grid;
+        grid-template-columns: 310px 1fr 300px;
+        height: 100%;
+        width: 100%;
+        background: var(--bg-editor, #0f172a);
+        color: var(--text, #e2e8f0);
+        font-family: var(--font-ui, 'Inter', sans-serif);
+        overflow: hidden;
+    }
+
+    .mc-col {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+        border-right: 1px solid var(--border, rgba(148,163,184,0.14));
+    }
+    .mc-right { border-right: none; background: var(--bg-side, #111827); }
+    .mc-left { background: var(--bg-side, #111827); }
+    .mc-center { background: var(--bg-editor, #0b1120); }
+
+    .mc-section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 14px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--text-muted, #94a3b8);
+        border-bottom: 1px solid var(--border, rgba(148,163,184,0.14));
+    }
+
+    .mc-root-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: rgba(255,255,255,0.02);
+        border-bottom: 1px solid var(--border, rgba(148,163,184,0.12));
+        font-size: 12px;
+    }
+    .mc-root-path {
+        flex: 1;
+        font-family: var(--font-mono, monospace);
+        font-size: 11px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--text, #e2e8f0);
+    }
+
+    .mc-scroll {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px;
+    }
+
+    .mc-kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+        margin-bottom: 14px;
+    }
+    .mc-kpi {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.14));
+        border-radius: 6px;
+        padding: 8px 6px;
+        text-align: center;
+    }
+    .mc-kpi-val { font-size: 16px; font-weight: 700; }
+    .mc-kpi-lbl { font-size: 10px; color: var(--text-muted, #94a3b8); text-transform: uppercase; }
+
+    .mc-sub-title {
+        font-size: 10.5px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        color: var(--text-faint, #64748b);
+        margin-bottom: 8px;
+    }
+
+    .mc-proj-card {
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.15));
+        background: rgba(255,255,255,0.02);
+        border-radius: 8px;
+        padding: 9px 11px;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+    }
+    .mc-proj-card:hover, .mc-proj-card.active {
+        border-color: var(--accent, #38bdf8);
+        background: rgba(56, 189, 248, 0.06);
+    }
+    .mc-proj-top { display: flex; align-items: center; gap: 7px; }
+    .mc-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+    .mc-proj-name { font-weight: 600; font-size: 12.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mc-stack-pill {
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: rgba(148,163,184,0.15);
+        color: var(--text-muted, #cbd5e1);
+    }
+    .mc-proj-meta {
+        display: flex;
+        gap: 10px;
+        font-size: 11px;
+        color: var(--text-muted, #94a3b8);
+        margin-top: 6px;
+    }
+    .mc-proj-actions {
+        display: flex;
+        justify-content: space-between;
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px dashed rgba(148,163,184,0.12);
+    }
+    .mc-link-btn {
+        background: transparent;
+        border: none;
+        color: var(--accent, #38bdf8);
+        font-size: 11px;
+        padding: 0;
+        cursor: pointer;
+    }
+    .mc-link-btn:hover { text-decoration: underline; }
+
+    .mc-break-card {
+        border-left: 3px solid #ef4444;
+        background: rgba(239, 68, 68, 0.07);
+        border-radius: 6px;
+        padding: 7px 9px;
+        margin-bottom: 6px;
+        cursor: pointer;
+        font-size: 11.5px;
+    }
+    .mc-break-card:hover { background: rgba(239, 68, 68, 0.14); }
+    .mc-break-head { display: flex; align-items: center; gap: 6px; }
+    .mc-verb { font-weight: 700; font-size: 10px; color: #fca5a5; }
+    .mc-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #f8fafc; }
+    .mc-state-tag { font-size: 9.5px; color: #fca5a5; text-transform: uppercase; }
+    .mc-break-sub { font-size: 10.5px; color: var(--text-muted, #94a3b8); margin-top: 3px; }
+
+    .mc-ok-banner {
+        background: rgba(16, 185, 129, 0.1);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        color: #34d399;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-size: 11.5px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    /* Center Agent Area */
+    .mc-agent-topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 18px;
+        border-bottom: 1px solid var(--border, rgba(148,163,184,0.14));
+        background: rgba(255,255,255,0.015);
+    }
+    .mc-agent-identity { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+    .mc-pulse-dot { width: 9px; height: 9px; border-radius: 50%; background: #10b981; }
+    .mc-pulse-dot.busy { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
+    .mc-badge {
+        font-size: 10.5px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        background: rgba(56, 189, 248, 0.12);
+        color: #38bdf8;
+        border: 1px solid rgba(56, 189, 248, 0.25);
+    }
+
+    .mc-mode-pills { display: flex; gap: 6px; }
+    .mc-pill {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.18));
+        color: var(--text-muted, #94a3b8);
+        font-size: 11.5px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+    .mc-pill.active {
+        background: rgba(56, 189, 248, 0.15);
+        color: #f8fafc;
+        border-color: #38bdf8;
+    }
+
+    .mc-quick-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 18px;
+        border-bottom: 1px solid var(--border, rgba(148,163,184,0.1));
+        overflow-x: auto;
+    }
+    .mc-quick-lbl { font-size: 11px; color: var(--text-faint, #64748b); margin-right: 4px; }
+    .mc-chip {
+        background: rgba(255,255,255,0.03);
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.16));
+        color: var(--text, #e2e8f0);
+        border-radius: 14px;
+        padding: 3px 10px;
+        font-size: 11px;
+        white-space: nowrap;
+        cursor: pointer;
+    }
+    .mc-chip:hover { border-color: var(--accent, #38bdf8); background: rgba(56, 189, 248, 0.08); }
+
+    .mc-stream {
+        flex: 1;
+        overflow-y: auto;
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .mc-hero-empty {
+        margin: auto;
+        max-width: 520px;
+        text-align: center;
+        color: var(--text-muted, #94a3b8);
+    }
+    .mc-hero-icon { font-size: 38px; color: var(--accent, #38bdf8); margin-bottom: 10px; }
+    .mc-hero-empty h3 { color: var(--text, #f8fafc); font-size: 17px; margin-bottom: 8px; }
+    .mc-hero-empty p { font-size: 13px; line-height: 1.6; }
+
+    .mc-msg {
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.16));
+        border-radius: 8px;
+        padding: 12px 14px;
+        background: rgba(255,255,255,0.02);
+    }
+    .mc-msg.user { border-left: 3px solid #38bdf8; }
+    .mc-msg.agent { border-left: 3px solid #a855f7; background: rgba(168, 85, 247, 0.04); }
+    .mc-msg.tool { border-left: 3px solid #10b981; background: rgba(16, 185, 129, 0.04); }
+    .mc-msg-head { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text-muted, #94a3b8); margin-bottom: 6px; }
+    .mc-msg-title { font-weight: 700; color: var(--text, #f8fafc); text-transform: uppercase; letter-spacing: 0.04em; }
+    .mc-msg-time { margin-left: auto; font-family: var(--font-mono, monospace); font-size: 10.5px; }
+    .mc-msg-body { font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; font-family: var(--font-ui, sans-serif); }
+
+    .mc-step-list {
+        margin-top: 8px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(148,163,184,0.12);
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .mc-step-item { display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-family: var(--font-mono, monospace); }
+    .mc-step-item .ok { color: #10b981; }
+    .mc-step-item .accent { color: #38bdf8; }
+
+    .mc-composer-wrap {
+        padding: 12px 18px;
+        border-top: 1px solid var(--border, rgba(148,163,184,0.14));
+        background: var(--bg-side, #111827);
+    }
+    .mc-context-strip { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+    .mc-ctx-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        background: rgba(56, 189, 248, 0.14);
+        border: 1px solid rgba(56, 189, 248, 0.35);
+        color: #e0f2fe;
+        font-size: 11px;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-family: var(--font-mono, monospace);
+    }
+    .mc-ctx-tag button { background: transparent; border: none; color: inherit; cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px; }
+
+    .mc-composer-box {
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.25));
+        border-radius: 8px;
+        background: var(--bg-input, #090d16);
+        padding: 8px 10px;
+    }
+    .mc-textarea {
+        width: 100%;
+        background: transparent;
+        border: none;
+        color: var(--text, #f8fafc);
+        font-size: 13px;
+        resize: none;
+        outline: none;
+        font-family: inherit;
+    }
+    .mc-composer-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid rgba(148,163,184,0.1);
+    }
+    .mc-hint { font-size: 11px; color: var(--text-muted, #94a3b8); display: flex; align-items: center; gap: 5px; }
+    .mc-composer-right { display: flex; gap: 8px; align-items: center; }
+
+    .mc-send-btn, .mc-primary-btn {
+        background: var(--accent, #0284c7);
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        padding: 6px 13px;
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .mc-send-btn:disabled, .mc-primary-btn:disabled { opacity: 0.4; cursor: default; }
+
+    .mc-ghost-btn, .mc-mini-btn, .mc-icon-btn, .mc-fix-all-btn {
+        background: transparent;
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.2));
+        color: var(--text, #cbd5e1);
+        border-radius: 5px;
+        padding: 3px 8px;
+        font-size: 11px;
+        cursor: pointer;
+    }
+    .mc-fix-all-btn { border-color: #f59e0b; color: #fbbf24; }
+
+    /* Right column cards */
+    .mc-gate-card {
+        border: 1px solid rgba(16, 185, 129, 0.25);
+        background: rgba(16, 185, 129, 0.05);
+        border-radius: 8px;
+        padding: 10px 12px;
+    }
+    .mc-gate-title { display: flex; align-items: center; gap: 7px; font-weight: 700; font-size: 12.5px; margin-bottom: 5px; }
+    .mc-gate-desc { font-size: 11px; color: var(--text-muted, #94a3b8); line-height: 1.45; margin-bottom: 8px; }
+    .mc-gate-stats { font-size: 11.5px; display: flex; flex-direction: column; gap: 4px; }
+
+    .mc-conn-list, .mc-tool-list { display: flex; flex-direction: column; gap: 4px; }
+    .mc-conn-row, .mc-tool-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 7px;
+        border-radius: 5px;
+        background: rgba(255,255,255,0.02);
+        font-size: 11px;
+        cursor: pointer;
+    }
+    .mc-conn-row:hover, .mc-tool-row:hover { background: rgba(255,255,255,0.06); }
+    .mc-conn-dot { width: 7px; height: 7px; border-radius: 50%; background: #64748b; flex: none; }
+    .mc-conn-dot.matched { background: #10b981; }
+    .mc-conn-dot.missing { background: #ef4444; }
+    .mc-conn-dot.methodmismatch, .mc-conn-dot.shapemismatch { background: #f59e0b; }
+    .mc-conn-from { font-weight: 600; flex: none; }
+    .mc-conn-path { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
+    .mc-conn-to { color: var(--text-muted, #94a3b8); font-size: 10.5px; flex: none; }
+
+    .mc-tool-name { flex: 1; font-family: var(--font-mono, monospace); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mc-tool-run { font-size: 10px; color: var(--accent, #38bdf8); }
+    .mc-tool-row .ok { color: #10b981; }
+    .mc-tool-row .warn { color: #f59e0b; }
+
+    .mc-badge-green {
+        font-size: 10px;
+        padding: 1px 6px;
+        border-radius: 10px;
+        background: rgba(16, 185, 129, 0.15);
+        color: #34d399;
+    }
+
+    .mc-empty { text-align: center; padding: 24px 12px; color: var(--text-muted, #94a3b8); font-size: 12px; }
+</style>
+
+@code {
+    [Parameter] public string? WorkspaceRoot { get; set; }
+    [Parameter] public MultiProjectScanReport? ScanReport { get; set; }
+    [Parameter] public EventCallback<MultiProjectScanReport> ScanReportChanged { get; set; }
+    [Parameter] public EventCallback OnPickFolder { get; set; }
+    [Parameter] public EventCallback<string> OnOpenProjectInEditor { get; set; }
+
+    private readonly HashSet<string> _scopedProjects = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _contextTags = new();
+    private readonly List<MissionStreamEntry> _entries = new();
+
+    private string _prompt = "";
+    private string _executionStyle = "agent";
+    private bool _scanning;
+    private bool _busy;
+
+    private IEnumerable<CrossEdge> BrokenEdges =>
+        ScanReport?.Connections.Where(c => !string.Equals(c.State, "Matched", StringComparison.OrdinalIgnoreCase))
+        ?? Enumerable.Empty<CrossEdge>();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(WorkspaceRoot) && ScanReport == null && !_scanning)
+        {
+            await RunUniverseScanAsync();
+        }
+    }
+
+    public async Task RunUniverseScanAsync()
+    {
+        if (string.IsNullOrWhiteSpace(WorkspaceRoot) || _scanning) return;
+        _scanning = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var report = await Scanner.ScanAsync(WorkspaceRoot);
+            ScanReport = report;
+            _scopedProjects.Clear();
+            foreach (var p in report.Projects)
+                _scopedProjects.Add(p.Name);
+
+            await ScanReportChanged.InvokeAsync(report);
+        }
+        catch (Exception ex)
+        {
+            _entries.Add(new MissionStreamEntry
+            {
+                Role = "tool",
+                Icon = "bi-exclamation-triangle-fill",
+                Title = "AST Multi-Scan Error",
+                Body = ex.Message
+            });
+        }
+        finally
+        {
+            _scanning = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void ToggleProjectScope(ProjectScan proj)
+    {
+        if (!_scopedProjects.Remove(proj.Name))
+            _scopedProjects.Add(proj.Name);
+    }
+
+    private void AddContextTag(string tag)
+    {
+        if (string.IsNullOrWhiteSpace(tag)) return;
+        var normalized = tag.StartsWith('@') ? tag : "@" + tag;
+        if (!_contextTags.Contains(normalized, StringComparer.OrdinalIgnoreCase))
+            _contextTags.Add(normalized);
+    }
+
+    private void SetPrompt(string text)
+    {
+        _prompt = text;
+    }
+
+    private async Task QueueAllBreaksIntoAgent()
+    {
+        var breaks = BrokenEdges.Take(10).ToList();
+        if (breaks.Count == 0) return;
+
+        var summary = string.Join("\n", breaks.Select(b => $"- {b.FromProject} calls {b.Method} {b.CallPath} -> {b.State} (target: {b.ToProject ?? "none"})"));
+        _prompt = $"Resolve these {breaks.Count} cross-project contract/auth breakages detected by the AST scanner:\n{summary}";
+        await ExecuteMissionAsync();
+    }
+
+    private void QueueSingleBreakIntoAgent(CrossEdge edge)
+    {
+        AddContextTag("@" + edge.FromProject);
+        if (!string.IsNullOrEmpty(edge.ToProject))
+            AddContextTag("@" + edge.ToProject);
+
+        _prompt = $"Fix the {edge.State} break where '{edge.FromProject}' calls '{edge.Method} {edge.CallPath}' (expected producer: {edge.ToProject ?? "missing backend route"}). Check route path, method, DTO schema, and Auth headers.";
+    }
+
+    private async Task InvokeToolQuick(string toolName)
+    {
+        var root = WorkspaceRoot ?? "";
+        _entries.Add(new MissionStreamEntry
+        {
+            Role = "tool",
+            Icon = "bi-terminal-fill",
+            Title = $"MCP Tool: {toolName}",
+            Body = $"Executing {toolName} against '{root}'…"
+        });
+        await InvokeAsync(StateHasChanged);
+
+        var payload = $"{{\"path\":{System.Text.Json.JsonSerializer.Serialize(root)},\"rootPath\":{System.Text.Json.JsonSerializer.Serialize(root)}}}";
+        var output = await Mcp.ExecuteToolAsync(toolName, payload);
+
+        _entries[^1].Body = output.Length > 1600 ? output[..1600] + "\n… (truncated)" : output;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnComposerKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await ExecuteMissionAsync();
+    }
+
+    private async Task ExecuteMissionAsync()
+    {
+        var goal = _prompt.Trim();
+        if (string.IsNullOrEmpty(goal) || _busy) return;
+
+        _busy = true;
+        var ctxPrefix = _contextTags.Count > 0 ? $"[Context: {string.Join(", ", _contextTags)}]\n" : "";
+        _entries.Add(new MissionStreamEntry
+        {
+            Role = "user",
+            Icon = "bi-person-fill",
+            Title = "You",
+            Body = ctxPrefix + goal
+        });
+        _prompt = "";
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var root = WorkspaceRoot ?? "";
+
+            // Step 1: Always run the zero-GPU NLP TaskRouter to extract intent & structured plan
+            var plan = await Router.RouteAsync(goal, root);
+            var planEntry = new MissionStreamEntry
+            {
+                Role = "tool",
+                Icon = "bi-diagram-3-fill",
+                Title = $"Execution Plan · Intent: {plan.Intent} ({plan.Confidence:P0})",
+                Body = $"Scoped Projects: {(_scopedProjects.Count > 0 ? string.Join(", ", _scopedProjects) : "Workspace")}",
+                Steps = plan.Steps.Select(s => new MissionStep { Text = s, Done = false }).ToList()
+            };
+            _entries.Add(planEntry);
+            await InvokeAsync(StateHasChanged);
+
+            if (_executionStyle == "deterministic")
+            {
+                // Zero-GPU deterministic task loop
+                var rec = new TaskRecord
+                {
+                    Title = goal,
+                    ProjectId = string.IsNullOrEmpty(root) ? "ide" : Path.GetFileName(root),
+                    Intent = TaskKind.Analyse
+                };
+                await Tasks.EnqueueAsync(rec);
+
+                int guard = 0;
+                while (rec.Status != LoopStatus.Done && rec.Status != LoopStatus.NeedsHuman && guard++ < 15)
+                {
+                    rec = await Loop.StepAsync(rec);
+                    for (int i = 0; i < planEntry.Steps.Count; i++)
+                        planEntry.Steps[i].Done = true;
+                    await InvokeAsync(StateHasChanged);
+                }
+
+                var finalNote = rec.History.LastOrDefault()?.Note ?? rec.NextAction ?? "Deterministic task completed.";
+                _entries.Add(new MissionStreamEntry
+                {
+                    Role = "agent",
+                    Icon = "bi-check2-all",
+                    Title = $"Syncro Deterministic Engine ({rec.Status})",
+                    Body = finalNote
+                });
+            }
+            else
+            {
+                // Full MCP + LLM Agent Loop with Multi-Project Context
+                var scanCtx = ScanReport == null
+                    ? $"Workspace Root: {root}"
+                    : $"Workspace Root: {root}\nDiscovered Projects ({ScanReport.ProjectCount}): " +
+                      string.Join(", ", ScanReport.Projects.Select(p => $"{p.Name} ({p.Stack}, {p.Routes} routes, {p.Calls} calls)")) +
+                      $"\nMatched Connections: {ScanReport.Matched}, Missing/Broken: {ScanReport.Missing}";
+
+                var sysPrompt =
+                    "You are Syncro Agent (Antigravity 2.0 / Claude Code grade multi-project architect). " +
+                    "Use registered MCP tools to inspect files, map contracts, and verify changes. " +
+                    "Current Multi-Project Universe Context:\n" + scanCtx;
+
+                var response = await Mcp.RunAgentAsync(sysPrompt, ctxPrefix + goal);
+                foreach (var s in planEntry.Steps) s.Done = true;
+
+                _entries.Add(new MissionStreamEntry
+                {
+                    Role = "agent",
+                    Icon = "bi-stars",
+                    Title = "Syncro Agent Response",
+                    Body = response
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _entries.Add(new MissionStreamEntry
+            {
+                Role = "tool",
+                Icon = "bi-x-octagon-fill",
+                Title = "Execution Error",
+                Body = ex.Message
+            });
+        }
+        finally
+        {
+            _busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private sealed class MissionStreamEntry
+    {
+        public string Role { get; set; } = "agent";
+        public string Icon { get; set; } = "bi-robot";
+        public string Title { get; set; } = "";
+        public string Body { get; set; } = "";
+        public string Timestamp { get; set; } = DateTime.Now.ToString("HH:mm:ss");
+        public List<MissionStep> Steps { get; set; } = new();
+    }
+
+    private sealed class MissionStep
+    {
+        public string Text { get; set; } = "";
+        public bool Done { get; set; }
+    }
+}

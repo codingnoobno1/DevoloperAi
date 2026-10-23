@@ -1,0 +1,437 @@
+@page "/build"
+@using System.IO
+@using MudBlazor
+@using Syncro.Desktop.Services.Build
+@using Syncro.Desktop.Services.Verification
+@inject IBuildEngine BuildEngine
+@inject ITestEngine TestEngine
+@inject IVerificationEngine Verifier
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-4">
+
+    <div class="d-flex align-center gap-3 mb-4">
+        <MudIcon Icon="@Icons.Material.Filled.Build" Color="Color.Primary" Size="Size.Large" />
+        <div>
+            <MudText Typo="Typo.h5" Style="font-weight:700;">Build &amp; Verify</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">
+                One build call for every stack — .NET, Flutter, Node, Python — with structured diagnostics,
+                plus the verification gate that rolls back any patch which breaks the build or the tests.
+            </MudText>
+        </div>
+    </div>
+
+    <!-- TARGET -->
+    <MudPaper Elevation="0" Class="pa-3 mb-4 d-flex align-center gap-3 flex-wrap" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px;">
+        <MudTextField @bind-Value="_root" Placeholder="Project root" Label="Project" Variant="Variant.Outlined"
+                      Margin="Margin.Dense" Class="flex-grow-1" Immediate="true" DebounceInterval="500" />
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FolderOpen" OnClick="PickAsync">Browse</MudButton>
+
+        @if (_stack != BuildStack.Unknown)
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="Color.Info"
+                     Icon="@StackIcon(_stack)">@_stack</MudChip>
+            @if (_hasTests)
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Success"
+                         Icon="@Icons.Material.Filled.Science">suite found</MudChip>
+            }
+            else
+            {
+                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Default"
+                         Icon="@Icons.Material.Outlined.Science">no tests</MudChip>
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(_root))
+        {
+            <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Warning">no build marker</MudChip>
+        }
+
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.PlayArrow"
+                   OnClick="() => RunAsync(build: true, tests: false)" Disabled="_busy">Build</MudButton>
+        <MudButton Variant="Variant.Outlined" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Science"
+                   OnClick="() => RunAsync(build: false, tests: true)" Disabled="_busy || !_hasTests">Run tests</MudButton>
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.DoneAll"
+                   OnClick="() => RunAsync(build: true, tests: true)" Disabled="_busy">Build + test</MudButton>
+    </MudPaper>
+
+    @if (_busy)
+    {
+        <MudProgressLinear Indeterminate="true" Color="Color.Primary" Class="mb-4" />
+        <MudText Typo="Typo.caption" Class="mud-text-secondary">@_busyLabel</MudText>
+    }
+
+    <!-- SUMMARY -->
+    @if (_build != null || _tests != null)
+    {
+        <MudPaper Elevation="0" Class="pa-3 mb-4 d-flex align-center gap-3 flex-wrap" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px;">
+            @if (_build != null)
+            {
+                <MudChip T="string" Size="Size.Large" Variant="Variant.Filled"
+                         Color="@(_build.Ok ? Color.Success : Color.Error)"
+                         Icon="@(_build.Ok ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Dangerous)">
+                    Build @(_build.Ok ? "PASS" : "FAIL")
+                </MudChip>
+                <MudChip T="string" Color="Color.Error" Variant="Variant.Text">@_build.ErrorCount errors</MudChip>
+                <MudChip T="string" Color="Color.Warning" Variant="Variant.Text">@_build.WarningCount warnings</MudChip>
+            }
+            @if (_tests != null)
+            {
+                <MudChip T="string" Size="Size.Large" Variant="Variant.Filled"
+                         Color="@(_tests.Skipped ? Color.Default : _tests.Ok ? Color.Success : Color.Error)"
+                         Icon="@(_tests.Skipped ? Icons.Material.Filled.RemoveCircleOutline : _tests.Ok ? Icons.Material.Filled.CheckCircle : Icons.Material.Filled.Dangerous)">
+                    Tests @(_tests.Skipped ? "SKIPPED" : _tests.Ok ? "PASS" : "FAIL")
+                </MudChip>
+                @if (!_tests.Skipped && _tests.FailedCount > 0)
+                {
+                    <MudChip T="string" Color="Color.Error" Variant="Variant.Text">@_tests.FailedCount failing</MudChip>
+                }
+            }
+            <MudSpacer />
+            <MudText Typo="Typo.caption" Class="mud-text-secondary">
+                @if (_build != null)
+                {
+                    <span><code>@_build.Command</code> · @_build.DurationMs ms</span>
+                }
+                @if (_tests != null && !_tests.Skipped)
+                {
+                    <span> &nbsp;|&nbsp; <code>@_tests.Command</code> · @_tests.DurationMs ms</span>
+                }
+            </MudText>
+        </MudPaper>
+
+        @if (_build?.Error is { } be)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Warning" Class="mb-4">@be</MudAlert>
+        }
+        @if (_tests?.Skipped == true)
+        {
+            <MudAlert Severity="MudBlazor.Severity.Info" Class="mb-4">@_tests.Summary</MudAlert>
+        }
+
+        <MudPaper Elevation="0" Class="mb-4" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px; overflow:hidden;">
+            <MudTabs Elevation="0" Rounded="false" ApplyEffectsToContainer="true" PanelClass="pa-0">
+
+                <MudTabPanel Text="@($"Problems ({_build?.Diagnostics.Count ?? 0})")" Icon="@Icons.Material.Filled.ErrorOutline">
+                    @if (_build == null || _build.Diagnostics.Count == 0)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Success" Class="ma-3">
+                            @(_build == null ? "Run a build to see diagnostics." : "No diagnostics. Clean build.")
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudTable Items="_build.Diagnostics" Dense="true" Hover="true" Elevation="0"
+                                  Breakpoint="Breakpoint.Sm" GroupBy="_byFile" FixedHeader="true">
+                            <ColGroup><col style="width:110px;" /><col style="width:110px;" /><col /><col style="width:90px;" /></ColGroup>
+                            <HeaderContent>
+                                <MudTh>Severity</MudTh><MudTh>Code</MudTh><MudTh>Message</MudTh><MudTh>Line</MudTh>
+                            </HeaderContent>
+                            <RowTemplate>
+                                <MudTd DataLabel="Severity">
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Filled" Color="@SevColor(context.Severity)">
+                                        @context.Severity
+                                    </MudChip>
+                                </MudTd>
+                                <MudTd DataLabel="Code"><code>@context.Code</code></MudTd>
+                                <MudTd DataLabel="Message">@context.Message</MudTd>
+                                <MudTd DataLabel="Line"><code>@(context.Line > 0 ? $"{context.Line}:{context.Column}" : "—")</code></MudTd>
+                            </RowTemplate>
+                            <PagerContent><MudTablePager PageSizeOptions="new[]{25,50,100}" /></PagerContent>
+                        </MudTable>
+                    }
+                </MudTabPanel>
+
+                <MudTabPanel Text="@($"Failing tests ({_tests?.FailedCount ?? 0})")" Icon="@Icons.Material.Filled.Science">
+                    @if (_tests == null)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Info" Class="ma-3">Run the tests to see results.</MudAlert>
+                    }
+                    else if (_tests.Skipped)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Info" Class="ma-3">@_tests.Summary</MudAlert>
+                    }
+                    else if (_tests.Ok)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Success" Class="ma-3">Suite is green.</MudAlert>
+                    }
+                    else if (_tests.FailedCount == 0)
+                    {
+                        <MudAlert Severity="MudBlazor.Severity.Warning" Class="ma-3">
+                            The suite failed (exit code @_tests.ExitCode) but no individual test names could be
+                            parsed from the runner output. See the Output tab.
+                        </MudAlert>
+                    }
+                    else
+                    {
+                        <MudList T="string" Dense="true" Class="pa-2">
+                            @foreach (var t in _tests.FailedTests)
+                            {
+                                <MudListItem T="string" Icon="@Icons.Material.Filled.Close" IconColor="Color.Error">
+                                    <code>@t</code>
+                                </MudListItem>
+                            }
+                        </MudList>
+                    }
+                </MudTabPanel>
+
+                <MudTabPanel Text="Output" Icon="@Icons.Material.Filled.Terminal">
+                    <pre style="margin:0; padding:16px; max-height:420px; overflow:auto; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word;">@RawOutput()</pre>
+                </MudTabPanel>
+
+            </MudTabs>
+        </MudPaper>
+    }
+
+    <!-- VERIFICATION GATE -->
+    <MudExpansionPanels Elevation="0" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px; overflow:hidden;">
+        <MudExpansionPanel Icon="@Icons.Material.Filled.VerifiedUser" Text="Verify a patch">
+            <MudText Typo="Typo.body2" Class="mud-text-secondary mb-3">
+                The same gate the AI agent writes through. The patch is applied, the project rebuilt and the
+                suite run — and it is kept only if it introduces no new compiler errors and breaks no tests.
+                Anything else is rolled back to the original bytes.
+            </MudText>
+
+            <MudTextField @bind-Value="_patchFile" Label="File to patch" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Class="mb-3" Placeholder="Absolute path" />
+            <MudTextField @bind-Value="_search" Label="Search target (must be unique in the file)"
+                          Variant="Variant.Outlined" Margin="Margin.Dense" Lines="4" Class="mb-3" />
+            <MudTextField @bind-Value="_replace" Label="Replacement" Variant="Variant.Outlined"
+                          Margin="Margin.Dense" Lines="4" Class="mb-3" />
+
+            <div class="d-flex align-center gap-3 flex-wrap mb-3">
+                <MudSwitch @bind-Value="_runTests" Color="Color.Primary" Label="Run tests as part of the gate" />
+                <MudSwitch @bind-Value="_applyIfVerified" Color="Color.Warning" Label="Write to disk if it passes" />
+                <MudSpacer />
+                <MudButton Variant="Variant.Filled" Color="@(_applyIfVerified ? Color.Warning : Color.Primary)"
+                           StartIcon="@Icons.Material.Filled.Shield" OnClick="VerifyAsync" Disabled="_busy">
+                    @(_applyIfVerified ? "Verify and apply" : "Dry run")
+                </MudButton>
+            </div>
+
+            @if (_verify != null)
+            {
+                <MudAlert Severity="@(_verify.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error)" Class="mb-2">
+                    @_verify.Message
+                </MudAlert>
+
+                <div class="d-flex gap-2 flex-wrap mb-2">
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text">
+                        build @(_verify.BuildRan ? $"ran ({_verify.ErrorsBefore}→{_verify.ErrorsAfter} errors)" : "skipped")
+                    </MudChip>
+                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text"
+                             Color="@(_verify.TestsRan ? Color.Success : Color.Default)">
+                        tests @(_verify.TestsRan ? "ran" : $"skipped — {_verify.TestsSkippedReason}")
+                    </MudChip>
+                </div>
+
+                @if (_verify.IntroducedErrors.Count > 0)
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-3">Errors this patch introduced</MudText>
+                    <MudList T="string" Dense="true">
+                        @foreach (var e in _verify.IntroducedErrors)
+                        {
+                            <MudListItem T="string" Icon="@Icons.Material.Filled.Error" IconColor="Color.Error">
+                                <code style="font-size:12px;">@e</code>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+                @if (_verify.IntroducedTestFailures.Count > 0)
+                {
+                    <MudText Typo="Typo.subtitle2" Class="mt-3">Tests this patch broke</MudText>
+                    <MudList T="string" Dense="true">
+                        @foreach (var t in _verify.IntroducedTestFailures)
+                        {
+                            <MudListItem T="string" Icon="@Icons.Material.Filled.Close" IconColor="Color.Error">
+                                <code style="font-size:12px;">@t</code>
+                            </MudListItem>
+                        }
+                    </MudList>
+                }
+            }
+        </MudExpansionPanel>
+    </MudExpansionPanels>
+
+</MudContainer>
+
+@code {
+    private string _root = "";
+    private BuildStack _stack = BuildStack.Unknown;
+    private bool _hasTests;
+
+    private bool _busy;
+    private string _busyLabel = "";
+
+    private BuildResult? _build;
+    private TestResult? _tests;
+
+    // Verification panel
+    private string _patchFile = "";
+    private string _search = "";
+    private string _replace = "";
+    private bool _runTests = true;
+    // Defaults to a dry run: this panel can overwrite source, so writing is opt-in.
+    private bool _applyIfVerified;
+    private VerificationResult? _verify;
+
+    private readonly TableGroupDefinition<BuildDiagnostic> _byFile = new()
+    {
+        Selector = d => string.IsNullOrEmpty(d.FilePath) ? "(project)" : Path.GetFileName(d.FilePath),
+        GroupName = "File",
+        Expandable = true,
+    };
+
+    /// <summary>Re-detect whenever the typed path changes, so the stack chip tracks the text field.</summary>
+    private string _lastProbed = "";
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_root == _lastProbed) return;
+        _lastProbed = _root;
+        await ProbeAsync();
+    }
+
+    /// <summary>
+    /// Detection walks the filesystem (<see cref="ITestEngine.HasTests"/> recurses), so it runs off
+    /// the UI thread — on a large repo doing it inline would stutter the text field on every keystroke.
+    /// </summary>
+    private async Task ProbeAsync()
+    {
+        var root = _root;
+        try
+        {
+            var probe = await Task.Run(() =>
+            {
+                var s = string.IsNullOrWhiteSpace(root) ? BuildStack.Unknown : BuildEngine.Detect(root);
+                var h = s != BuildStack.Unknown && TestEngine.HasTests(root);
+                return (Stack: s, HasTests: h);
+            });
+            _stack = probe.Stack;
+            _hasTests = probe.HasTests;
+        }
+        catch { _stack = BuildStack.Unknown; _hasTests = false; }
+
+        StateHasChanged();
+    }
+
+    private async Task RunAsync(bool build, bool tests)
+    {
+        if (string.IsNullOrWhiteSpace(_root)) { Snackbar.Add("Pick a project first.", MudBlazor.Severity.Warning); return; }
+
+        _busy = true;
+        if (build) _build = null;
+        if (tests) _tests = null;
+        StateHasChanged();
+
+        try
+        {
+            if (build)
+            {
+                _busyLabel = "Building…";
+                StateHasChanged();
+                _build = await BuildEngine.BuildAsync(_root);
+            }
+
+            if (tests)
+            {
+                _busyLabel = "Running tests…";
+                StateHasChanged();
+                _tests = await TestEngine.TestAsync(_root);
+            }
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            _busyLabel = "";
+            StateHasChanged();
+        }
+    }
+
+    private async Task VerifyAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_patchFile) || string.IsNullOrWhiteSpace(_search))
+        {
+            Snackbar.Add("File and search target are required.", MudBlazor.Severity.Warning);
+            return;
+        }
+
+        _busy = true;
+        _busyLabel = _applyIfVerified ? "Verifying and applying…" : "Dry running…";
+        _verify = null;
+        StateHasChanged();
+
+        try
+        {
+            var req = new PatchRequest
+            {
+                FilePath = _patchFile,
+                SearchTarget = _search,
+                Replacement = _replace ?? "",
+                ProjectPath = string.IsNullOrWhiteSpace(_root) ? null : _root,
+                RunTests = _runTests
+            };
+
+            _verify = _applyIfVerified
+                ? await Verifier.VerifyAndApplyAsync(req)
+                : await Verifier.DryRunAsync(req);
+
+            Snackbar.Add(_verify.Message, _verify.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Verification failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            _busyLabel = "";
+            StateHasChanged();
+        }
+    }
+
+    private string RawOutput()
+    {
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(_build?.RawOutput)) parts.Add($"$ {_build!.Command}\n{_build.RawOutput}");
+        if (!string.IsNullOrWhiteSpace(_tests?.RawOutput)) parts.Add($"$ {_tests!.Command}\n{_tests.RawOutput}");
+        return parts.Count == 0 ? "(no output yet)" : string.Join("\n", parts);
+    }
+
+    private static Color SevColor(BuildSeverity s) => s switch
+    {
+        BuildSeverity.Error => Color.Error,
+        BuildSeverity.Warning => Color.Warning,
+        _ => Color.Info,
+    };
+
+    private static string StackIcon(BuildStack s) => s switch
+    {
+        BuildStack.DotNet => Icons.Material.Filled.Tag,
+        BuildStack.Flutter => Icons.Material.Filled.PhoneAndroid,
+        BuildStack.Node => Icons.Material.Filled.Javascript,
+        BuildStack.Python => Icons.Material.Filled.DataObject,
+        _ => Icons.Material.Filled.QuestionMark,
+    };
+
+    private async Task PickAsync()
+    {
+        try
+        {
+            var result = await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync(
+                () => CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync());
+
+            if (result.IsSuccessful && result.Folder != null && !string.IsNullOrEmpty(result.Folder.Path))
+            {
+                _root = result.Folder.Path;
+                _lastProbed = _root;
+                await ProbeAsync();
+            }
+        }
+        catch { }
+    }
+}

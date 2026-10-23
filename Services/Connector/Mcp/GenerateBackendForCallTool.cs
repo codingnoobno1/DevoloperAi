@@ -35,8 +35,8 @@ namespace Syncro.Desktop.Services.Connector.Mcp
             "{ \"stack\": \"string (Express|FastApi|Flask|Django|SpringBoot|AspNetCore)\", " +
             "\"architecture\": \"string?\", " +
             "\"endpoints\": [ { \"method\": \"string\", \"path\": \"string\", \"description\": \"string?\", " +
-            "\"requestFields\": [{\"name\":\"string\",\"type\":\"string\",\"required\":\"bool\"}]?, " +
-            "\"responseFields\": [{\"name\":\"string\",\"type\":\"string\"}]? } ], " +
+            "\"requestFields\": [{\"name\":\"string\",\"type\":\"string\",\"required\":\"bool\"}], " +
+            "\"responseFields\": [{\"name\":\"string\",\"type\":\"string\"}] } ], " +
             "\"templateGuidance\": \"string?\" }";
 
         public bool RequiresAdminApproval => false; // no disk access — pure LLM draft

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'compiler.dart';
 import 'apply.dart';
 import 'reset.dart';
+import 'reverse.dart';
 import 'core/file_writer.dart';
 import 'core/mode_manager.dart';
 import 'expansion/expansion_engine.dart';
@@ -42,6 +43,11 @@ void main(List<String> args) async {
 
       case 'reset':
         await resetProject();
+        break;
+
+      // ── Reverse AST (Reverse-Engineering) ──────────────────────────────────
+      case 'scan':
+        await scanApp(args);
         break;
 
       case 'show':

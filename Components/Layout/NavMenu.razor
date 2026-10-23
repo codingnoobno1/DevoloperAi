@@ -34,13 +34,17 @@
         <MudNavGroup Title="DEVELOPMENT" Expanded="false" Icon="@Icons.Material.Filled.DeveloperMode">
             <MudNavLink OnClick="OpenSyncroIde" Icon="@Icons.Material.Filled.Code">Editor</MudNavLink>
             <MudNavLink Href="clitalk" Icon="@Icons.Material.Filled.Terminal">Terminal</MudNavLink>
+            <MudNavLink Href="build" Icon="@Icons.Material.Filled.Build">Build &amp; Verify</MudNavLink>
             <MudNavLink Href="universe-connector" Icon="@Icons.Material.Filled.Hub">Connector</MudNavLink>
             <MudNavLink Href="runtime" Icon="@Icons.Material.Filled.MonitorHeart">Runtime</MudNavLink>
             <MudNavLink OnClick="OpenMobileStore" Icon="@Icons.Material.Filled.PhoneAndroid">Mobile Toolkit</MudNavLink>
         </MudNavGroup>
 
-        <MudNavGroup Title="INTELLIGENCE" Expanded="false" Icon="@Icons.Material.Filled.Psychology">
+        <MudNavGroup Title="INTELLIGENCE" Expanded="true" Icon="@Icons.Material.Filled.Psychology">
+            <MudNavLink Href="settings/agent" Match="NavLinkMatch.Prefix" Icon="@Icons.Material.Filled.Settings">Agent Settings</MudNavLink>
             <MudNavLink Href="ast-dashboard" Icon="@Icons.Material.Filled.AccountTree">Architecture</MudNavLink>
+            <MudNavLink Href="universe-scan" Icon="@Icons.Material.Filled.TravelExplore">Multi-Scan</MudNavLink>
+            <MudNavLink Href="security" Icon="@Icons.Material.Filled.Security">Security</MudNavLink>
             <MudNavLink Href="hindsight" Icon="@Icons.Material.Filled.MenuBook">Knowledge</MudNavLink>
             <MudNavLink OnClick="OpenAnalysis" Icon="@Icons.Material.Filled.Analytics">Insights</MudNavLink>
         </MudNavGroup>

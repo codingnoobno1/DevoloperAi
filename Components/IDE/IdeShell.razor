@@ -23,11 +23,64 @@
 @inject Syncro.Desktop.Services.AgentCli.Loop.TaskStore Tasks
 @inject Syncro.Desktop.Services.AgentCli.Loop.TaskLoopEngine Loop
 @inject IJSRuntime JS
+@inject Syncro.Desktop.Services.Ide.Host.IdeHostResolver Hosts
+@inject Syncro.Desktop.Services.Ide.Host.IdeHostOptions HostOpts
+@using Syncro.Desktop.Services.Ide.Host
+@inject Syncro.Desktop.Services.Workspace.IWorkspaceOrchestrator Orchestrator
+@inject Syncro.Desktop.Services.Workspace.Diagnostics.IProblemsHub Problems
+@inject Syncro.Desktop.Services.Connector.Scan.MultiProjectScanService MultiScanner
+@using Syncro.Desktop.Services.Workspace.Diagnostics
+@using Syncro.Desktop.Services.Connector.Scan
+@using Syncro.Desktop.Services.Connector.ProjectDomain
 @implements IDisposable
 
 <div class="ide-root">
-    <!-- Title bar -->
-    <SuiTitleBar Title="@(State.ActiveTab is { } t ? System.IO.Path.GetFileName(t.FilePath) : State.Current?.Name ?? "")" />
+    <!-- Title bar with Dual-Mode Switcher (Editor | Agent Mission Control | Universe Map) -->
+    <SuiTitleBar Title="@(State.ActiveTab is { } t ? System.IO.Path.GetFileName(t.FilePath) : State.Current?.Name ?? "Multi-Project Workspace")">
+        <CenterContent>
+            <div class="ide-mode-switcher">
+                <button class="ide-mode-btn @(_ideMode == "editor" ? "active" : "")" @onclick='() => SwitchIdeMode("editor")'>
+                    <i class="bi bi-code-square"></i>
+                    <span>IDE Editor</span>
+                </button>
+                <button class="ide-mode-btn @(_ideMode == "agent" ? "active" : "")" @onclick='() => SwitchIdeMode("agent")'>
+                    <i class="bi bi-stars"></i>
+                    <span>Agent Mission Control</span>
+                    @if (_scanReport is { Missing: > 0 })
+                    {
+                        <span class="ide-mode-pill warn">@_scanReport.Missing</span>
+                    }
+                </button>
+                <button class="ide-mode-btn @(_ideMode == "universe" ? "active" : "")" @onclick='() => SwitchIdeMode("universe")'>
+                    <i class="bi bi-diagram-3"></i>
+                    <span>Universe Map</span>
+                    @if (_scanReport is { ProjectCount: > 0 })
+                    {
+                        <span class="ide-mode-pill ok">@_scanReport.ProjectCount</span>
+                    }
+                </button>
+            </div>
+        </CenterContent>
+        <RightContent>
+            <div class="ide-title-actions">
+                @if (_scanReport != null)
+                {
+                    <span class="ide-contract-pill @(_scanReport.Missing > 0 ? "broken" : "ok")"
+                          title="Zero-GPU AST Contract Status"
+                          @onclick='() => SwitchIdeMode("universe")'>
+                        <i class="bi @(_scanReport.Missing > 0 ? "bi-exclamation-Octagon-fill" : "bi-shield-check")"></i>
+                        @_scanReport.Matched Matched · @_scanReport.Missing Broken
+                    </span>
+                }
+                <button class="ide-top-btn" title="Open Workspace Folder…" @onclick="PickFolderAsync">
+                    <i class="bi bi-folder2-open"></i> Open
+                </button>
+                <button class="ide-top-btn" title="Run Multi-Project AST Scan (Zero-GPU)" @onclick="TriggerMultiProjectScanAsync" disabled="@_scanningUniverse">
+                    <i class="bi @(_scanningUniverse ? "bi-arrow-repeat" : "bi-radar")"></i> @(_scanningUniverse ? "Scanning…" : "AST Scan")
+                </button>
+            </div>
+        </RightContent>
+    </SuiTitleBar>
 
     <div class="ide-body">
         <!-- Activity bar -->
@@ -37,31 +90,169 @@
             ActiveId="@_activeActivityId"
             ActiveIdChanged="OnActivityClick" />
 
-        <!-- GoldenLayout mounts here -->
-        <div id="ide-layout-container" class="ide-workbench"></div>
+        <!-- 1. EDITOR MODE (GoldenLayout + Code-OSS / Monaco + Right Agent Dock) -->
+        <div id="ide-layout-container" class="ide-workbench" style="display:@(_ideMode == "editor" ? "block" : "none");"></div>
+
+        <!-- 2. AGENT MISSION CONTROL MODE (Antigravity 2.0 / Claude Code / Cursor Autonomous Workbench) -->
+        @if (_ideMode == "agent")
+        {
+            <div class="ide-workbench">
+                <AgentMissionControl WorkspaceRoot="@(State.Current?.RootPath)"
+                                     ScanReport="@_scanReport"
+                                     ScanReportChanged="OnScanReportUpdated"
+                                     OnPickFolder="PickFolderAsync"
+                                     OnOpenProjectInEditor="OpenProjectInEditorModeAsync" />
+            </div>
+        }
+
+        <!-- 3. UNIVERSE GRAPH MODE (Interactive Multi-Project Contract & Data Layer Inspector) -->
+        @if (_ideMode == "universe")
+        {
+            <div class="ide-workbench ide-universe-canvas">
+                <div class="uv-header">
+                    <div>
+                        <div class="uv-title"><i class="bi bi-diagram-3-fill" style="color:var(--accent);"></i> Multi-Project Contract &amp; Auth Topology</div>
+                        <div class="uv-sub">Zero-GPU deterministic AST graph across all discovered projects in <code>@(State.Current?.RootPath ?? "workspace")</code></div>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button class="ghost-btn" style="margin:0;" @onclick="TriggerMultiProjectScanAsync" disabled="@_scanningUniverse">
+                            <i class="bi bi-radar"></i> @(_scanningUniverse ? "Scanning…" : "Rescan All Projects")
+                        </button>
+                        <button class="ghost-btn" style="margin:0;" @onclick='() => SwitchIdeMode("agent")'>
+                            <i class="bi bi-magic"></i> Open in Agent Mission Control →
+                        </button>
+                    </div>
+                </div>
+
+                @if (_scanReport == null || _scanReport.Projects.Count == 0)
+                {
+                    <div class="muted pad">
+                        No multi-project scan report loaded yet. Open a root folder containing your projects (Web, Flutter, MAUI, Rust, Go, C++ Crow, etc.) and click <b>AST Scan</b>.
+                    </div>
+                }
+                else
+                {
+                    <div class="uv-grid">
+                        @foreach (var p in _scanReport.Projects)
+                        {
+                            <div class="uv-proj-card">
+                                <div class="uv-proj-head">
+                                    <span class="uv-dot" style="background:@DomainDetector.GetColor(p.Domain)"></span>
+                                    <b>@p.Name</b>
+                                    <span class="uv-badge">@p.Stack · @p.Role</span>
+                                </div>
+                                <div class="uv-proj-stats">
+                                    <span><b>@p.Routes</b> Routes</span>
+                                    <span><b>@p.Calls</b> Outbound Calls</span>
+                                    <span><b>@p.Data.Models.Count</b> Models / DTOs</span>
+                                </div>
+                                <div class="uv-proj-foot">
+                                    <button class="mc-link-btn" @onclick="() => OpenProjectInEditorModeAsync(p.Path)">Open in Editor →</button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    <div class="uv-table-wrap">
+                        <div class="uv-sec-lbl">CROSS-PROJECT ENDPOINT CONNECTIONS &amp; BREAKAGES (@_scanReport.Connections.Count)</div>
+                        <table class="uv-table">
+                            <thead>
+                                <tr>
+                                    <th>Consumer Project</th>
+                                    <th>Method</th>
+                                    <th>Client Call Path</th>
+                                    <th>Producer Project</th>
+                                    <th>Matched Route</th>
+                                    <th>Contract Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var edge in _scanReport.Connections)
+                                {
+                                    <tr>
+                                        <td><b>@edge.FromProject</b></td>
+                                        <td><code>@edge.Method</code></td>
+                                        <td><code>@edge.CallPath</code></td>
+                                        <td>@(edge.ToProject ?? "—")</td>
+                                        <td><code>@(edge.RoutePath ?? "—")</code></td>
+                                        <td>
+                                            <span class="uv-state @edge.State.ToLowerInvariant()">@edge.State</span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        }
     </div>
 
     <!-- ════════════════ Hidden portals (JS moves them into panels) ════════════════ -->
 
-    <!-- CODE-OSS EDITOR -->
-    <div id="blazor-codeoss-portal" class="portal" style="display:none; padding:0; overflow:hidden;">
-        <!-- We point this to the daemon port managed by CLI -->
-        <iframe src="http://127.0.0.1:8080" style="width:100%; height:100%; border:none; background:transparent;"></iframe>
+    <!-- CODE-OSS EDITOR — served by the IIdeHost abstraction (real VS Code OSS via serve-web) -->
+    <div id="blazor-codeoss-portal" class="portal" style="display:none; padding:0; overflow:hidden; height:100%;">
+        @if (!string.IsNullOrEmpty(_codeOssUrl))
+        {
+            @* @key forces a fresh element when the folder changes, so the iframe actually navigates
+               instead of Blazor patching src on a live frame and the old workspace lingering. *@
+            <iframe @key="_codeOssUrl" src="@_codeOssUrl" style="width:100%; height:100%; border:none; background:transparent;"></iframe>
+        }
+        else
+        {
+            <div class="muted pad" style="padding:18px; max-width:640px;">
+                <div style="font-weight:600; margin-bottom:6px;">VS Code OSS editor</div>
+                <div style="margin-bottom:10px;">@(_codeOssStatus ?? "Not started.")</div>
+                @if (!string.IsNullOrEmpty(_codeOssRemedy))
+                {
+                    <pre style="white-space:pre-wrap; background:rgba(127,127,127,.12); padding:10px; border-radius:6px; font-size:12px;">@_codeOssRemedy</pre>
+                }
+                <div style="display:flex; gap:8px; margin-top:10px;">
+                    <button class="ghost-btn" @onclick="StartCodeOssAsync" disabled="@_codeOssBusy">@(_codeOssBusy ? "Starting…" : "Start / retry")</button>
+                    <button class="ghost-btn" @onclick="ToggleDefaultEditor">
+                        @(HostOpts.Kind == IdeHostKind.CodeOss ? "✓ Default editor: VS Code OSS" : "Make default editor")
+                    </button>
+                </div>
+            </div>
+        }
     </div>
 
-    <!-- EXPLORER -->
+    <!-- EXPLORER (Multi-Project Aware) -->
     <div id="blazor-explorer-portal" class="portal" style="display:none;">
         <SuiPanel Title="EXPLORER" SubTitle="@(State.Current?.Name)">
             <HeaderRightContent>
-                <!-- Add explorer actions here later -->
+                <button class="ghost-btn" style="margin:0; padding:2px 7px;" title="Rescan Multi-Project Ecosystem" @onclick="TriggerMultiProjectScanAsync">
+                    <i class="bi bi-radar"></i>
+                </button>
+                <button class="ghost-btn" style="margin:0; padding:2px 7px;" title="Open Folder…" @onclick="PickFolderAsync">
+                    <i class="bi bi-folder2-open"></i>
+                </button>
             </HeaderRightContent>
             <ChildContent>
                 @if (State.Current == null)
                 {
-                    <div class="muted pad">No folder opened.<br /><button class="ghost-btn" @onclick="FocusWelcome">Open a project →</button></div>
+                    <div class="muted pad">
+                        No folder opened.<br />
+                        <button class="ghost-btn" @onclick="PickFolderAsync">Open Folder…</button>
+                        <button class="ghost-btn" @onclick="FocusWelcome">Recent projects →</button>
+                    </div>
                 }
                 else
                 {
+                    @if (_scanReport != null && _scanReport.Projects.Count > 1)
+                    {
+                        <div class="mp-strip">
+                            <div class="mp-strip-hdr">ECOSYSTEM PROJECTS (@_scanReport.Projects.Count)</div>
+                            @foreach (var sp in _scanReport.Projects)
+                            {
+                                <div class="mp-chip" @onclick="() => OpenWorkspace(sp.Path)" title="@sp.Path">
+                                    <span class="mp-dot" style="background:@DomainDetector.GetColor(sp.Domain)"></span>
+                                    <span class="mp-name">@sp.Name</span>
+                                    <span class="mp-meta">@sp.Stack</span>
+                                </div>
+                            }
+                        </div>
+                    }
                     <FileTree RootPath="@State.Current.RootPath" OnOpenFile="OpenFile" />
                 }
             </ChildContent>
@@ -105,19 +296,30 @@
         <div id="xterm-mount" style="flex:1; min-height:0; padding:6px 8px;"></div>
     </div>
 
-    <!-- PROBLEMS -->
+    <!-- PROBLEMS — unified hub: Roslyn/LSP + security + contract drift + build + agent -->
     <div id="blazor-problems-portal" class="portal" style="display:none;">
-        <SuiPanel Title="PROBLEMS" SubTitle="@(_problems.Count.ToString())">
-            @if (_problems.Count == 0)
+        <SuiPanel Title="PROBLEMS" SubTitle="@ProblemsSubTitle">
+            @{
+                var all = Problems.All;
+            }
+            @if (all.Count == 0)
             {
                 <div class="muted pad"><i class="bi bi-check-circle" style="color:#10b981"></i> No problems detected in the workspace.</div>
             }
             else
             {
                 <div class="list-body">
-                    @foreach (var pr in _problems)
+                    @foreach (var pr in all)
                     {
-                        <div class="prob-row"><i class="bi bi-exclamation-triangle-fill" style="color:#f59e0b"></i> <span>@pr.Message (Line @pr.StartLineNumber)</span></div>
+                        <div class="prob-row">
+                            <i class="bi @SeverityIcon(pr.Severity)" style="color:@SeverityColor(pr.Severity)"></i>
+                            <span class="prob-src">@pr.SourceTag</span>
+                            <span class="prob-msg">@pr.Message</span>
+                            @if (!string.IsNullOrEmpty(pr.Location))
+                            {
+                                <span class="prob-loc">@pr.Location</span>
+                            }
+                        </div>
                     }
                 </div>
             }
@@ -183,7 +385,7 @@
     <SuiStatusBar 
         HasWorkspace="State.Current != null"
         WorkspaceName="@(State.Current?.Name ?? "")"
-        Errors="_problems.Count"
+        Errors="Problems.ErrorCount"
         HasActiveFile="State.ActiveTab != null"
         Line="_ln"
         Column="_col"
@@ -231,6 +433,10 @@
     .list-body, .output-body, .hind-body, .ai-messages { flex:1; overflow-y:auto; padding:8px 10px; }
     .prob-row { display:flex; gap:8px; align-items:center; padding:5px 8px; font-size:12px; color:var(--text); border-radius:var(--radius); }
     .prob-row:hover { background:var(--hover); }
+    .prob-src { font-size:10px; letter-spacing:.04em; text-transform:uppercase; color:var(--text-faint);
+        border:1px solid var(--border-soft); border-radius:3px; padding:0 5px; flex:none; }
+    .prob-msg { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .prob-loc { font-family:var(--font-mono); font-size:11px; color:var(--text-faint); flex:none; }
     .output-body { font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted); line-height:1.7; }
     .out-line { white-space:pre-wrap; word-break:break-all; }
     .out-line:before { content:"›"; color:var(--text-faint); margin-right:8px; }
@@ -284,6 +490,119 @@
 
     /* xterm fills its panel */
     #xterm-mount .xterm { height:100%; }
+
+    /* Dual-Mode Switcher (Editor | Agent Mission Control | Universe Map) */
+    .ide-mode-switcher {
+        display: inline-flex;
+        align-items: center;
+        gap: 3px;
+        background: rgba(15, 23, 42, 0.75);
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.22));
+        border-radius: 7px;
+        padding: 2px;
+    }
+    .ide-mode-btn {
+        background: transparent;
+        border: none;
+        color: var(--text-muted, #94a3b8);
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 4px 11px;
+        border-radius: 5px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        transition: background 0.15s, color 0.15s;
+    }
+    .ide-mode-btn:hover { color: var(--text, #f8fafc); }
+    .ide-mode-btn.active {
+        background: var(--accent, #0284c7);
+        color: #ffffff;
+    }
+    .ide-mode-pill {
+        font-size: 10px;
+        padding: 0 5px;
+        border-radius: 8px;
+        font-weight: 700;
+    }
+    .ide-mode-pill.warn { background: #ef4444; color: #fff; }
+    .ide-mode-pill.ok { background: rgba(255,255,255,0.2); color: #fff; }
+
+    .ide-title-actions { display: flex; align-items: center; gap: 6px; }
+    .ide-top-btn {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.2));
+        color: var(--text, #e2e8f0);
+        border-radius: 5px;
+        padding: 3px 9px;
+        font-size: 11px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+    .ide-top-btn:hover { border-color: var(--accent, #38bdf8); }
+    .ide-contract-pill {
+        font-size: 11px;
+        padding: 2px 9px;
+        border-radius: 12px;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+    .ide-contract-pill.ok { background: rgba(16, 185, 129, 0.14); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .ide-contract-pill.broken { background: rgba(239, 68, 68, 0.14); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.35); }
+
+    /* Multi-Project Explorer Strip */
+    .mp-strip {
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border, rgba(148,163,184,0.14));
+        background: rgba(255,255,255,0.015);
+    }
+    .mp-strip-hdr { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: var(--text-faint, #64748b); margin-bottom: 6px; }
+    .mp-chip {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 7px;
+        border-radius: 5px;
+        font-size: 11.5px;
+        cursor: pointer;
+    }
+    .mp-chip:hover { background: var(--hover, rgba(255,255,255,0.06)); }
+    .mp-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+    .mp-name { font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mp-meta { font-size: 10px; color: var(--text-muted, #94a3b8); }
+
+    /* Embedded Universe Canvas */
+    .ide-universe-canvas { overflow-y: auto; padding: 20px 24px; background: var(--bg-editor, #0b1120); }
+    .uv-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+    .uv-title { font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+    .uv-sub { font-size: 12px; color: var(--text-muted, #94a3b8); margin-top: 2px; }
+    .uv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .uv-proj-card {
+        border: 1px solid var(--border-soft, rgba(148,163,184,0.18));
+        background: rgba(255,255,255,0.02);
+        border-radius: 8px;
+        padding: 12px;
+    }
+    .uv-proj-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+    .uv-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .uv-badge { margin-left: auto; font-size: 10.5px; color: var(--text-muted, #94a3b8); }
+    .uv-proj-stats { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--text-muted, #94a3b8); padding: 6px 0; border-top: 1px solid rgba(148,163,184,0.1); }
+    .uv-proj-foot { text-align: right; margin-top: 4px; }
+
+    .uv-table-wrap { border: 1px solid var(--border-soft, rgba(148,163,184,0.16)); border-radius: 8px; overflow: hidden; }
+    .uv-sec-lbl { padding: 10px 14px; font-size: 11px; font-weight: 700; letter-spacing: 0.06em; background: rgba(255,255,255,0.02); border-bottom: 1px solid rgba(148,163,184,0.14); }
+    .uv-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .uv-table th, .uv-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid rgba(148,163,184,0.1); }
+    .uv-table th { font-size: 11px; color: var(--text-muted, #94a3b8); text-transform: uppercase; }
+    .uv-state { font-size: 10.5px; font-weight: 700; padding: 2px 7px; border-radius: 10px; text-transform: uppercase; }
+    .uv-state.matched { background: rgba(16,185,129,0.15); color: #34d399; }
+    .uv-state.missing { background: rgba(239,68,68,0.15); color: #fca5a5; }
+    .uv-state.methodmismatch, .uv-state.shapemismatch { background: rgba(245,158,11,0.15); color: #fbbf24; }
 </style>
 
 @code {
@@ -302,19 +621,126 @@
     private List<SuiActivityBar.ActivityItem> _bottomItems = new();
     private string _activeActivityId = "explorer";
 
+    // Dual-Mode IDE state ("editor" | "agent" | "universe")
+    private string _ideMode = "editor";
+    private MultiProjectScanReport? _scanReport;
+    private bool _scanningUniverse;
+
+    // code-oss host state (bound to the code-oss portal)
+    private string? _codeOssUrl;
+    private string? _codeOssStatus;
+    private string? _codeOssRemedy;
+    private bool _codeOssBusy;
+
+    private async Task SwitchIdeMode(string mode)
+    {
+        _ideMode = mode;
+        await InvokeAsync(StateHasChanged);
+        if (mode == "editor")
+        {
+            try { await JS.InvokeVoidAsync("window.SyncroIde.resizeLayout"); } catch { }
+        }
+        else if ((mode == "agent" || mode == "universe") && _scanReport == null && !string.IsNullOrWhiteSpace(State.Current?.RootPath))
+        {
+            await TriggerMultiProjectScanAsync();
+        }
+    }
+
+    private async Task TriggerMultiProjectScanAsync()
+    {
+        var root = State.Current?.RootPath;
+        if (string.IsNullOrWhiteSpace(root) || _scanningUniverse) return;
+        _scanningUniverse = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            _scanReport = await MultiScanner.ScanAsync(root);
+            Log($"Multi-project AST scan complete: {_scanReport.ProjectCount} project(s), {_scanReport.Matched} matched, {_scanReport.Missing} broken.");
+        }
+        catch (Exception ex)
+        {
+            Log($"Multi-project scan failed: {ex.Message}");
+        }
+        finally
+        {
+            _scanningUniverse = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnScanReportUpdated(MultiProjectScanReport report)
+    {
+        _scanReport = report;
+        StateHasChanged();
+    }
+
+    private async Task OpenProjectInEditorModeAsync(string projectPath)
+    {
+        await OpenWorkspace(projectPath);
+        await SwitchIdeMode("editor");
+    }
+
+    private async Task StartCodeOssAsync()
+    {
+        if (_codeOssBusy) return;
+        _codeOssBusy = true;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            var session = await Hosts.Get(IdeHostKind.CodeOss).StartAsync(State.Current?.RootPath);
+            _codeOssUrl = session.Mode == IdeHostMode.WebUrl ? session.Url : null;
+            _codeOssStatus = session.Status;
+            _codeOssRemedy = session.Remedy;
+
+            // Code-OSS is the primary editor (idearchitecture.md), but never strand the user: if it
+            // can't start (checkout missing / not compiled), fall back to the built-in Monaco viewer.
+            if (session.Mode == IdeHostMode.Unavailable)
+            {
+                HostOpts.Kind = IdeHostKind.Monaco;
+                _codeOssStatus = $"{session.Status} Using the built-in editor for now — retry once VS Code OSS is built.";
+                Log($"VS Code OSS unavailable: {session.Status} Falling back to built-in editor.");
+            }
+        }
+        catch (Exception ex)
+        {
+            _codeOssUrl = null;
+            _codeOssStatus = $"Could not start VS Code OSS: {ex.Message}";
+        }
+        finally
+        {
+            _codeOssBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task ToggleDefaultEditor()
+    {
+        HostOpts.Kind = HostOpts.Kind == IdeHostKind.CodeOss ? IdeHostKind.Monaco : IdeHostKind.CodeOss;
+        if (HostOpts.Kind == IdeHostKind.CodeOss)
+            await StartCodeOssAsync();
+        else
+            await InvokeAsync(StateHasChanged);
+    }
+
     protected override async Task OnInitializedAsync()
     {
         State.Changed += OnStateChanged;
+        Problems.Changed += OnProblemsChanged;
         Terminal.OnOutputDataReceived += OnTerminalDataReceived;
         _projects = ProjService.GetProjects();
+
+        // Claim the shared code-oss host for this window; released in Dispose.
+        Hosts.Get(IdeHostKind.CodeOss).Acquire();
 
         _topItems = new List<SuiActivityBar.ActivityItem>
         {
             new() { Id = "explorer", Title = "Explorer", Icon = "bi bi-files" },
-            new() { Id = "search", Title = "Search", Icon = "bi bi-search" },
+            new() { Id = "editor", Title = "Editor Mode", Icon = "bi bi-code-slash" },
+            new() { Id = "mission", Title = "Agent Mission Control", Icon = "bi bi-stars" },
+            new() { Id = "universe", Title = "Multi-Project Universe Graph", Icon = "bi bi-diagram-3" },
             new() { Id = "git", Title = "Source Control", Icon = "bi bi-git" },
-            new() { Id = "ast", Title = "AST Graph", Icon = "bi bi-diagram-3-fill" },
-            new() { Id = "ai", Title = "AI Agent", Icon = "bi bi-robot" },
+            new() { Id = "hindsight", Title = "Hindsight", Icon = "bi bi-eye-fill" },
+            new() { Id = "ai", Title = "AI Quick Dock", Icon = "bi bi-robot" },
             new() { Id = "terminal", Title = "Terminal", Icon = "bi bi-terminal-fill" }
         };
 
@@ -329,7 +755,15 @@
             path = req.WorkspacePath;
 
         if (!string.IsNullOrEmpty(path))
+        {
             await State.OpenWorkspaceAsync(path);
+            Orchestrator.Open(path);
+            _ = TriggerMultiProjectScanAsync();
+        }
+
+        // If VS Code OSS is the chosen editor, boot it in the background (heavy port-wait — don't block init).
+        if (HostOpts.Kind == IdeHostKind.CodeOss)
+            _ = StartCodeOssAsync();
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -359,9 +793,18 @@
     private async Task OpenWorkspace(string path)
     {
         await State.OpenWorkspaceAsync(path);
+        Orchestrator.Open(path);   // fires WorkspaceOpened → FS watcher + contract reverify subscribe
         Log($"Opened workspace: {path}");
+        _ = TriggerMultiProjectScanAsync();
         await Terminal.StartAsync(path);
         _ = Roslyn.LoadWorkspaceAsync(path);
+
+        // Re-point the editor at the new folder. The iframe URL carries ?folder=…, so without this
+        // the workspace opens everywhere EXCEPT the editor — which is the whole point of opening it.
+        // StartAsync reuses the running server and just rebuilds the URL, so this is cheap.
+        if (HostOpts.Kind == IdeHostKind.CodeOss)
+            await StartCodeOssAsync();
+
         await Focus("blazor-explorer-portal");
         foreach (var tab in State.Tabs)
         {
@@ -411,23 +854,47 @@
         _activeActivityId = id;
         switch (id)
         {
+            case "mission":
+                await SwitchIdeMode("agent");
+                break;
+            case "universe":
+                await SwitchIdeMode("universe");
+                break;
             case "explorer":
-            case "search":
+                await SwitchIdeMode("editor");
                 await Focus("blazor-explorer-portal");
                 break;
-            case "ast":
+            case "editor":
+                await SwitchIdeMode("editor");
+                await Focus("blazor-codeoss-portal");
+                break;
+            case "git":
+                await SwitchIdeMode("editor");
+                await Focus("blazor-codeoss-portal");
+                if (HostOpts.Kind != IdeHostKind.CodeOss)
+                    Log("Source control is provided by VS Code OSS — start it from the editor panel.");
+                break;
+            case "welcome":
+                await SwitchIdeMode("editor");
+                await Focus("blazor-welcome-portal");
+                break;
+            case "hindsight":
+                await SwitchIdeMode("editor");
                 await Focus("blazor-hindsight-portal");
                 break;
             case "ai":
+                await SwitchIdeMode("editor");
                 await Focus("blazor-ai-portal");
                 break;
             case "terminal":
+                await SwitchIdeMode("editor");
                 await Focus("blazor-terminal-portal");
                 break;
             case "analyze":
                 AnalyzeCurrent();
                 break;
             case "settings":
+                await SwitchIdeMode("editor");
                 await Focus("blazor-settings-portal");
                 break;
         }
@@ -536,6 +1003,7 @@
     public void OnTabClosedJS(string uri)
     {
         State.CloseTab(uri);
+        Problems.Clear(ProblemSource.Language, uri);   // a closed document has no compiler problems
         InvokeAsync(StateHasChanged);
     }
 
@@ -577,6 +1045,18 @@
             var diags = await Roslyn.GetDiagnosticsAsync(uri);
             _problems.Clear();
             _problems.AddRange(diags);
+
+            // Push compiler diagnostics into the unified hub, bucketed per document so other
+            // sources (security, contract drift) survive a per-keystroke refresh.
+            Problems.Report(ProblemSource.Language, uri, diags.Select(d => new Problem(
+                Source: ProblemSource.Language,
+                Severity: MapMonacoSeverity(d.Severity),
+                Message: d.Message,
+                FilePath: State.Tabs.FirstOrDefault(t => t.Uri == uri)?.FilePath ?? uri,
+                Line: d.StartLineNumber,
+                Column: d.StartColumn,
+                Code: d.Id)));
+
             await JS.InvokeVoidAsync("window.SyncroMonaco.setDiagnostics", uri, diags);
             await InvokeAsync(StateHasChanged);
         }
@@ -591,12 +1071,58 @@
     public Task<Syncro.Desktop.Services.Ide.Engines.HoverDto?> GetHoverJS(string uri, int line, int column)
         => Roslyn.GetHoverAsync(uri, line, column);
 
+    [JSInvokable]
+    public Task<Syncro.Desktop.Services.Ide.Engines.DefinitionDto?> GetDefinitionJS(string uri, int line, int column)
+        => Roslyn.GetDefinitionAsync(uri, line, column);
+
     private void OnStateChanged() => InvokeAsync(StateHasChanged);
+
+    // ── Problems Hub rendering ────────────────────────────────────────────────
+    private string ProblemsSubTitle
+    {
+        get
+        {
+            var e = Problems.ErrorCount;
+            var w = Problems.WarningCount;
+            return e == 0 && w == 0 ? "0" : $"{e} errors, {w} warnings";
+        }
+    }
+
+    private static string SeverityIcon(ProblemSeverity s) => s switch
+    {
+        ProblemSeverity.Error => "bi-x-circle-fill",
+        ProblemSeverity.Warning => "bi-exclamation-triangle-fill",
+        ProblemSeverity.Info => "bi-info-circle-fill",
+        _ => "bi-lightbulb"
+    };
+
+    private static string SeverityColor(ProblemSeverity s) => s switch
+    {
+        ProblemSeverity.Error => "#ef4444",
+        ProblemSeverity.Warning => "#f59e0b",
+        ProblemSeverity.Info => "#3b82f6",
+        _ => "var(--text-faint)"
+    };
+
+    private void OnProblemsChanged() => InvokeAsync(StateHasChanged);
+
+    /// <summary>Monaco MarkerSeverity (Hint=1, Info=2, Warning=4, Error=8) → unified severity.</summary>
+    private static ProblemSeverity MapMonacoSeverity(int monacoSeverity) => monacoSeverity switch
+    {
+        8 => ProblemSeverity.Error,
+        4 => ProblemSeverity.Warning,
+        2 => ProblemSeverity.Info,
+        _ => ProblemSeverity.Hint
+    };
 
     public void Dispose()
     {
         State.Changed -= OnStateChanged;
+        Problems.Changed -= OnProblemsChanged;
         Terminal.OnOutputDataReceived -= OnTerminalDataReceived;
         _objRef?.Dispose();
+        // Release this window's claim — the server stays up for any other open IDE window and
+        // shuts down only when the last one closes.
+        _ = Hosts.Get(IdeHostKind.CodeOss).ReleaseAsync();
     }
 }

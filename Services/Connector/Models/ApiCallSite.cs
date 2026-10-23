@@ -2,16 +2,22 @@ using System.Collections.Generic;
 
 namespace Syncro.Desktop.Services.Connector.Models
 {
-    /// <summary>Frontend framework detected for a repo. Drives which extractor runs.</summary>
+    /// <summary>Frontend / consumer framework detected for a repo. Drives which extractor runs.</summary>
     public enum FrontendStack
     {
         Unknown,
         Flutter,
         NextJs,
         React,
+        ReactNative,
         Vite,
         Angular,
-        Blazor
+        Blazor,
+        Maui,
+        KotlinAndroid,
+        CppClient,
+        RustClient,
+        GoClient
     }
 
     /// <summary>
@@ -33,7 +39,7 @@ namespace Syncro.Desktop.Services.Connector.Models
 
         public int? Line { get; set; }
 
-        /// <summary>Which client library issued the call: dio | http | fetch | axios | HttpClient.</summary>
+        /// <summary>Which client library issued the call: dio | http | fetch | axios | HttpClient | retrofit | cpr | reqwest.</summary>
         public string Client { get; set; } = "";
 
         public List<ApiField> RequestFields { get; set; } = new();

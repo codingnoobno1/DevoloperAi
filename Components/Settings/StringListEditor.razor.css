@@ -1,0 +1,24 @@
+.sle { display: flex; flex-direction: column; gap: 8px; }
+.sle-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 30px; align-items: center; }
+.sle-chip {
+    display: inline-flex; align-items: center; gap: 4px; max-width: 100%;
+    padding: 3px 4px 3px 10px; border-radius: 999px; font-size: 12.5px;
+    background: var(--as-chip-bg, #EEF4FF); color: var(--as-chip-fg, #1E3A8A); border: 1px solid var(--as-chip-border, #C7D7FE);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sle-chip.mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; }
+.sle-x { border: 0; background: transparent; color: inherit; opacity: .6; cursor: pointer; padding: 0 2px; line-height: 1; }
+.sle-x:hover { opacity: 1; }
+.sle-empty { font-size: 12.5px; color: var(--as-muted, #64748B); font-style: italic; }
+.sle-add { display: flex; gap: 8px; }
+.sle-input {
+    flex: 1; min-width: 0; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px;
+    border: 1px solid var(--as-border, #CBD5E1); background: var(--as-input-bg, #fff); color: var(--as-text, #0F172A);
+}
+.sle-input.mono { font-family: Consolas, "Cascadia Mono", monospace; }
+.sle-input:focus { outline: 2px solid #0066FF33; border-color: #0066FF; }
+.sle-btn {
+    height: 34px; padding: 0 12px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;
+    border: 1px solid #0066FF; background: transparent; color: #0066FF; white-space: nowrap;
+}
+.sle-btn:disabled { opacity: .45; cursor: default; }

@@ -32,3 +32,58 @@ public sealed class NullLlmGateway : ILlmGateway
     public Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct = default) =>
         Task.FromResult(new LlmResponse(false, "", null, "llm offline"));
 }
+
+/// <summary>
+/// Real gateway backed by the platform's <see cref="Syncro.Desktop.Services.Engine.Core.ILLMProvider"/>
+/// (GroqProvider configured via Agent Settings / Windows Credential Manager).
+/// </summary>
+public sealed class ProviderLlmGateway : ILlmGateway
+{
+    private readonly Syncro.Desktop.Services.Engine.Core.ILLMProvider _provider;
+
+    public ProviderLlmGateway(Syncro.Desktop.Services.Engine.Core.ILLMProvider provider)
+    {
+        _provider = provider;
+    }
+
+    public bool IsAvailable =>
+        _provider is Syncro.Desktop.Services.Engine.LLM.GroqProvider g
+            ? (g.HasKey && !g.OfflineMode)
+            : true;
+
+    public LlmState State => IsAvailable ? LlmState.Available : LlmState.Offline;
+
+    public Task<LlmState> ProbeAsync(CancellationToken ct = default) =>
+        Task.FromResult(State);
+
+    public async Task<LlmResponse> CompleteAsync(LlmRequest request, CancellationToken ct = default)
+    {
+        if (!IsAvailable)
+            return new LlmResponse(false, "", null, "Groq API key not configured or Offline Mode enabled in Agent Settings.");
+
+        try
+        {
+            var sys = string.IsNullOrWhiteSpace(request.System)
+                ? "You are Syncro AI CLI assistant."
+                : request.System;
+            var text = await _provider.GenerateResponseAsync(sys, request.User);
+            string? matchedLabel = null;
+            if (request.CandidateLabels is { Count: > 0 } && !string.IsNullOrWhiteSpace(text))
+            {
+                foreach (var lbl in request.CandidateLabels)
+                {
+                    if (text.Contains(lbl, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        matchedLabel = lbl;
+                        break;
+                    }
+                }
+            }
+            return new LlmResponse(true, text ?? "", matchedLabel, null);
+        }
+        catch (System.Exception ex)
+        {
+            return new LlmResponse(false, "", null, ex.Message);
+        }
+    }
+}

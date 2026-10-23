@@ -23,6 +23,8 @@ namespace Syncro.Desktop.Services.Mcp
             public string TaskTitle { get; set; } = "";
             public string Methodology { get; set; } = "";
             public List<string> RestrictedFiles { get; set; } = new();
+            /// <summary>False when the AI call failed and this is the generic template.</summary>
+            public bool FromAi { get; set; } = true;
         }
 
         public async Task<MethodologyResponse> GenerateMethodologyAsync(string workspacePath, string scopeDescription)
@@ -48,9 +50,11 @@ Rules:
 - restrictedFiles: only files directly relevant to this scope (to prevent merge conflicts with other devs)
 - Use real file paths from the workspace list above";
 
+            string why = "no response";
             try
             {
                 var (raw, error) = await _ai.CallLLM(prompt, "code", workspacePath, "gemini-2.5-flash");
+                if (!string.IsNullOrEmpty(error)) why = error;
 
                 if (!string.IsNullOrEmpty(raw))
                 {
@@ -58,13 +62,14 @@ Rules:
                     if (parsed != null) return parsed;
                 }
             }
-            catch { /* fall through to fallback */ }
+            catch (Exception ex) { why = ex.Message; }
 
             // Fallback: at least return real file list even if AI call fails
             return new MethodologyResponse
             {
-                TaskTitle = "Task Analysis",
-                Methodology = $"### Step 1: Understand the scope\n\n{scopeDescription}\n\n### Step 2: Review relevant files\n\nExamine the files listed in the restricted scope below.\n\n### Step 3: Implement and test\n\nMake targeted changes, run tests, and commit.",
+                TaskTitle = "Generic template (AI unavailable)",
+                FromAi = false,
+                Methodology = $"> **AI unavailable ({why}).** This is a generic template, not an analysis of your code. File suggestions below come from a filename match only.\n\n### Step 1: Understand the scope\n\n{scopeDescription}\n\n### Step 2: Review relevant files\n\nExamine the files listed in the restricted scope below.\n\n### Step 3: Implement and test\n\nMake targeted changes, run tests, and commit.",
                 RestrictedFiles = GuessRestrictedFiles(workspacePath, scopeDescription),
             };
         }

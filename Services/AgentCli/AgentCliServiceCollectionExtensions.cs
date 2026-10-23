@@ -22,8 +22,8 @@ public static class AgentCliServiceCollectionExtensions
         // Central DB facade (default base dir = %LOCALAPPDATA%/SyncroDesktop)
         services.AddSingleton<SyncroDb>();
 
-        // LLM boundary — offline by default; TryAdd so a real gateway registered earlier wins.
-        services.TryAddSingleton<ILlmGateway, NullLlmGateway>();
+        // LLM boundary — wired to ILLMProvider (GroqProvider configured in Agent Settings).
+        services.TryAddSingleton<ILlmGateway, ProviderLlmGateway>();
 
         // NLP (DB-based, no ML)
         services.AddSingleton<TextNormalizer>();

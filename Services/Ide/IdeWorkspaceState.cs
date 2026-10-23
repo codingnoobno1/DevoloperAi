@@ -20,7 +20,7 @@ public class IdeWorkspaceState
         _contextBuilder = contextBuilder;
     }
 
-    public Workspace? Current { get; private set; }
+    public IdeWorkspace? Current { get; private set; }
     public ProjectContext? Context { get; private set; }
     public List<EditorTab> Tabs { get; } = new();
     public Dictionary<string, string> Buffers { get; } = new();   // uri -> in-memory edited content
@@ -32,7 +32,7 @@ public class IdeWorkspaceState
 
     public async Task OpenWorkspaceAsync(string rootPath)
     {
-        Current = new Workspace
+        Current = new IdeWorkspace
         {
             Id = WorkspaceId(rootPath),
             Name = Path.GetFileName(rootPath.TrimEnd('/', '\\')),

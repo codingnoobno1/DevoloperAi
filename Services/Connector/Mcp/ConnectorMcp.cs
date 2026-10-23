@@ -21,17 +21,20 @@ namespace Syncro.Desktop.Services.Connector.Mcp
         private readonly IFrontendContractResolver _frontend;
         private readonly IBackendGenerator _generator;
         private readonly IConnectorProjectStore _store;
+        private readonly Contract.IContractEngine _contract;
 
         public ConnectorMcp(
             IBackendContractResolver resolver,
             IFrontendContractResolver frontend,
             IBackendGenerator generator,
-            IConnectorProjectStore store)
+            IConnectorProjectStore store,
+            Contract.IContractEngine contract)
         {
             _resolver = resolver;
             _frontend = frontend;
             _generator = generator;
             _store = store;
+            _contract = contract;
         }
 
         public string Name => "ConnectorMcp";
@@ -50,6 +53,7 @@ namespace Syncro.Desktop.Services.Connector.Mcp
             yield return new WriteBackendFilesTool();
             yield return new GenerateBackendForCallTool(_generator);
             yield return new SyncConnectorContractTool(_resolver, _store);
+            yield return new VerifyContractTool(_contract);
         }
 
         public Task InitializeAsync() => Task.CompletedTask;

@@ -35,3 +35,11 @@ Desktop.ini
 
 # Logs
 *.log
+
+# Local/generated — not source
+node_modules/
+output/
+_presentation_build/
+syncrorep/ast_cache/
+~$*
+*.pptx.inspect.ndjson

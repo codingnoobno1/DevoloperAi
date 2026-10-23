@@ -33,6 +33,7 @@ public class HindsightQueryService
 
     public async Task<bool> IsLlmAvailableAsync()
     {
+        if (_ai.IsConfigured) return true;
         try
         {
             var r = await _probe.GetAsync("http://localhost:3020/");

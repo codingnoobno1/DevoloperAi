@@ -2,7 +2,7 @@ using System;
 
 namespace Syncro.Desktop.Services.Ide.Models;
 
-public class Workspace
+public class IdeWorkspace
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";

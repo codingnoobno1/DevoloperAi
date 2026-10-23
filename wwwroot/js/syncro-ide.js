@@ -32,6 +32,14 @@ window.SyncroIde = (function () {
                         {
                             type: 'stack', id: 'editor-stack', height: 70, content: [
                                 {
+                                    // MUST stay in the layout: focusPanel() can only reach panels that
+                                    // exist in it, and Welcome is the only surface with "Open Folder…".
+                                    // Without it every "Open a project →" affordance is a dead button.
+                                    type: 'component', componentName: 'blazorPortal',
+                                    componentState: { portalId: 'blazor-welcome-portal' },
+                                    isClosable: true, title: 'Welcome'
+                                },
+                                {
                                     type: 'component', componentName: 'blazorPortal',
                                     componentState: { portalId: 'blazor-codeoss-portal' },
                                     isClosable: false, title: 'Code-OSS'
@@ -177,5 +185,9 @@ window.SyncroIde = (function () {
 
     function termWrite(text) { if (_term) _term.writeln(text); }
 
-    return { initLayout, openFile, setFileContent, focusPanel, mountTerminal, termWrite };
+    function resizeLayout() {
+        setTimeout(() => { if (_layout) _layout.updateSize(); }, 50);
+    }
+
+    return { initLayout, openFile, setFileContent, focusPanel, mountTerminal, termWrite, resizeLayout };
 })();

@@ -1,0 +1,51 @@
+@* Chip list with an add box. Edits the bound list in place. *@
+
+<div class="sle">
+    <div class="sle-chips">
+        @foreach (var item in Items)
+        {
+            <span class="sle-chip @(Mono ? "mono" : "")" title="@item">
+                @item
+                <button type="button" class="sle-x" title="Remove" @onclick="() => Remove(item)"><i class="bi bi-x"></i></button>
+            </span>
+        }
+        @if (Items.Count == 0)
+        {
+            <span class="sle-empty">@EmptyText</span>
+        }
+    </div>
+    <div class="sle-add">
+        <input class="sle-input @(Mono ? "mono" : "")" placeholder="@Placeholder" @bind="_text" @bind:event="oninput" @onkeydown="OnKey" />
+        <button type="button" class="sle-btn" @onclick="Add" disabled="@string.IsNullOrWhiteSpace(_text)"><i class="bi bi-plus-lg"></i> Add</button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<string> Items { get; set; } = new();
+    [Parameter] public string Placeholder { get; set; } = "Add…";
+    [Parameter] public string EmptyText { get; set; } = "None";
+    [Parameter] public bool Mono { get; set; } = true;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private string _text = "";
+
+    private async Task Add()
+    {
+        var v = _text.Trim();
+        if (v.Length == 0) return;
+        if (!Items.Contains(v, StringComparer.OrdinalIgnoreCase)) Items.Add(v);
+        _text = "";
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task Remove(string item)
+    {
+        Items.Remove(item);
+        await OnChanged.InvokeAsync();
+    }
+
+    private async Task OnKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await Add();
+    }
+}

@@ -9,6 +9,13 @@ namespace Syncro.Desktop.Services.AST.Env;
 
 public class EnvironmentConfigurator
 {
+    private readonly DeveloperAI.BusinessLogic.AIClient? _aiClient;
+
+    public EnvironmentConfigurator(DeveloperAI.BusinessLogic.AIClient? aiClient = null)
+    {
+        _aiClient = aiClient;
+    }
+
     public async Task<List<string>> CheckDatabaseRequirementsAsync(string projectPath, string framework)
     {
         var requiredDbs = new List<string>();
@@ -104,24 +111,29 @@ public class EnvironmentConfigurator
         var projects = new List<SubProject>();
         if (string.IsNullOrEmpty(projectPath) || !Directory.Exists(projectPath)) return projects;
 
-        // Try LLM dynamic detection first
-        bool useLlm = false;
-        using (var http = new HttpClient() { Timeout = TimeSpan.FromSeconds(1.5) })
+        // Try LLM dynamic detection first (Connected Groq via AIClient, or port 3020 fallback)
+        bool useLlm = _aiClient?.IsConfigured == true;
+        if (!useLlm)
         {
-            try
+            using (var http = new HttpClient() { Timeout = TimeSpan.FromSeconds(1.5) })
             {
-                var resp = await http.GetAsync("http://localhost:3020/");
-                if (resp.IsSuccessStatusCode)
+                try
                 {
-                    useLlm = true;
+                    var resp = await http.GetAsync("http://localhost:3020/");
+                    if (resp.IsSuccessStatusCode)
+                    {
+                        useLlm = true;
+                    }
                 }
+                catch {}
             }
-            catch {}
         }
 
         if (useLlm)
         {
-            onProgressLog?.Invoke("Gemini LLM Express server detected on port 3020. Running AI project layout analyzer...");
+            onProgressLog?.Invoke(_aiClient?.IsConfigured == true
+                ? "Groq LLM connected via Agent Settings. Running AI project layout analyzer..."
+                : "LLM Express server detected on port 3020. Running AI project layout analyzer...");
             try
             {
                 var dirs = Directory.GetDirectories(projectPath).Select(System.IO.Path.GetFileName).ToList();
@@ -144,41 +156,36 @@ public class EnvironmentConfigurator
 
                 string prompt = $"Given the following directory structure of a cloned repository, identify all subprojects/subfolders that represent independent services or applications (e.g., frontend, backend, server, landing page, api). Return a JSON array of objects, where each object has 'path' (relative path from root) and 'framework' (one of: 'Next.js', 'NestJS', 'Express/Node', 'Angular', 'React Native', 'SvelteKit', 'Nuxt.js', 'Electron', 'Vite Project', 'Node.js Generic', 'FastAPI', 'Flask', 'Django', 'ASP.NET Core', 'Blazor', 'Spring Boot', 'Go', 'Rust'). Do not include any markdown backticks, conversational text, or code block formatting. Return ONLY a raw JSON array. Example: [ {{\"path\": \"frontend\", \"framework\": \"Next.js\"}} ]\n\nStructure:\n{structureInfo}";
 
-                using (var http = new HttpClient() { Timeout = TimeSpan.FromSeconds(15) })
+                string? rawResult = null;
+                if (_aiClient != null)
                 {
-                    var payload = new { prompt = prompt };
-                    var content = new StringContent(Newtonsoft.Json.JsonConvert.SerializeObject(payload), System.Text.Encoding.UTF8, "application/json");
-                    var resp = await http.PostAsync("http://localhost:3020/gemini", content);
-                    if (resp.IsSuccessStatusCode)
+                    var (text, _) = await _aiClient.CallLLM(prompt, "project-layout", projectPath);
+                    rawResult = text;
+                }
+
+                if (!string.IsNullOrEmpty(rawResult))
+                {
+                    string jsonText = rawResult.Trim();
+                    if (jsonText.StartsWith("```"))
                     {
-                        string body = await resp.Content.ReadAsStringAsync();
-                        var obj = Newtonsoft.Json.Linq.JObject.Parse(body);
-                        string? rawResult = obj["result"]?["candidates"]?[0]?["content"]?["parts"]?[0]?["text"]?.Value<string>();
-                        if (!string.IsNullOrEmpty(rawResult))
+                        int startIdx = jsonText.IndexOf('\n');
+                        int endIdx = jsonText.LastIndexOf("```");
+                        if (startIdx >= 0 && endIdx > startIdx)
                         {
-                            string jsonText = rawResult.Trim();
-                            if (jsonText.StartsWith("```"))
-                            {
-                                int startIdx = jsonText.IndexOf('\n');
-                                int endIdx = jsonText.LastIndexOf("```");
-                                if (startIdx >= 0 && endIdx > startIdx)
-                                {
-                                    jsonText = jsonText.Substring(startIdx + 1, endIdx - startIdx - 1).Trim();
-                                }
-                            }
-                            
-                            var detected = Newtonsoft.Json.JsonConvert.DeserializeObject<List<SubProject>>(jsonText);
-                            if (detected != null && detected.Count > 0)
-                            {
-                                foreach (var p in detected)
-                                {
-                                    if (p.Path == "." || p.Path == "") p.Path = "";
-                                    projects.Add(p);
-                                }
-                                onProgressLog?.Invoke($"[AI] Successfully mapped {projects.Count} subprojects using Gemini Flash.");
-                                return projects;
-                            }
+                            jsonText = jsonText.Substring(startIdx + 1, endIdx - startIdx - 1).Trim();
                         }
+                    }
+
+                    var detected = Newtonsoft.Json.JsonConvert.DeserializeObject<List<SubProject>>(jsonText);
+                    if (detected != null && detected.Count > 0)
+                    {
+                        foreach (var p in detected)
+                        {
+                            if (p.Path == "." || p.Path == "") p.Path = "";
+                            projects.Add(p);
+                        }
+                        onProgressLog?.Invoke($"[AI] Successfully mapped {projects.Count} subprojects using Groq LLM.");
+                        return projects;
                     }
                 }
             }

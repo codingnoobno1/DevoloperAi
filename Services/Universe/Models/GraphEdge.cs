@@ -17,7 +17,12 @@ namespace Syncro.Desktop.Services.Universe.Models
 
         // ── runtime graph (runtime.md R1+) ──
         Affects,    // dependency/process → the consumers impacted if it fails
-        Covers      // testRun → symbol it exercises
+        Covers,     // testRun → symbol it exercises
+
+        // ── cross-language mapping (idearchitecture.md Phase 3) ──
+        // Two symbols in different layers/languages that model the SAME concept, e.g.
+        // ProductController (C#) ↔ ProductBloc (Dart) ↔ ProductScreen (Dart).
+        Mirrors
     }
 
     /// <summary>

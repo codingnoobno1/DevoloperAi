@@ -106,14 +106,16 @@
 
 <style>
     .device-frame {
-        background: #0f172a;
+        background: var(--mud-palette-surface);
         border-radius: 36px;
         padding: 10px;
         box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
         display: flex;
         flex-direction: column;
         transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-        border: 6px solid #334155;
+        border: 6px solid var(--mud-palette-lines-default);
+        transform: scale(min(1, calc(100vh / 950)));
+        transform-origin: center center;
     }
 
     .screen-content {
@@ -131,30 +133,30 @@
     }
 
     .browser-frame {
-        background: #f8fafc;
+        background: var(--mud-palette-background-grey);
         border-radius: 12px;
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
         display: flex;
         flex-direction: column;
-        border: 1px solid #cbd5e1;
+        border: 1px solid var(--mud-palette-lines-default);
         overflow: hidden;
         transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
         margin: 16px;
     }
     .browser-header {
-        background: #e2e8f0;
-        border-bottom: 1px solid #cbd5e1;
+        background: var(--mud-palette-surface);
+        border-bottom: 1px solid var(--mud-palette-lines-default);
     }
     .browser-dots .dot { width: 12px; height: 12px; border-radius: 50%; }
     .browser-dots .red { background: #ff5f56; }
     .browser-dots .yellow { background: #ffbd2e; }
     .browser-dots .green { background: #27c93f; }
     .browser-address-bar {
-        background: #ffffff;
+        background: var(--mud-palette-background);
         border-radius: 6px;
         font-family: 'Inter', sans-serif;
         font-size: 12px;
-        color: #334155;
+        color: var(--mud-palette-text-primary);
     }
     .browser-content {
         flex: 1;
@@ -164,7 +166,7 @@
 
     .terminal-pane {
         height: 150px;
-        background: #0f172a;
+        background: var(--mud-palette-dark);
         border-radius: 8px;
         display: flex;
         flex-direction: column;
@@ -172,8 +174,8 @@
     }
 
     .terminal-header {
-        background: #1e293b;
-        border-bottom: 1px solid #334155;
+        background: var(--mud-palette-dark);
+        border-bottom: 1px solid var(--mud-palette-lines-default);
     }
 
     .terminal-body {
@@ -201,6 +203,8 @@
     private bool _isReady = false;
     private string? _previewUrl;
     private List<string> _logs = new();
+    private System.Timers.Timer _renderThrottleTimer = new(250);
+    private bool _renderPending = false;
 
     protected override void OnInitialized()
     {
@@ -216,6 +220,14 @@
         {
             _deviceMode = DeviceMode.Mobile;
         }
+
+        _renderThrottleTimer.Elapsed += (s, e) => {
+            if (_renderPending) {
+                _renderPending = false;
+                InvokeAsync(StateHasChanged);
+            }
+        };
+        _renderThrottleTimer.Start();
 
         RunnerService.OnOutput += HandleOutput;
         RunnerService.OnReady += HandleReady;
@@ -253,7 +265,7 @@
         {
             _logs.Add(msg);
             if (_logs.Count > 100) _logs.RemoveAt(0);
-            StateHasChanged();
+            _renderPending = true;
         });
     }
 
@@ -293,6 +305,8 @@
 
     public void Dispose()
     {
+        _renderThrottleTimer.Stop();
+        _renderThrottleTimer.Dispose();
         RunnerService.OnOutput -= HandleOutput;
         RunnerService.OnReady -= HandleReady;
         _ = StopPreview();

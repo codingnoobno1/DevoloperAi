@@ -1,0 +1,40 @@
+.apc {
+    border: 1px solid var(--as-border, #E2E8F0); border-radius: 12px; padding: 12px 14px;
+    background: var(--as-card, #fff); color: var(--as-text, #0F172A); display: flex; flex-direction: column; gap: 8px;
+    font-size: 13px;
+}
+.apc.danger { border-color: #F59E0B; box-shadow: inset 3px 0 0 #F59E0B; }
+.apc-head { display: flex; align-items: center; gap: 8px; }
+.apc-tool { font-weight: 600; font-size: 14px; }
+.apc-spacer { flex: 1; }
+.apc-score { font-size: 11.5px; padding: 2px 8px; border-radius: 999px; background: var(--as-soft, #F1F5F9); color: var(--as-muted, #475569); }
+.apc-time { font-size: 11.5px; color: var(--as-muted, #64748B); }
+.apc-class { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; text-transform: uppercase; letter-spacing: .03em; }
+.cls-read, .cls-internal { background: #DCFCE7; color: #166534; }
+.cls-localwrite { background: #DBEAFE; color: #1E40AF; }
+.cls-execute { background: #EDE9FE; color: #5B21B6; }
+.cls-outward { background: #FEF3C7; color: #92400E; }
+.cls-destructive { background: #FEE2E2; color: #991B1B; }
+.apc-target { font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px; word-break: break-all; }
+.apc-meta { display: flex; gap: 14px; color: var(--as-muted, #64748B); font-size: 12px; }
+.apc-why { background: #FFF7ED; color: #9A3412; border-radius: 8px; padding: 6px 10px; font-size: 12.5px; }
+.apc-factors { width: 100%; border-collapse: collapse; font-size: 12px; }
+.apc-factors td { padding: 3px 4px; border-top: 1px solid var(--as-border, #F1F5F9); }
+.apc-factors .pts { color: #B45309; font-weight: 600; width: 44px; text-align: right; }
+.apc-factors .why { color: var(--as-muted, #64748B); }
+.apc-input summary { cursor: pointer; color: var(--as-muted, #64748B); font-size: 12px; }
+.apc-input pre {
+    margin: 6px 0 0; max-height: 160px; overflow: auto; font-size: 11.5px; white-space: pre-wrap; word-break: break-all;
+    background: var(--as-soft, #F8FAFC); border-radius: 8px; padding: 8px; color: var(--as-text, #0F172A);
+}
+.apc-confirm { font-size: 12.5px; display: flex; flex-direction: column; gap: 6px; }
+.apc-confirm input {
+    height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid #F59E0B; font-family: Consolas, monospace;
+    background: var(--as-input-bg, #fff); color: var(--as-text, #0F172A);
+}
+.apc-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.apc-btn { height: 32px; padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid transparent; }
+.apc-btn.ok { background: #0066FF; color: #fff; }
+.apc-btn.ok:disabled { opacity: .4; cursor: default; }
+.apc-btn.deny { background: transparent; color: #DC2626; border-color: #FCA5A5; }
+.apc-btn.ghost { background: transparent; color: var(--as-text, #0F172A); border-color: var(--as-border, #CBD5E1); }

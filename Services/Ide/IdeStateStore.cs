@@ -27,7 +27,7 @@ public class IdeStateStore
         catch { return new(); }
     }
 
-    public async Task SaveSessionAsync(Workspace ws, IEnumerable<EditorTab> tabs)
+    public async Task SaveSessionAsync(IdeWorkspace ws, IEnumerable<EditorTab> tabs)
     {
         try
         {

@@ -1,0 +1,75 @@
+@using Syncro.Desktop.Services.Agent.Policy
+@inject ApprovalService Approvals
+
+<div class="apc @(Request.DoubleConfirm ? "danger" : "")">
+    <div class="apc-head">
+        <span class="apc-class cls-@Request.Result.ActionClass.ToString().ToLowerInvariant()">@ToolCatalog.Label(Request.Result.ActionClass)</span>
+        <span class="apc-tool">@Request.ToolName</span>
+        <span class="apc-score" title="Risk score (0–100)">score @Request.Result.Score</span>
+        <span class="apc-spacer"></span>
+        <span class="apc-time" title="Denied automatically at @Request.ExpiresAt.ToString("HH:mm")">@Remaining()</span>
+    </div>
+
+    <div class="apc-target" title="@Request.Target"><i class="bi bi-crosshair"></i> @(string.IsNullOrEmpty(Request.Target) ? "(no target)" : Request.Target)</div>
+    <div class="apc-meta">
+        @if (!string.IsNullOrEmpty(Request.Branch)) { <span><i class="bi bi-git"></i> @Request.Branch</span> }
+        <span><i class="bi bi-person-gear"></i> from @Request.Origin</span>
+    </div>
+    @if (!string.IsNullOrEmpty(Request.Result.Floor))
+    {
+        <div class="apc-why"><i class="bi bi-shield-lock"></i> @Request.Result.Floor</div>
+    }
+
+    @if (Request.Result.Factors.Count > 0)
+    {
+        <table class="apc-factors">
+            @foreach (var f in Request.Result.Factors)
+            {
+                <tr><td>@f.Factor</td><td class="pts">+@f.Points</td><td class="why">@f.Why</td></tr>
+            }
+        </table>
+    }
+
+    <details class="apc-input">
+        <summary>Tool input</summary>
+        <pre>@Request.InputPreview</pre>
+    </details>
+
+    @if (Request.DoubleConfirm)
+    {
+        <div class="apc-confirm">
+            Type <b>@Request.ConfirmWord</b> to approve:
+            <input @bind="_typed" @bind:event="oninput" placeholder="@Request.ConfirmWord" />
+        </div>
+    }
+
+    <div class="apc-actions">
+        <button class="apc-btn deny" @onclick="Deny"><i class="bi bi-x-lg"></i> Deny</button>
+        @if (!Request.DoubleConfirm && Request.RunId != null)
+        {
+            <button class="apc-btn ghost" @onclick="() => Approve(true)" title="Approve, and allow @Request.ToolName again without asking until this agent task ends">
+                Allow for this task
+            </button>
+        }
+        <button class="apc-btn ok" @onclick="() => Approve(false)" disabled="@(Request.DoubleConfirm && !Matches())">
+            <i class="bi bi-check-lg"></i> Approve
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ApprovalRequest Request { get; set; } = default!;
+
+    private string _typed = "";
+
+    private bool Matches() => string.Equals(_typed.Trim(), Request.ConfirmWord, StringComparison.OrdinalIgnoreCase);
+
+    private void Approve(bool forRun) => Approvals.Approve(Request.Id, forRun, _typed);
+    private void Deny() => Approvals.Deny(Request.Id);
+
+    private string Remaining()
+    {
+        var left = Request.ExpiresAt - DateTime.Now;
+        return left.TotalSeconds <= 0 ? "expiring" : left.TotalMinutes >= 1 ? $"{(int)left.TotalMinutes}m left" : $"{(int)left.TotalSeconds}s left";
+    }
+}

@@ -30,6 +30,22 @@ namespace Syncro.Desktop.Services.Ide.Engines
         /// Gets diagnostics (problems) for a specific document or the whole workspace.
         /// </summary>
         Task<IEnumerable<DiagnosticDto>> GetDiagnosticsAsync(string uri);
+
+        /// <summary>
+        /// Resolves the definition location of the symbol at the caret (go-to-definition / F12).
+        /// Returns null when there is no symbol or its definition is not in source.
+        /// </summary>
+        Task<DefinitionDto?> GetDefinitionAsync(string uri, int line, int column);
+    }
+
+    public class DefinitionDto
+    {
+        /// <summary>file:// URI of the document that declares the symbol.</summary>
+        public string Uri { get; set; } = "";
+        public int StartLineNumber { get; set; }
+        public int StartColumn { get; set; }
+        public int EndLineNumber { get; set; }
+        public int EndColumn { get; set; }
     }
 
     public class CompletionItemDto

@@ -20,6 +20,7 @@ namespace Syncro.Desktop.Services.Universe
             services.AddSingleton<UniverseRegistry>();
             services.AddSingleton<WorkspaceIndexer>();
             services.AddSingleton<CrossWorkspaceMapper>();   // R5 N-consumer mapping
+            services.AddSingleton<CrossLanguageMapper>();    // Phase 3 Controller↔Bloc↔Screen mapping
             services.AddSingleton<UniverseMcp>();
 
             // Runtime Engine (runtime.md R1) — event bus + graph updater + coordinator.

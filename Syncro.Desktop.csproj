@@ -63,6 +63,11 @@
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
 
+        <!-- Scripts -->
+        <None Update="scripts\**">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+
         <!-- Project scaffolding templates consumed by MarkdownTemplateEngine at runtime -->
         <None Update="ProjectTemplates\**\*.md">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -126,6 +131,10 @@
         <PackageReference Include="Scriban" Version="7.2.5" />
         <PackageReference Include="MathNet.Numerics" Version="5.0.0" />
     </ItemGroup>
+
+  <Target Name="KillRunningInstances" BeforeTargets="PrepareForBuild;CopyFilesToOutputDirectory">
+    <Exec Command="taskkill /F /IM Syncro.Desktop.exe /T 2&gt;nul &amp; taskkill /F /IM syncro-cli.exe /T 2&gt;nul &amp; exit /b 0" IgnoreExitCode="true" />
+  </Target>
 
   <Target Name="BuildCLI" AfterTargets="Build">
     <MSBuild Projects="Syncro.CLI/Syncro.CLI.csproj" Targets="Build" />

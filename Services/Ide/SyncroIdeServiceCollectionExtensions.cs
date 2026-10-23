@@ -16,6 +16,13 @@ public static class SyncroIdeServiceCollectionExtensions
         services.AddScoped<Engines.ITerminalEngine, Engines.LocalProcessTerminalEngine>();
         services.AddScoped<Engines.IRoslynLanguageService, Engines.RoslynLanguageService>();
         services.AddScoped<IdeWorkspaceState>();   // per BlazorWebView circuit
+
+        // IDE host abstraction — Monaco (built-in) or code-oss (real VS Code OSS via serve-web).
+        services.AddSingleton<Host.IdeHostOptions>();
+        services.AddSingleton<Host.MonacoIdeHost>();
+        services.AddSingleton<Engine.Mcp.Transport.McpHttpEndpoint>();   // syncro-bridge endpoint (E0: /health)
+        services.AddSingleton<Host.CodeOssIdeHost>();
+        services.AddSingleton<Host.IdeHostResolver>();
         return services;
     }
 }

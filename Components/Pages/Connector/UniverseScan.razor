@@ -1,0 +1,527 @@
+@page "/universe-scan"
+@using Syncro.Desktop.Services.Connector.Scan
+@using Syncro.Desktop.Services.Connector.ProjectDomain
+@using Syncro.Desktop.Services.Connector.Models
+@inject MultiProjectScanService Scanner
+@inject ISnackbar Snackbar
+
+<MudContainer MaxWidth="MaxWidth.ExtraLarge" Class="pa-4">
+
+    <div class="d-flex align-center gap-3 mb-4">
+        <MudIcon Icon="@Icons.Material.Filled.TravelExplore" Color="Color.Primary" Size="Size.Large" />
+        <div>
+            <MudText Typo="Typo.h5" Style="font-weight:700;">Universe Scan</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">Point at a folder of projects — Syncro discovers every project, extracts routes &amp; calls, and maps the connections. Live, nothing hardcoded.</MudText>
+        </div>
+    </div>
+
+    <!-- ROOT PICKER -->
+    <MudPaper Elevation="0" Class="pa-3 mb-4 d-flex align-center gap-3" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px;">
+        <MudTextField @bind-Value="_root" Placeholder="e.g. D:\PG_Connectjlpl" Label="Root folder" Variant="Variant.Outlined" Margin="Margin.Dense" Class="flex-grow-1" />
+        <MudButton Variant="Variant.Outlined" StartIcon="@Icons.Material.Filled.FolderOpen" OnClick="PickRoot">Browse</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" StartIcon="@Icons.Material.Filled.Radar"
+                   OnClick="ScanAsync" Disabled="_scanning || string.IsNullOrWhiteSpace(_root)">
+            @(_scanning ? "Scanning…" : "Scan all")
+        </MudButton>
+    </MudPaper>
+
+    @if (_scanning)
+    {
+        <MudPaper Elevation="0" Class="pa-12 d-flex flex-column align-center" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px;">
+            <MudProgressCircular Color="Color.Primary" Indeterminate="true" Class="mb-3" />
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">Discovering projects and resolving contracts…</MudText>
+        </MudPaper>
+    }
+    else if (_report != null)
+    {
+        <!-- SUMMARY STRIP -->
+        <MudGrid Spacing="2" Class="mb-4">
+            @foreach (var s in Summary())
+            {
+                <MudItem xs="6" sm="4" md="2">
+                    <MudPaper Elevation="0" Class="pa-3" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px;">
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary" Style="text-transform:uppercase; letter-spacing:.05em;">@s.Label</MudText>
+                        <MudText Typo="Typo.h5" Style="@($"font-weight:700; color:{s.Color};")">@s.Value</MudText>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+
+        <!-- PROJECT CARDS -->
+        <div class="d-flex align-center mb-2">
+            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary" Style="text-transform:uppercase; letter-spacing:.06em;">Projects (@_report.ProjectCount)</MudText>
+            @if (_connProject != AllProjects)
+            {
+                <MudChip T="string" Size="Size.Small" Color="Color.Primary" Class="ml-3" OnClose="ClearSelection" CloseIcon="@Icons.Material.Filled.Close">Filtered: @_connProject</MudChip>
+            }
+        </div>
+        <MudGrid Spacing="2" Class="mb-4">
+            @foreach (var p in _report.Projects)
+            {
+                <MudItem xs="12" sm="6" md="4" lg="3">
+                    <MudPaper Elevation="0" Class="pa-3" @onclick="() => SelectProject(p.Name)"
+                              Style="@($"border:1px solid {CardBorder(p.Name)}; border-radius:12px; height:100%; cursor:pointer;")">
+                        <div class="d-flex align-center gap-2 mb-1">
+                            <MudIcon Icon="@Icons.Material.Filled.Circle" Style="@($"font-size:11px; color:{DomainDetector.GetColor(p.Domain)};")" />
+                            <MudText Typo="Typo.subtitle1" Style="font-weight:700;">@p.Name</MudText>
+                        </div>
+                        <MudText Typo="Typo.caption" Class="mud-text-secondary">@p.Stack · @p.Role</MudText>
+                        <div class="d-flex gap-4 mt-3">
+                            <div>
+                                <MudText Typo="Typo.h6" Style="font-weight:700;">@p.Routes</MudText>
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">routes</MudText>
+                            </div>
+                            <div>
+                                <MudText Typo="Typo.h6" Style="font-weight:700;">@p.Calls</MudText>
+                                <MudText Typo="Typo.caption" Class="mud-text-secondary">calls</MudText>
+                            </div>
+                            @if (!string.IsNullOrEmpty(p.RouteSource) && p.RouteSource != "None")
+                            {
+                                <div>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Default">@p.RouteSource</MudChip>
+                                </div>
+                            }
+                        </div>
+                    </MudPaper>
+                </MudItem>
+            }
+        </MudGrid>
+
+        <!-- CONNECTION MAP (graph) -->
+        <div class="d-flex align-center mb-2">
+            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary" Style="text-transform:uppercase; letter-spacing:.06em;">Cross-project connection map</MudText>
+            <MudSpacer />
+            <div class="d-flex gap-4" style="font-size:12px; color:var(--mud-palette-text-secondary);">
+                <span><span style="display:inline-block;width:14px;height:2px;background:var(--mud-palette-success);vertical-align:middle;margin-right:4px;"></span>matched</span>
+                <span><span style="display:inline-block;width:14px;height:2px;background:var(--mud-palette-warning);vertical-align:middle;margin-right:4px;"></span>mismatch</span>
+                <span><span style="display:inline-block;width:14px;height:2px;background:var(--mud-palette-error);vertical-align:middle;margin-right:4px;"></span>missing</span>
+            </div>
+        </div>
+        <MudPaper Elevation="0" Class="mb-4 pa-2" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px; overflow-x:auto;">
+            @{ var g = BuildGraph(); }
+            <svg viewBox="@($"0 0 880 {F(g.Height)}")" width="100%" style="min-width:680px; display:block;" role="img" aria-label="Cross-project connection graph">
+                <text x="@LeftX" y="34" fill="var(--mud-palette-text-secondary)" font-size="11" font-weight="700" letter-spacing="1">FRONTENDS</text>
+                <text x="@RightX" y="34" fill="var(--mud-palette-text-secondary)" font-size="11" font-weight="700" letter-spacing="1">BACKENDS</text>
+                @foreach (var e in g.Edges)
+                {
+                    <path d="@e.Path" fill="none" stroke="@e.Color" stroke-width="2" stroke-dasharray="@(e.Dashed ? "6 5" : "0")" />
+                }
+                @foreach (var n in g.Nodes)
+                {
+                    <g style="cursor:pointer;" @onclick="() => SelectProject(n.Key)">
+                        <rect x="@F(n.X)" y="@F(n.Y)" width="@F(n.W)" height="@F(n.H)" rx="9"
+                              fill="var(--mud-palette-surface)" stroke="@n.Color" stroke-width="@(IsSelected(n.Key) ? "2.5" : "1.5")" />
+                        <circle cx="@F(n.X + 16)" cy="@F(n.Y + n.H / 2)" r="4.5" fill="@n.Color" />
+                        <text x="@F(n.X + 30)" y="@F(n.Y + n.H / 2 + 4)" fill="var(--mud-palette-text-primary)" font-size="12.5" font-weight="600">@n.Label</text>
+                    </g>
+                }
+            </svg>
+        </MudPaper>
+
+        <!-- API SURFACE (project-wise filter) -->
+        <div class="d-flex align-center gap-3 mb-2">
+            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary" Style="text-transform:uppercase; letter-spacing:.06em;">API surface</MudText>
+            <MudSpacer />
+            <MudSelect T="string" @bind-Value="_apiProject" Label="Project" Dense="true" Margin="Margin.Dense" Style="max-width:260px;">
+                <MudSelectItem T="string" Value="@AllProjects">All projects</MudSelectItem>
+                @foreach (var p in _report.Projects)
+                {
+                    <MudSelectItem T="string" Value="@p.Name">@p.Name (@(p.Role == "backend" ? $"{p.Routes} routes" : $"{p.Calls} calls"))</MudSelectItem>
+                }
+            </MudSelect>
+        </div>
+        <MudPaper Elevation="0" Class="mb-4" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px; overflow:hidden;">
+            <MudTabs Elevation="0" Rounded="false" ApplyEffectsToContainer="true" PanelClass="pa-0">
+                <MudTabPanel Text="@($"Routes ({RouteRows().Count()})")" Icon="@Icons.Material.Filled.Api">
+                    <MudTable Items="RouteRows()" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent><MudTh>Project</MudTh><MudTh>Method</MudTh><MudTh>Path</MudTh><MudTh>Source</MudTh></HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Project">@context.Project</MudTd>
+                            <MudTd DataLabel="Method"><code>@context.Method</code></MudTd>
+                            <MudTd DataLabel="Path"><code>@context.Path</code></MudTd>
+                            <MudTd DataLabel="Source"><MudChip T="string" Size="Size.Small" Variant="Variant.Text">@context.Meta</MudChip></MudTd>
+                        </RowTemplate>
+                        <PagerContent><MudTablePager PageSizeOptions="new[]{10,25,100}" /></PagerContent>
+                    </MudTable>
+                </MudTabPanel>
+                <MudTabPanel Text="@($"Calls ({CallRows().Count()})")" Icon="@Icons.Material.Filled.CallMade">
+                    <MudTable Items="CallRows()" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent><MudTh>Project</MudTh><MudTh>Method</MudTh><MudTh>Path</MudTh><MudTh>Client</MudTh></HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Project">@context.Project</MudTd>
+                            <MudTd DataLabel="Method"><code>@context.Method</code></MudTd>
+                            <MudTd DataLabel="Path"><code>@context.Path</code></MudTd>
+                            <MudTd DataLabel="Client"><MudChip T="string" Size="Size.Small" Variant="Variant.Text">@context.Meta</MudChip></MudTd>
+                        </RowTemplate>
+                        <PagerContent><MudTablePager PageSizeOptions="new[]{10,25,100}" /></PagerContent>
+                    </MudTable>
+                </MudTabPanel>
+            </MudTabs>
+        </MudPaper>
+
+        <!-- DATA LAYER (project-wise) -->
+        <div class="d-flex align-center gap-3 mb-2">
+            <MudText Typo="Typo.subtitle2" Class="mud-text-secondary" Style="text-transform:uppercase; letter-spacing:.06em;">Data layer</MudText>
+            <MudSpacer />
+            <MudSelect T="string" @bind-Value="_dataProject" Label="Project" Dense="true" Margin="Margin.Dense" Style="max-width:260px;">
+                <MudSelectItem T="string" Value="@AllProjects">All projects</MudSelectItem>
+                @foreach (var p in _report.Projects.Where(p => !p.Data.IsEmpty))
+                {
+                    <MudSelectItem T="string" Value="@p.Name">@p.Name @(p.Data.Store is null ? "" : $"· {p.Data.Store}")</MudSelectItem>
+                }
+            </MudSelect>
+        </div>
+        <MudPaper Elevation="0" Class="mb-4" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px; overflow:hidden;">
+            <MudTabs Elevation="0" Rounded="false" ApplyEffectsToContainer="true" PanelClass="pa-0">
+                <MudTabPanel Text="@($"Database ({DbRows().Count()})")" Icon="@Icons.Material.Filled.Storage">
+                    <MudTable Items="DbRows()" Dense="true" Hover="true" Elevation="0" Breakpoint="Breakpoint.Sm">
+                        <HeaderContent><MudTh>Project</MudTh><MudTh>Store</MudTh><MudTh>Table / Collection</MudTh><MudTh>Maps to</MudTh></HeaderContent>
+                        <RowTemplate>
+                            <MudTd DataLabel="Project">@context.Project</MudTd>
+                            <MudTd DataLabel="Store"><MudChip T="string" Size="Size.Small" Color="@(context.Store == "MongoDB" ? Color.Success : context.Store == "SQL" ? Color.Info : Color.Default)" Variant="Variant.Filled">@context.Store</MudChip></MudTd>
+                            <MudTd DataLabel="Table / Collection"><code>@context.Name</code></MudTd>
+                            <MudTd DataLabel="Maps to">@context.Entity</MudTd>
+                        </RowTemplate>
+                        <PagerContent><MudTablePager PageSizeOptions="new[]{10,25,100}" /></PagerContent>
+                    </MudTable>
+                </MudTabPanel>
+                <MudTabPanel Text="@($"Models ({ModelTypeRows().Count()})")" Icon="@Icons.Material.Filled.DataObject">
+                    @RenderTypes(ModelTypeRows(), "No models detected for this selection.")
+                </MudTabPanel>
+                <MudTabPanel Text="@($"DTOs ({DtoTypeRows().Count()})")" Icon="@Icons.Material.Filled.Transform">
+                    @RenderTypes(DtoTypeRows(), "No DTOs detected for this selection.")
+                </MudTabPanel>
+                <MudTabPanel Text="@($"SQL / Migrations ({ScriptRows().Count()})")" Icon="@Icons.Material.Filled.Description">
+                    <div class="pa-3">
+                        @foreach (var p in _report.Projects.Where(p => (_dataProject == AllProjects || p.Name == _dataProject) && (p.Data.SqlScripts.Any() || p.Data.Migrations > 0)))
+                        {
+                            <MudText Typo="Typo.body2" Class="mb-1"><b>@p.Name</b> — @p.Data.Migrations migration(s)@(p.Data.SqlScripts.Any() ? $", scripts: {string.Join(", ", p.Data.SqlScripts)}" : "")</MudText>
+                        }
+                        @if (!ScriptRows().Any()) { <MudText Typo="Typo.body2" Class="mud-text-secondary">No SQL scripts or migrations for this selection.</MudText> }
+                    </div>
+                </MudTabPanel>
+            </MudTabs>
+        </MudPaper>
+
+        <!-- CONNECTIONS -->
+        <MudText Typo="Typo.subtitle2" Class="mb-2 mud-text-secondary" Style="text-transform:uppercase; letter-spacing:.06em;">
+            Cross-project connections (@_report.Connections.Count)
+        </MudText>
+        <MudPaper Elevation="0" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px; overflow:hidden;">
+            <MudTable Items="_report.Connections" Dense="true" Hover="true" Breakpoint="Breakpoint.Sm" Elevation="0"
+                      Filter="new Func<CrossEdge,bool>(FilterEdge)">
+                <ToolBarContent>
+                    <MudTextField @bind-Value="_filter" Placeholder="Filter by path…" Adornment="Adornment.Start"
+                                  AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Small" Class="mt-0" Margin="Margin.Dense" Style="max-width:260px;" />
+                    <MudSelect T="string" @bind-Value="_connProject" Label="Project" Dense="true" Margin="Margin.Dense" Class="ml-3" Style="max-width:220px;">
+                        <MudSelectItem T="string" Value="@AllProjects">All projects</MudSelectItem>
+                        @foreach (var p in _report.Projects)
+                        {
+                            <MudSelectItem T="string" Value="@p.Name">@p.Name</MudSelectItem>
+                        }
+                    </MudSelect>
+                    <MudSpacer />
+                    <MudChip T="string" Size="Size.Small" Color="Color.Success" Variant="Variant.Text">@_report.Matched matched</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Error" Variant="Variant.Text">@_report.Missing missing</MudChip>
+                    <MudChip T="string" Size="Size.Small" Color="Color.Default" Variant="Variant.Text">@_report.OrphanRoutes orphan</MudChip>
+                </ToolBarContent>
+                <HeaderContent>
+                    <MudTh>From</MudTh><MudTh>Method</MudTh><MudTh>Call path</MudTh><MudTh>To</MudTh><MudTh>State</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd DataLabel="From">@context.FromProject</MudTd>
+                    <MudTd DataLabel="Method"><code>@context.Method</code></MudTd>
+                    <MudTd DataLabel="Call path"><code>@context.CallPath</code></MudTd>
+                    <MudTd DataLabel="To">@(context.ToProject ?? "—")</MudTd>
+                    <MudTd DataLabel="State">
+                        <MudChip T="string" Size="Size.Small" Color="@StateColor(context.State)" Variant="Variant.Filled">@context.State</MudChip>
+                    </MudTd>
+                </RowTemplate>
+                <PagerContent><MudTablePager PageSizeOptions="new[]{10,25,50}" /></PagerContent>
+            </MudTable>
+        </MudPaper>
+
+        <MudText Typo="Typo.caption" Class="mud-text-secondary d-block mt-3">
+            Scanned @_report.Root in @_report.ElapsedMs ms · @_report.TotalRoutes routes, @_report.TotalCalls calls.
+        </MudText>
+    }
+    else
+    {
+        <MudPaper Elevation="0" Class="pa-12 d-flex flex-column align-center" Style="border:1px solid var(--mud-palette-lines-default); border-radius:12px; min-height:280px; justify-content:center;">
+            <MudIcon Icon="@Icons.Material.Filled.CreateNewFolder" Style="font-size:56px;" Class="mb-3 mud-text-secondary" />
+            <MudText Typo="Typo.h6" Class="mud-text-secondary">Pick a root folder to scan</MudText>
+            <MudText Typo="Typo.body2" Class="mud-text-secondary">Syncro finds every project inside and maps how they connect.</MudText>
+        </MudPaper>
+    }
+</MudContainer>
+
+@code {
+    private const string AllProjects = "";
+    private string _root = "";
+    private bool _scanning;
+    private string _filter = "";
+    private string _apiProject = AllProjects;   // API-surface tables filter
+    private string _connProject = AllProjects;  // connections table filter
+    private string _dataProject = AllProjects;  // data-layer filter
+    private MultiProjectScanReport? _report;
+
+    private record DbRow(string Project, string Store, string Name, string Entity);
+
+    private IEnumerable<ProjectScan> DataProjects() =>
+        _report == null ? Enumerable.Empty<ProjectScan>()
+            : _report.Projects.Where(p => _dataProject == AllProjects || p.Name == _dataProject);
+
+    private IEnumerable<DbRow> DbRows() =>
+        DataProjects().SelectMany(p =>
+            p.Data.Tables.Select(t => new DbRow(p.Name, "SQL", t.Name, t.Entity))
+            .Concat(p.Data.Collections.Select(c => new DbRow(p.Name,
+                (c.Document is "key-value" or "database") ? "local" : "MongoDB", c.Name, c.Document))));
+
+    private IEnumerable<string> ModelRows() => DataProjects().SelectMany(p => p.Data.Models);
+    private IEnumerable<string> DtoRows() => DataProjects().SelectMany(p => p.Data.Dtos);
+
+    // Explorable types (with fields). Fall back to name-only chips for types without extracted fields.
+    private List<TypeDef> ModelTypeRows() => TypeRows(p => p.Data.ModelTypes, p => p.Data.Models);
+    private List<TypeDef> DtoTypeRows() => TypeRows(p => p.Data.DtoTypes, p => p.Data.Dtos);
+
+    private List<TypeDef> TypeRows(Func<ProjectScan, List<TypeDef>> defs, Func<ProjectScan, List<string>> names)
+    {
+        var result = new List<TypeDef>();
+        var withFields = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var p in DataProjects())
+            foreach (var t in defs(p)) { result.Add(t); withFields.Add(t.Name); }
+        // names detected without a field-bearing def (e.g. Flutter names) → show as empty types
+        foreach (var p in DataProjects())
+            foreach (var n in names(p))
+                if (!withFields.Contains(n)) { result.Add(new TypeDef { Name = n }); withFields.Add(n); }
+        return result.OrderBy(t => t.Name).ToList();
+    }
+
+    private RenderFragment RenderTypes(List<TypeDef> types, string empty) =>@<text>
+        @if (types.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Class="mud-text-secondary pa-3">@empty</MudText>
+        }
+        else
+        {
+            <MudTextField @bind-Value="_typeFilter" Placeholder="Filter types…" Adornment="Adornment.Start"
+                          AdornmentIcon="@Icons.Material.Filled.Search" IconSize="Size.Small" Margin="Margin.Dense" Class="ma-2" Style="max-width:280px;" />
+            <MudExpansionPanels MultiExpansion="true" Elevation="0" Dense="true">
+                @foreach (var t in types.Where(t => string.IsNullOrWhiteSpace(_typeFilter) || t.Name.Contains(_typeFilter, StringComparison.OrdinalIgnoreCase)))
+                {
+                    <MudExpansionPanel>
+                        <TitleContent>
+                            <div class="d-flex align-center gap-2">
+                                <MudIcon Icon="@Icons.Material.Filled.DataObject" Size="Size.Small" Color="Color.Primary" />
+                                <b>@t.Name</b>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Text" Color="Color.Default">@t.Fields.Count field(s)</MudChip>
+                                @if (!string.IsNullOrEmpty(t.File))
+                                {
+                                    <MudText Typo="Typo.caption" Class="mud-text-secondary"><code>@t.File:@t.Line</code></MudText>
+                                }
+                            </div>
+                        </TitleContent>
+                        <ChildContent>
+                            @if (t.Fields.Count > 0)
+                            {
+                                <MudSimpleTable Dense="true" Hover="true" Elevation="0" Style="background:transparent;">
+                                    <tbody>
+                                        @foreach (var f in t.Fields)
+                                        {
+                                            <tr>
+                                                <td style="width:45%;"><code>@f.Name</code></td>
+                                                <td class="mud-text-secondary"><code>@f.Type</code></td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </MudSimpleTable>
+                            }
+                            else
+                            {
+                                <MudText Typo="Typo.body2" Class="mud-text-secondary">No fields extracted (name only — e.g. a Flutter/JS type).</MudText>
+                            }
+                        </ChildContent>
+                    </MudExpansionPanel>
+                }
+            </MudExpansionPanels>
+        }
+    </text>;
+
+    private string _typeFilter = "";
+    private IEnumerable<string> ScriptRows() =>
+        DataProjects().SelectMany(p => p.Data.SqlScripts).Concat(
+            DataProjects().Where(p => p.Data.Migrations > 0).Select(p => $"{p.Name}:migrations"));
+
+    // ── selection (cards + graph nodes drive all three filters at once) ──
+    private void SelectProject(string name)
+    {
+        if (string.IsNullOrEmpty(name)) return;
+        _apiProject = _dataProject = _connProject = name;
+        StateHasChanged();
+    }
+    private void ClearSelection()
+    {
+        _apiProject = _dataProject = _connProject = AllProjects;
+        StateHasChanged();
+    }
+    private bool IsSelected(string name) => name != AllProjects && _connProject == name;
+    private string CardBorder(string name) => IsSelected(name) ? "var(--mud-palette-primary)" : "var(--mud-palette-lines-default)";
+
+    // ── connection-map graph layout ──
+    private const string UnmatchedKey = "∅";
+    private const double NodeWL = 158, NodeWR = 168, NodeH = 42, TopPad = 66, RowStep = 74, LeftX = 24, RightX = 686;
+
+    private record GNode(string Key, string Label, double X, double Y, double W, double H, string Color);
+    private record GEdge(string Path, string Color, bool Dashed);
+    private sealed class GraphLayout { public List<GNode> Nodes = new(); public List<GEdge> Edges = new(); public double Height = 240; }
+
+    private GraphLayout BuildGraph()
+    {
+        var g = new GraphLayout();
+        if (_report == null) return g;
+
+        var fronts = _report.Projects.Where(p => p.Role == "frontend").ToList();
+        var backs = _report.Projects.Where(p => p.Role == "backend").ToList();
+        bool hasMissing = _report.Connections.Any(c => c.ToProject == null);
+
+        var rightNames = backs.Select(b => b.Name).ToList();
+        if (hasMissing) rightNames.Add(UnmatchedKey);
+
+        int rows = Math.Max(Math.Max(fronts.Count, rightNames.Count), 1);
+        g.Height = TopPad + rows * RowStep + 8;
+
+        var yL = new Dictionary<string, double>();
+        var yR = new Dictionary<string, double>();
+
+        for (int i = 0; i < fronts.Count; i++)
+        {
+            var f = fronts[i];
+            double y = TopPad + i * RowStep;
+            yL[f.Name] = y;
+            g.Nodes.Add(new GNode(f.Name, f.Name, LeftX, y, NodeWL, NodeH, DomainDetector.GetColor(f.Domain)));
+        }
+        for (int j = 0; j < rightNames.Count; j++)
+        {
+            var name = rightNames[j];
+            double y = TopPad + j * RowStep;
+            yR[name] = y;
+            bool um = name == UnmatchedKey;
+            var color = um ? "#64748b" : DomainDetector.GetColor(backs.First(b => b.Name == name).Domain);
+            g.Nodes.Add(new GNode(um ? "" : name, um ? "unmatched" : name, RightX, y, NodeWR, NodeH, color));
+        }
+
+        foreach (var grp in _report.Connections.Where(c => c.ToProject != null)
+                     .GroupBy(c => new { c.FromProject, c.ToProject }))
+        {
+            if (!yL.TryGetValue(grp.Key.FromProject, out var sy) || !yR.TryGetValue(grp.Key.ToProject!, out var ty)) continue;
+            var color = grp.Any(c => c.State == "Matched") ? "var(--mud-palette-success)" : "var(--mud-palette-warning)";
+            g.Edges.Add(new GEdge(Bez(LeftX + NodeWL, sy + NodeH / 2, RightX, ty + NodeH / 2), color, false));
+        }
+        if (hasMissing)
+        {
+            foreach (var grp in _report.Connections.Where(c => c.ToProject == null).GroupBy(c => c.FromProject))
+            {
+                if (!yL.TryGetValue(grp.Key, out var sy) || !yR.TryGetValue(UnmatchedKey, out var ty)) continue;
+                g.Edges.Add(new GEdge(Bez(LeftX + NodeWL, sy + NodeH / 2, RightX, ty + NodeH / 2), "var(--mud-palette-error)", true));
+            }
+        }
+        return g;
+    }
+
+    private static string Bez(double x1, double y1, double x2, double y2) =>
+        $"M {F(x1)} {F(y1)} C {F(x1 + 90)} {F(y1)}, {F(x2 - 90)} {F(y2)}, {F(x2)} {F(y2)}";
+    private static string F(double d) => d.ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+
+    private record ApiRow(string Project, string Method, string Path, string Meta);
+
+    private IEnumerable<ApiRow> RouteRows()
+    {
+        if (_report == null) return Enumerable.Empty<ApiRow>();
+        return _report.Projects
+            .Where(p => p.Backend is { Routes.Count: > 0 } && (_apiProject == AllProjects || p.Name == _apiProject))
+            .SelectMany(p => p.Backend!.Routes.Select(r =>
+                new ApiRow(p.Name, r.Method.ToString().ToUpperInvariant(), r.PathTemplate, p.RouteSource)));
+    }
+
+    private IEnumerable<ApiRow> CallRows()
+    {
+        if (_report == null) return Enumerable.Empty<ApiRow>();
+        return _report.Projects
+            .Where(p => p.Frontend is { Calls.Count: > 0 } && (_apiProject == AllProjects || p.Name == _apiProject))
+            .SelectMany(p => p.Frontend!.Calls.Select(c =>
+                new ApiRow(p.Name, c.Method.ToString().ToUpperInvariant(), c.PathTemplate, c.Client)));
+    }
+
+    private async Task ScanAsync()
+    {
+        _scanning = true;
+        _report = null;
+        StateHasChanged();
+        try
+        {
+            _report = await Scanner.ScanAsync(_root);
+            if (_report.ProjectCount == 0)
+                Snackbar.Add("No projects found under that folder.", Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Scan failed: {ex.Message}", Severity.Error);
+        }
+        finally
+        {
+            _scanning = false;
+            StateHasChanged();
+        }
+    }
+
+    private bool FilterEdge(CrossEdge e)
+    {
+        // Project selector: match either side of the connection.
+        if (_connProject != AllProjects && e.FromProject != _connProject && e.ToProject != _connProject)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(_filter)) return true;
+        var f = _filter.Trim();
+        return e.CallPath.Contains(f, StringComparison.OrdinalIgnoreCase)
+               || e.FromProject.Contains(f, StringComparison.OrdinalIgnoreCase)
+               || (e.ToProject?.Contains(f, StringComparison.OrdinalIgnoreCase) ?? false);
+    }
+
+    private Color StateColor(string state) => state switch
+    {
+        "Matched" => Color.Success,
+        "Missing" => Color.Error,
+        "MethodMismatch" => Color.Warning,
+        "ShapeMismatch" => Color.Warning,
+        _ => Color.Default
+    };
+
+    private record Stat(string Label, string Value, string Color);
+
+    private IEnumerable<Stat> Summary()
+    {
+        if (_report == null) yield break;
+        var c = "var(--mud-palette-text-primary)";
+        yield return new Stat("Projects", _report.ProjectCount.ToString(), c);
+        yield return new Stat("Routes", _report.TotalRoutes.ToString(), c);
+        yield return new Stat("Calls", _report.TotalCalls.ToString(), c);
+        yield return new Stat("Matched", _report.Matched.ToString(), "var(--mud-palette-success)");
+        yield return new Stat("Missing", _report.Missing.ToString(), "var(--mud-palette-error)");
+        yield return new Stat("Orphans", _report.OrphanRoutes.ToString(), "var(--mud-palette-text-secondary)");
+    }
+
+    private async Task PickRoot()
+    {
+        try
+        {
+            var result = await Microsoft.Maui.ApplicationModel.MainThread.InvokeOnMainThreadAsync(
+                () => CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync());
+            if (result.IsSuccessful && result.Folder != null && !string.IsNullOrEmpty(result.Folder.Path))
+            {
+                _root = result.Folder.Path;
+                StateHasChanged();
+            }
+        }
+        catch { }
+    }
+}

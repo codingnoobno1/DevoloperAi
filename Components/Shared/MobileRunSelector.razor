@@ -2,6 +2,8 @@
 @using Syncro.Desktop.Services
 @using DeveloperAI.BusinessLogic
 @inject FlutterService FlutterSvc
+@inject MauiService MauiSvc
+@inject ProjectService ProjectSvc
 @inject EnvironmentManager EnvManager
 
 <MudDialog>
@@ -59,14 +61,14 @@
                 </MudPaper>
             </MudItem>
 
-            <!-- Web Mode -->
+            <!-- Web/Windows Mode -->
             <MudItem xs="12">
-                <MudPaper Elevation="0" Class="@GetCardClass("web")" @onclick='() => SelectMode("web")'>
+                <MudPaper Elevation="0" Class="@GetCardClass(_isMaui ? "windows" : "web")" @onclick='() => SelectMode(_isMaui ? "windows" : "web")'>
                     <div class="d-flex align-center gap-4">
-                        <MudIcon Icon="@Icons.Material.Filled.Language" Size="Size.Large" Color="@(SelectedMode == "web" ? Color.Primary : Color.Default)" />
+                        <MudIcon Icon="@(_isMaui ? Icons.Material.Filled.DesktopWindows : Icons.Material.Filled.Language)" Size="Size.Large" Color="@(SelectedMode == "web" || SelectedMode == "windows" ? Color.Primary : Color.Default)" />
                         <div class="flex-grow-1">
-                            <MudText Typo="Typo.subtitle1" Class="font-weight-bold">Syncro Quick (Web View)</MudText>
-                            <MudText Typo="Typo.caption" Class="text-muted">Lightweight preview. No device required. Builds to local web server.</MudText>
+                            <MudText Typo="Typo.subtitle1" Class="font-weight-bold">@(_isMaui ? "Native Windows App" : "Syncro Quick (Web View)")</MudText>
+                            <MudText Typo="Typo.caption" Class="text-muted">@(_isMaui ? "Runs as a native desktop application." : "Lightweight preview. No device required. Builds to local web server.")</MudText>
                         </div>
                         <MudChip T="string" Color="Color.Success" Size="Size.Small" Variant="Variant.Text">RECOMMENDED</MudChip>
                     </div>
@@ -85,18 +87,18 @@
 <style>
     .mode-card {
         padding: 20px;
-        border: 1px solid var(--border-subtle);
+        border: 1px solid var(--mud-palette-lines-default);
         border-radius: 12px;
         cursor: pointer;
         transition: all 0.2s ease;
     }
     .mode-card:hover {
-        border-color: var(--accent-primary);
-        background: #f8fafc;
+        border-color: var(--mud-palette-primary);
+        background: var(--mud-palette-action-default-hover);
     }
     .mode-card.selected {
-        border-color: var(--accent-primary);
-        background: rgba(99, 102, 241, 0.05);
+        border-color: var(--mud-palette-primary);
+        background: var(--mud-palette-primary-hover);
         border-width: 2px;
     }
 </style>
@@ -110,11 +112,16 @@
     private string SelectedMode = "web";
     private SystemResources Resources = new();
     private bool _canRunEmulator = false;
+    private bool _isMaui = false;
 
     protected override async Task OnInitializedAsync()
     {
         Resources = await EnvManager.GetSystemResources();
         _canRunEmulator = Resources.TotalRamGB >= 6 && Resources.CpuCores >= 4 && Resources.AvailableDiskGB >= 50;
+        
+        var projectType = ProjectSvc.DetectProjectType(ProjectPath);
+        _isMaui = projectType == ".NET MAUI" || projectType == "Blazor Hybrid";
+        if (_isMaui) SelectedMode = "windows";
     }
 
     private string GetCardClass(string mode) => $"mode-card {(SelectedMode == mode ? "selected" : "")}";
@@ -125,7 +132,15 @@
 
     private async Task Run()
     {
-        var url = await FlutterSvc.RunProject(ProjectPath, SelectedMode);
+        string? url = null;
+        if (_isMaui)
+        {
+            await MauiSvc.RunProject(ProjectPath, SelectedMode);
+        }
+        else
+        {
+            url = await FlutterSvc.RunProject(ProjectPath, SelectedMode);
+        }
         
         if (SelectedMode == "web" && !string.IsNullOrEmpty(url))
         {
@@ -133,7 +148,20 @@
             var parameters = new DialogParameters 
             { 
                 ["PreviewUrl"] = url,
-                ["ProjectPath"] = ProjectPath
+                ["ProjectPath"] = ProjectPath,
+                ["IsMaui"] = _isMaui
+            };
+            var options = new DialogOptions { FullScreen = true, CloseButton = true };
+            await DialogService.ShowAsync<MobilePreview>("Mobile Preview", parameters, options);
+        }
+        else if (_isMaui)
+        {
+            MudDialog.Close(DialogResult.Ok(true));
+            var parameters = new DialogParameters 
+            { 
+                ["PreviewUrl"] = "",
+                ["ProjectPath"] = ProjectPath,
+                ["IsMaui"] = _isMaui
             };
             var options = new DialogOptions { FullScreen = true, CloseButton = true };
             await DialogService.ShowAsync<MobilePreview>("Mobile Preview", parameters, options);

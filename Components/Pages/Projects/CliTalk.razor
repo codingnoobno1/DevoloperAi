@@ -11,6 +11,7 @@
 @using Syncro.Desktop.Services.AST.Models
 @inject SyncroCLIService Cli
 @inject TaskStore Tasks
+@inject Syncro.Desktop.Services.AgentCli.Llm.ILlmGateway LlmGateway
 @implements IDisposable
 
 <div class="vcli-root">
@@ -25,7 +26,7 @@
         <div class="vcli-ribbon-status">
             <div class="vcli-status-pill @(_llmOnline ? "st-online" : "st-offline")">
                 <span class="vcli-dot"></span>
-                LLM :3020 @(_llmOnline ? "ON" : "OFF")
+                LLM @(_llmOnline ? "ONLINE (Groq)" : "OFF")
             </div>
             <div class="vcli-status-pill @(_monitorOnline ? "st-online" : "st-offline")">
                 <span class="vcli-dot"></span>
@@ -431,7 +432,7 @@
     // ── Service probing ──
     private async Task ProbeServices()
     {
-        _llmOnline = await Probe("http://localhost:3020/");
+        _llmOnline = LlmGateway.IsAvailable || await Probe("http://localhost:3020/");
         _monitorOnline = await Probe("http://localhost:3030/");
         _lastProbe = DateTime.UtcNow;
         await InvokeAsync(StateHasChanged);

@@ -2,6 +2,11 @@
 @using Syncro.Desktop.Components.Shared
 @using Syncro.Desktop.Services
 @inject NetlifyService NetlifySvc
+@inject Syncro.Desktop.Services.Auth.AuthService AuthSvc
+@inject Syncro.Desktop.Services.Ide.IdeWindowService IdeWin
+@inject NavigationManager Nav
+@inject Syncro.Desktop.Services.Agent.Policy.AgentSettingsLink AgentSettingsLink
+@implements IDisposable
 
 <MudThemeProvider Theme="_theme" IsDarkMode="false" />
 <MudPopoverProvider />
@@ -28,24 +33,22 @@
 
                 <div class="header-right">
                     <div class="status-pills">
-                        <div class="status-pill success frosted-glass">
-                            <span class="dot pulse"></span>
-                            <span>CLI Ready</span>
+                        <div class="status-pill @(_cliReady ? "success" : "warning") frosted-glass">
+                            <span class="dot @(_cliReady ? "pulse" : "")"></span>
+                            <span>@(_cliReady ? "CLI Ready" : "CLI Missing")</span>
                         </div>
-                        <div class="status-pill success frosted-glass">
-                            <span class="dot pulse"></span>
-                            <span>API Online</span>
+                        <div class="status-pill @(_apiOnline ? "success" : "warning") frosted-glass">
+                            <span class="dot @(_apiOnline ? "pulse" : "")"></span>
+                            <span>@(_apiOnline ? "API Online" : "Local Mode")</span>
                         </div>
-                        <div class="status-pill primary frosted-glass">
-                            <i class="bi bi-lightning-charge-fill me-1"></i>
-                            <span>Local Engine</span>
-                        </div>
+                        @* Real agent guard state + approval inbox (was a hard-coded "SRE Guard Active" pill). *@
+                        <ApprovalInbox />
                     </div>
                     
                     <div class="divider"></div>
                     
-                    <button class="icon-btn frosted-glass" title="Notifications">
-                        <i class="bi bi-bell"></i>
+                    <button class="icon-btn frosted-glass" @onclick="() => IdeWin.Open()" title="Open Dual-Mode IDE (Editor + Agent Mission Control)">
+                        <i class="bi bi-code-square"></i>
                     </button>
                     
                     <button class="icon-btn frosted-glass" @onclick="OpenTerminal" title="Syncro Terminal">
@@ -54,13 +57,13 @@
 
                     <div class="divider"></div>
                     
-                    <div class="user-profile frosted-glass">
+                    <div class="user-profile frosted-glass" @onclick='() => Nav.NavigateTo("profile")' title="View Profile">
                         <div class="avatar">
-                            <img src="images/syncro.jpg" alt="User" />
+                            <MudIcon Icon="@Icons.Material.Filled.Person" Color="Color.Primary" />
                         </div>
                         <div class="user-info">
-                            <span class="user-name">Tushar</span>
-                            <span class="user-role">Admin</span>
+                            <span class="user-name">@(!string.IsNullOrWhiteSpace(AuthSvc.CurrentUserName) ? AuthSvc.CurrentUserName : _userName)</span>
+                            <span class="user-role">@(!string.IsNullOrWhiteSpace(AuthSvc.Token) ? "S.A.N.K.A.L.P. Cloud" : _userRole)</span>
                         </div>
                     </div>
                 </div>
@@ -80,38 +83,69 @@
     private MudTheme _theme = new();
     private NetlifySite? _netlifySite;
     private bool _drawerOpen = true;
+    
+    // Dynamic states
+    private string _userName = "Developer";
+    private string _userRole = "Local Engine";
+    private bool _cliReady = false;
+    private bool _apiOnline = false;
 
     private void DrawerToggle()
     {
         _drawerOpen = !_drawerOpen;
     }
 
+    private void OnOpenAgentSettings(string tab) =>
+        InvokeAsync(() => Nav.NavigateTo(string.IsNullOrEmpty(tab) ? "settings/agent" : $"settings/agent/{tab}"));
+
+    public void Dispose() => AgentSettingsLink.OpenRequested -= OnOpenAgentSettings;
+
     protected override async Task OnInitializedAsync()
     {
+        AgentSettingsLink.OpenRequested += OnOpenAgentSettings;
         _theme = new MudTheme()
         {
             PaletteLight = new PaletteLight()
             {
-                Primary = "#0EA5E9",
-                Secondary = "#8B5CF6", // AI Purple
-                Background = "#F7F9FC",
+                Primary = "#0066FF",
+                Secondary = "#7C3AED", // AI Purple
+                Info = "#0284C7",
+                Background = "#F1F5F9",
                 Surface = "#FFFFFF",
-                AppbarBackground = "rgba(255, 255, 255, 0.8)",
-                DrawerBackground = "rgba(255, 255, 255, 0.8)",
-                TextPrimary = "#0F172A",
-                TextSecondary = "#475569",
-                LinesDefault = "#E2E8F0",
-                TableLines = "#E2E8F0",
-                Divider = "#E2E8F0",
-                ActionDefault = "#64748B",
-                Success = "#10B981",
-                Warning = "#F59E0B",
-                Error = "#EF4444"
+                AppbarBackground = "rgba(255, 255, 255, 0.85)",
+                DrawerBackground = "rgba(255, 255, 255, 0.85)",
+                TextPrimary = "#020617",
+                TextSecondary = "#334155",
+                LinesDefault = "#CBD5E1",
+                TableLines = "#CBD5E1",
+                Divider = "#CBD5E1",
+                ActionDefault = "#475569",
+                Success = "#059669",
+                Warning = "#D97706",
+                Error = "#DC2626"
             }
         };
 
-        // Fetch Netlify Status
+        // Fetch Netlify Status or probe the live platform URL directly
         _netlifySite = await NetlifySvc.GetSiteStatus("project-syncroo");
+        _apiOnline = _netlifySite != null && _netlifySite.State == "ready";
+        if (!_apiOnline)
+        {
+            try
+            {
+                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                using var resp = await http.GetAsync("https://project-syncroo.netlify.app");
+                _apiOnline = (int)resp.StatusCode < 500;
+            }
+            catch
+            {
+                _apiOnline = false;
+            }
+        }
+        
+        // Check CLI Status
+        string? processPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "syncro-cli.exe");
+        _cliReady = System.IO.File.Exists(processPath);
     }
 
     private void OpenTerminal()
@@ -184,16 +218,16 @@
 <style>
     :root {
         --header-height: 72px;
-        --border-subtle: rgba(226, 232, 240, 0.8);
-        --bg-panel: rgba(255, 255, 255, 0.75);
-        --bg-main: #F7F9FC;
-        --text-primary: #0F172A;
-        --text-secondary: #475569;
-        --text-muted: #94A3B8;
-        --accent-primary: #0EA5E9;
-        --accent-purple: #8B5CF6;
-        --status-success: #10B981;
-        --status-warning: #F59E0B;
+        --border-subtle: rgba(203, 213, 225, 0.8);
+        --bg-panel: rgba(255, 255, 255, 0.85);
+        --bg-main: var(--mud-palette-background);
+        --text-primary: var(--mud-palette-text-primary);
+        --text-secondary: var(--mud-palette-text-secondary);
+        --text-muted: var(--mud-palette-action-default);
+        --accent-primary: var(--mud-palette-primary);
+        --accent-purple: var(--mud-palette-secondary);
+        --status-success: var(--mud-palette-success);
+        --status-warning: var(--mud-palette-warning);
     }
 
     .page {
@@ -201,6 +235,7 @@
         height: 100vh;
         background-color: var(--bg-main);
         font-family: 'Inter', sans-serif;
+        color: var(--text-primary);
     }
 
     main {

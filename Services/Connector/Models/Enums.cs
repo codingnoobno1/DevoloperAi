@@ -30,11 +30,17 @@ namespace Syncro.Desktop.Services.Connector.Models
     {
         Unknown,
         Express,
+        NextJsApi,
+        NestJs,
         FastApi,
         Flask,
         Django,
         SpringBoot,
-        AspNetCore
+        KotlinKtor,
+        AspNetCore,
+        CppCrow,
+        RustAxum,
+        GoHttp
     }
 
     /// <summary>Helpers for translating loose verb strings into <see cref="HttpVerb"/>.</summary>

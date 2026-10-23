@@ -7,3 +7,4 @@ environment:
 dependencies:
   crypto: ^3.0.3
   path: ^1.8.3
+  analyzer: '>=7.0.0 <8.0.0'

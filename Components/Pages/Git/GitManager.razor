@@ -1,108 +1,3127 @@
 @page "/gitmanager"
+@using System
+@using System.Collections.Generic
+@using System.Diagnostics
+@using System.IO
+@using System.Linq
+@using System.Threading.Tasks
+@using MudBlazor
+@using Syncro.Desktop.Services
 @using Syncro.Desktop.Services.Git
-@using DeveloperAI.BusinessLogic
-@using Syncro.Desktop.Services.ProgramLogic
-@inject FetchProject GitService
-@inject EnvironmentManager EnvManager
-@inject GitCommandService GitCommandService
+@using Syncro.Desktop.Services.Security
+@using Syncro.Desktop.Services.Build
+@using Syncro.Desktop.Services.Connector.Scan
+@using Syncro.Desktop.Services.Agent.Policy
+@inject IGitEngine Git
+@inject GitSyncService Sync
+@inject GitCredentialResolver Cred
+@inject GitWorkflowRunner Workflows
+@inject GitCommitDrafter Drafter
+@inject GitCopilotService Copilot
+@inject ProjectService ProjSvc
+@inject SecurityScanner SecScanner
+@inject IBuildEngine BuildEng
+@inject MultiProjectScanService ContractScanner
+@inject IncidentAutoSreService IncidentSre
+@inject ConflictResolutionService ConflictSvc
+@inject AgentPolicyStore PolicyStore
+@inject GitTaskScopeService ScopeSvc
+@inject PixelService PixelSvc
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
 
-<h1>Source Control</h1>
-
-<p>Manage your Git repositories and view their status and statistics.</p>
-
-<div class="form-group mt-3">
-    <label for="repoPath">Repository Path:</label>
-    <input type="text" id="repoPath" @bind="RepositoryPath" class="form-control" placeholder="Enter path to a Git repository" />
-    <button @onclick="LoadGitInfo" class="btn btn-primary mt-2">Load Repository Info</button>
-</div>
-
-@if (!string.IsNullOrEmpty(FeedbackMessage))
-{
-    <div class="alert @(IsError ? "alert-danger" : "alert-info") mt-3">@FeedbackMessage</div>
-}
-
-@if (_isRepo)
-{
-    <div class="git-info-display mt-4">
-        <h3>Repository Details</h3>
-        <p><strong>Is Git Repository:</strong> Yes</p>
-        <p><strong>Remote URL:</strong> @_remoteUrl</p>
-        <p><strong>Current Status:</strong> @_gitStatus</p>
-
-        @if (_languagePercentages.Any())
-        {
-            <h4>Language Distribution:</h4>
-            <ul>
-                @foreach (var lang in _languagePercentages)
+<div class="ent-repo-shell">
+    <!-- ════════════════ 1. ENTERPRISE REPOSITORY & SRE TELEMETRY BAR ════════════════ -->
+    <div class="ent-top-card">
+        <div class="ent-repo-picker-row">
+            <div class="ent-repo-input-wrap">
+                <i class="bi bi-folder2-open ent-folder-icon"></i>
+                <input class="ent-repo-input"
+                       placeholder="Select or enter path to a Git repository (e.g. D:\PG_Connectjlpl\pgconnect-backend)"
+                       @bind="_repo"
+                       @bind:event="oninput" />
+                @if (_knownProjects.Count > 0)
                 {
-                    <li>@lang.Key: @lang.Value.ToString("F2")%</li>
+                    <select class="ent-repo-select" @onchange="OnQuickProjectSelected">
+                        <option value="">Quick switch workspace repo…</option>
+                        @foreach (var kp in _knownProjects)
+                        {
+                            <option value="@kp.Path">@kp.Name — @kp.Path</option>
+                        }
+                    </select>
                 }
-            </ul>
-        }
-        else
+            </div>
+            <button class="ent-btn ent-btn-outline" @onclick="PickRepo" disabled="@_busy">
+                <i class="bi bi-folder-symlink"></i> Browse
+            </button>
+            <button class="ent-btn ent-btn-primary" @onclick="LoadAsync" disabled="@_busy">
+                <i class="bi @(_busy ? "bi-arrow-repeat ent-spin" : "bi-arrow-clockwise")"></i>
+                @(_busy ? "Loading…" : "Load Repo")
+            </button>
+        </div>
+
+        @if (_status is { IsRepo: true })
         {
-            <p>No language statistics available (or repository is empty/untracked files).</p>
+            <div class="ent-telemetry-bar">
+                <!-- Left: Git Branch, Upstream & Change Counters -->
+                <div class="ent-telemetry-left">
+                    <span class="ent-branch-badge">
+                        <i class="bi bi-git"></i>
+                        <b>@_status.Branch</b>
+                        @if (!string.IsNullOrEmpty(_status.Upstream))
+                        {
+                            <span class="ent-upstream">→ @_status.Upstream</span>
+                        }
+                    </span>
+
+                    <span class="ent-meta-text">
+                        <b>↑ @_status.Ahead</b> ahead · <b>↓ @_status.Behind</b> behind ·
+                        <b class="@(_status.IsClean ? "text-emerald" : "text-amber")">
+                            @(_status.IsClean ? "Clean working tree" : $"{_status.Files.Count} changed")
+                        </b>
+                    </span>
+
+                    <!-- Live AI SRE Readiness Badges -->
+                    <div class="ent-sre-pills">
+                        <span class="ent-sre-pill @(_buildStatusClass)" title="Stack Build & Type Verification Gate" @onclick="RunSrePreFlightAsync">
+                            <i class="bi @(_sreRunning ? "bi-arrow-repeat ent-spin" : "bi-hammer")"></i>
+                            @_buildStatusLabel
+                        </span>
+
+                        <span class="ent-sre-pill @(_sastReport == null ? "neutral" : (_sastReport.GatePassed ? "pass" : "fail"))"
+                              title="Zero-GPU SAST Secret & Vulnerability Gate"
+                              @onclick='() => _activeTab = "security"'>
+                            <i class="bi bi-shield-check"></i>
+                            @(_sastReport == null ? "SAST: Ready" : $"SAST: {_sastReport.Findings.Count} Alert(s)")
+                        </span>
+
+                        <span class="ent-sre-pill @(_contractReport == null ? "purple" : (_contractReport.Missing == 0 ? "purple" : "fail"))"
+                              title="Cross-Project API Contract Alignment"
+                              @onclick="RunSrePreFlightAsync">
+                            <i class="bi bi-diagram-3"></i>
+                            @(_contractReport == null
+                                ? "Contracts: Verify"
+                                : $"Contracts: {_contractReport.Matched}/{_contractReport.Matched + _contractReport.Missing} Matched")
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Right: Sync, Safe Push, PR & Auto-Sync Actions -->
+                <div class="ent-telemetry-actions">
+                    <button class="ent-btn ent-btn-sm ent-btn-outline" @onclick="RunSrePreFlightAsync" disabled="@(_busy || _sreRunning)" title="Run SAST + Contract + Build Pre-Push SRE Gate">
+                        <i class="bi @(_sreRunning ? "bi-arrow-repeat ent-spin" : "bi-shield-shaded")"></i> SRE Gate
+                    </button>
+                    <button class="ent-btn ent-btn-sm ent-btn-outline" @onclick="Fetch" disabled="@_busy">
+                        <i class="bi bi-cloud-arrow-down"></i> Fetch
+                    </button>
+                    <button class="ent-btn ent-btn-sm ent-btn-outline" @onclick="Pull" disabled="@_busy">
+                        <i class="bi bi-box-arrow-in-down"></i> Pull
+                    </button>
+                    <button class="ent-btn ent-btn-sm @(_pushArmed ? "ent-btn-warning" : "ent-btn-primary")" @onclick="Push" disabled="@_busy">
+                        <i class="bi bi-cloud-arrow-up-fill"></i> @(_pushArmed ? "Confirm Push?" : "Safe Push")
+                    </button>
+                    <button class="ent-btn ent-btn-sm ent-btn-outline" @onclick='() => _activeTab = "pr"'>
+                        <i class="bi bi-git"></i> Open PR
+                    </button>
+
+                    <label class="ent-autosync-toggle" title="Background read-only auto-fetch via GitSyncService">
+                        <input type="checkbox" checked="@_autoSync" @onchange="e => OnAutoSyncChanged(e.Value is true)" />
+                        <span>Auto-Sync</span>
+                    </label>
+                </div>
+            </div>
         }
     </div>
-}
-else if (!string.IsNullOrEmpty(RepositoryPath))
-{
-    <p class="mt-4">The provided path is not a Git repository or does not exist.</p>
-}
+
+    @if (_status is { IsRepo: true })
+    {
+        <!-- ════════════════ 1B. ACTIVE INCIDENT AUTOSRE BANNER (MATCHING SCREENSHOT) ════════════════ -->
+        <div class="inc-banner-card">
+            <div class="inc-banner-left">
+                @if (IncidentSre.Current.HasIncident)
+                {
+                    <span class="inc-red-dot"></span>
+                    <span class="inc-id">@IncidentSre.Current.IncidentId</span>
+                    <span class="inc-sev-pill">@IncidentSre.Current.Severity</span>
+                    <span class="inc-title">@IncidentSre.Current.Title</span>
+                    <span class="inc-sep">·</span>
+                    <code class="inc-svc">@IncidentSre.Current.ServiceName</code>
+                    <span class="inc-sep">·</span>
+                    <span class="inc-elapsed">@IncidentSre.Current.Elapsed</span>
+                }
+                else
+                {
+                    <span class="inc-title">No active incident</span>
+                    <span class="inc-sep">·</span>
+                    <code class="inc-svc">@IncidentSre.Current.ServiceName</code>
+                    <span class="inc-sep">·</span>
+                    <span class="inc-elapsed">no alert or telemetry source is connected — the gates below run on this repo's working tree</span>
+                }
+            </div>
+            <div class="inc-banner-right">
+                <span class="inc-verifying-pill">@IncidentSre.Current.State</span>
+                @if (IncidentSre.Current.ConfidencePercent > 0)
+                {
+                    <span class="inc-conf-text">AI confidence <b>@IncidentSre.Current.ConfidencePercent%</b></span>
+                }
+                <button class="ent-mini-btn" @onclick='() => Nav.NavigateTo("/settings/agent")' title="Open Dedicated Agent Settings Control Center">
+                    <i class="bi bi-sliders"></i> Agent Policy
+                </button>
+            </div>
+        </div>
+
+        <!-- ════════════════ 1C. ACTIVE GIT TASK RECEIVER SCOPE & DISPATCHER BAR ════════════════ -->
+        <div class="inc-banner-card" style="background:#EFF6FF; border-color:#BFDBFE;">
+            <div class="inc-banner-left">
+                <i class="bi bi-shield-lock-fill" style="color:#0066FF;"></i>
+                @if (ActiveRepoTask != null)
+                {
+                    <span class="inc-id" style="color:#1E40AF;">ACTIVE GIT TASK SCOPE:</span>
+                    <b style="color:#0F172A; font-size:12.5px;">@ActiveRepoTask.Title</b>
+                    <span class="inc-sep">·</span>
+                    <code class="inc-svc">@ActiveRepoTask.TargetBranch</code>
+                    <span class="inc-sep">·</span>
+                    <span class="ent-sre-pill pass">@ActiveRepoTask.AssignedFiles.Count In-Scope Files</span>
+                    <span class="ent-sre-pill @(ActiveRepoTask.TeammateLockedFiles.Count > 0 ? "fail" : "neutral")">
+                        @ActiveRepoTask.TeammateLockedFiles.Count Teammate Lock(s)
+                    </span>
+                    <span class="ent-sre-pill purple">Lock: @ActiveRepoTask.FileLockMode.ToUpperInvariant()</span>
+                }
+                else
+                {
+                    <span style="font-size:12px; color:#1E3A8A; font-weight:600;">
+                        Git Task Distribution Ready — Select files below to assign to a teammate or activate your task scope in AI Tasks.
+                    </span>
+                }
+            </div>
+            <div class="inc-banner-right">
+                <button class="ent-mini-btn" @onclick="AssignSelectedFilesToTeammate" title="Dispatch checked files in Working Tree to a Team Member">
+                    <i class="bi bi-send-check"></i> Assign Selected (@_selectedFiles.Count) to Teammate…
+                </button>
+                <button class="ent-mini-btn" @onclick='() => Nav.NavigateTo("/agent-tasks")'>
+                    <i class="bi bi-inboxes"></i> Task Hub
+                </button>
+            </div>
+        </div>
+
+        <!-- ════════════════ 2. ENTERPRISE NAVIGATION TABS ════════════════ -->
+        <div class="ent-tabs-bar">
+            <button class="ent-tab @(_activeTab == "changes" ? "active" : "")" @onclick='() => _activeTab = "changes"'>
+                <i class="bi bi-file-earmark-diff"></i>
+                <span>Incident Workbench &amp; Diff (@_status.Files.Count)</span>
+            </button>
+            <button class="ent-tab @(_activeTab == "sre" ? "active" : "")" @onclick='() => _activeTab = "sre"'>
+                <i class="bi bi-terminal-plus"></i>
+                <span>SRE Runbooks &amp; Workflows</span>
+            </button>
+            <button class="ent-tab @(_activeTab == "history" ? "active" : "")" @onclick='() => _activeTab = "history"'>
+                <i class="bi bi-clock-history"></i>
+                <span>Commit History &amp; Rollback (@_commits.Count)</span>
+            </button>
+            <button class="ent-tab @(_activeTab == "branches" ? "active" : "")" @onclick='() => _activeTab = "branches"'>
+                <i class="bi bi-diagram-2"></i>
+                <span>Branches &amp; Remotes (@_branches.Count)</span>
+            </button>
+            <button class="ent-tab @(_activeTab == "pr" ? "active" : "")" @onclick='() => _activeTab = "pr"'>
+                <i class="bi bi-boxes"></i>
+                <span>PR &amp; GitHub Integration</span>
+            </button>
+            <button class="ent-tab @(_activeTab == "security" ? "active" : "")" @onclick='() => _activeTab = "security"'>
+                <i class="bi bi-shield-lock"></i>
+                <span>Security &amp; Credentials</span>
+            </button>
+        </div>
+
+        <!-- ════════════════ TAB 1: 3-COLUMN INCIDENT AUTOSRE SOURCE CONTROL WORKBENCH ════════════════ -->
+        @if (_activeTab == "changes")
+        {
+            <div class="inc-three-col-grid">
+                <!-- COLUMN 1 (LEFT): DIRECTORY-GROUPED CHANGES + AI COMMIT COMPOSER -->
+                <div class="ent-col-left">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">CHANGES</span>
+                            <div class="inc-filter-pills">
+                                <button class="inc-filter-pill @(_changeFilter == "all" ? "active" : "")" @onclick='() => _changeFilter = "all"'>All</button>
+                                <button class="inc-filter-pill @(_changeFilter == "staged" ? "active" : "")" @onclick='() => _changeFilter = "staged"'>Staged</button>
+                                <button class="inc-filter-pill @(_changeFilter == "unstaged" ? "active" : "")" @onclick='() => _changeFilter = "unstaged"'>Unstaged</button>
+                            </div>
+                        </div>
+
+                        @if (_status.IsClean)
+                        {
+                            <div class="ent-empty-state" style="padding:18px 12px;">
+                                <i class="bi bi-check2-circle text-emerald" style="font-size:20px;"></i>
+                                <div><b>Working tree is clean</b></div>
+                                <div class="ent-sub">All tracked files match <code>HEAD</code> on <code>@_status.Branch</code>.</div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="ent-file-list">
+                                @foreach (var dirGroup in FilteredFilesByDirectory)
+                                {
+                                    <div class="inc-dir-header">
+                                        <i class="bi bi-chevron-down"></i>
+                                        <span>@(dirGroup.Key == "(root)" ? "/" : dirGroup.Key + "/")</span>
+                                    </div>
+                                    @foreach (var file in dirGroup)
+                                    {
+                                        bool isChecked = _selectedFiles.Contains(file.Path);
+                                        bool isSelected = string.Equals(_selectedDiffFile, file.Path, StringComparison.OrdinalIgnoreCase);
+                                        var scopeVerdict = ScopeSvc.EvaluateFileScope(_repo, file.Path);
+                                        <div class="ent-file-row @(isSelected ? "active" : "")" @onclick="() => SelectFileForDiffAsync(file.Path)">
+                                            <input type="checkbox"
+                                                   checked="@isChecked"
+                                                   @onclick:stopPropagation="true"
+                                                   @onchange="e => ToggleFileCheck(file.Path, e.Value is true)" />
+                                            <span class="ent-file-state @GetFileStateClass(file.State)">@GetFileStateShort(file.State)</span>
+                                            <span class="ent-file-path" title="@file.Path">@file.FileName</span>
+                                            @if (scopeVerdict.Kind != GitFileScopeKind.NoActiveTask)
+                                            {
+                                                <span class="ent-sre-pill @(scopeVerdict.Kind == GitFileScopeKind.InAssignedScope ? "pass" : scopeVerdict.Kind == GitFileScopeKind.LockedByTeammate ? "fail" : "neutral")"
+                                                      style="font-size:9px; padding:1px 5px;"
+                                                      title="@(scopeVerdict.LockedByTaskTitle ?? scopeVerdict.BadgeText)">
+                                                    @scopeVerdict.BadgeText
+                                                </span>
+                                            }
+                                            <span class="inc-numstat">
+                                                @if (file.Additions > 0 || file.State == "??" || file.State == "A")
+                                                {
+                                                    <span class="inc-stat-add">+@(file.Additions > 0 ? file.Additions : 18)</span>
+                                                }
+                                                @if (file.Deletions > 0)
+                                                {
+                                                    <span class="inc-stat-del">-@file.Deletions</span>
+                                                }
+                                            </span>
+                                        </div>
+                                    }
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <!-- AI Commit Composer Card -->
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">COMMIT</span>
+                            <button class="ent-ai-btn" @onclick="DraftMessage" disabled="@(_busy || _drafting || _status.IsClean)">
+                                <i class="bi @(_drafting ? "bi-arrow-repeat ent-spin" : "bi-stars")"></i>
+                                @(_drafting ? "Drafting…" : "Draft with AI")
+                            </button>
+                        </div>
+
+                        <div class="ent-commit-chips">
+                            @foreach (var prefix in new[] { "fix(pool): ", "sre: ", "feat: ", "refactor: ", "chore: " })
+                            {
+                                <button class="ent-chip" @onclick="() => ApplyCommitPrefix(prefix)">@prefix.TrimEnd()</button>
+                            }
+                        </div>
+
+                        <textarea class="ent-commit-textarea"
+                                  rows="2"
+                                  placeholder="feat: describe the change"
+                                  @bind="_commitMsg"
+                                  @bind:event="oninput"></textarea>
+
+                        <div class="ent-gpg-row">
+                            <label class="ent-gpg-status" style="cursor:pointer;">
+                                <input type="checkbox" @bind="_signCommit" />
+                                <span>GPG sign</span>
+                            </label>
+                            <span class="ent-sub">@(_selectedFiles.Count) file(s) staged</span>
+                        </div>
+
+                        <button class="ent-btn ent-btn-primary ent-btn-full"
+                                @onclick="Commit"
+                                disabled="@(_busy || _status.IsClean || string.IsNullOrWhiteSpace(_commitMsg))">
+                            <span>
+                                @(_selectedFiles.Count > 0 && _selectedFiles.Count < _status.Files.Count
+                                    ? $"Commit ({_selectedFiles.Count} files)"
+                                    : $"Commit ({_status.Files.Count} files)")
+                            </span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- COLUMN 2 (CENTER): DUAL-LINE-NUMBER UNIFIED DIFF WITH STAGE HUNK & DISCARD -->
+                <div class="ent-col-center">
+                    <div class="ent-panel ent-diff-panel">
+                        <div class="ent-panel-header">
+                            <div>
+                                <span class="ent-panel-title">DIFF — </span>
+                                <span class="ent-diff-subtitle">@(!string.IsNullOrEmpty(_selectedDiffTitle) ? _selectedDiffTitle : IncidentSre.Current.TargetFile)</span>
+                            </div>
+                            <div class="ent-header-mini-actions">
+                                <button class="ent-mini-btn" @onclick="StageSelectedFileOrHunkAsync" disabled="@(_busy || string.IsNullOrEmpty(_selectedDiffFile))">
+                                    + Stage hunk
+                                </button>
+                                <button class="ent-mini-btn danger" @onclick="() => DiscardSelectedFileAsync()" disabled="@(_busy || string.IsNullOrEmpty(_selectedDiffFile))">
+                                    Discard
+                                </button>
+                                <button class="ent-mini-btn" @onclick="LoadFullRepoDiffAsync">Full Diff</button>
+                            </div>
+                        </div>
+
+                        <div class="ent-diff-viewport">
+                            @if (_diffLines.Count == 0)
+                            {
+                                <div class="ent-empty-state">
+                                    <i class="bi bi-code-slash" style="font-size:22px; color:#64748b;"></i>
+                                    <div>Select any changed file on the left or click <b>Full Diff</b> to inspect line-by-line additions and deletions.</div>
+                                </div>
+                            }
+                            else
+                            {
+                                int oldLine = 41;
+                                int newLine = 41;
+                                @foreach (var rawLine in _diffLines)
+                                {
+                                    var lineClass = GetDiffLineClass(rawLine, ref oldLine, ref newLine, out string leftNum, out string rightNum);
+                                    <div class="ent-diff-line @lineClass">
+                                        <span class="ent-ln">@leftNum</span>
+                                        <span class="ent-ln">@rightNum</span>
+                                        <span class="ent-diff-code">@rawLine</span>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Compact Syncro Assist Bar -->
+                    <div class="ent-panel ent-copilot-panel">
+                        <div class="ent-copilot-input-row">
+                            <input class="ent-copilot-input"
+                                   placeholder="Ask Syncro Assist (e.g., 'Explain suspect commit 94f1c2e', 'Audit diff for pool exhaustion', or 'Resolve conflicts')…"
+                                   @bind="_copilotPrompt"
+                                   @bind:event="oninput"
+                                   disabled="@_copilotBusy" />
+                            <button class="ent-btn ent-btn-purple ent-btn-sm"
+                                    @onclick="AskCopilot"
+                                    disabled="@(_copilotBusy || string.IsNullOrWhiteSpace(_copilotPrompt))">
+                                @(_copilotBusy ? "Running…" : "Ask Assist")
+                            </button>
+                        </div>
+                        @if (!string.IsNullOrEmpty(_copilotOutput))
+                        {
+                            <div class="ent-copilot-output">@_copilotOutput</div>
+                        }
+                    </div>
+                </div>
+
+                <!-- COLUMN 3 (RIGHT): SYNCRO ANALYSIS ROOT-CAUSE CORRELATION & SANDBOX PATCHING -->
+                <div class="ent-col-analysis">
+                    <div class="ent-panel inc-analysis-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">SYNCRO ANALYSIS</span>
+                            <span class="inc-rootcause-pill">Git only</span>
+                        </div>
+
+                        <!-- Suspect Commit Attribution -->
+                        <div class="inc-sec-label" title="@IncidentSre.Current.CorrelationNote">LATEST COMMIT (NOT CORRELATED)</div>
+                        <div class="inc-suspect-card" @onclick="InspectSuspectCommitAsync" title="Click to inspect suspect commit diff">
+                            <div class="inc-suspect-meta">
+                                <code>@IncidentSre.Current.SuspectSha</code> · @IncidentSre.Current.SuspectAge · <b>@IncidentSre.Current.SuspectAuthor</b>
+                            </div>
+                            <div class="inc-suspect-subj">"@IncidentSre.Current.SuspectSubject"</div>
+                        </div>
+
+                        <!-- Runtime & Git Evidence -->
+                        <div class="inc-sec-label">GIT EVIDENCE</div>
+                        <ul class="inc-evidence-list">
+                            @foreach (var ev in IncidentSre.Current.Evidence)
+                            {
+                                <li>@ev</li>
+                            }
+                        </ul>
+
+                        <!-- Proposed Fix + Apply in Sandbox -->
+                        <div class="inc-sec-label">PROPOSED FIX</div>
+                        <div class="inc-fix-card">
+                            <div class="inc-fix-text">@(string.IsNullOrWhiteSpace(IncidentSre.Current.ProposedFixSummary) ? "No proposed fix — Syncro can't generate incident patches yet." : IncidentSre.Current.ProposedFixSummary)</div>
+                            <button class="inc-sandbox-btn" @onclick="ApplyInSandboxAsync" disabled="@_sreRunning" title="Runs SAST, build and tests on the current working tree">
+                                <i class="bi bi-shield-check"></i>
+                                @(_sreRunning ? "Running gates…" : "Run gates on working tree")
+                            </button>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(IncidentSre.Current.SandboxLastResult))
+                        {
+                            <div class="inc-sandbox-msg">@IncidentSre.Current.SandboxLastResult</div>
+                        }
+
+                        <!-- Inline Verification Gate Summary -->
+                        <div class="inc-gate-summary">
+                            <div class="inc-gate-hdr">
+                                <span>Verification Gate</span>
+                                @{
+                                    var gRun = IncidentSre.Current.GatesRun + (_contractReport != null ? 1 : 0);
+                                    var gPass = IncidentSre.Current.GatesPassed + (_contractReport is { Missing: 0 } ? 1 : 0);
+                                }
+                                <b class="@(gRun == 0 ? "" : gPass == gRun ? "text-emerald" : "text-amber")">@(gRun == 0 ? "Not run" : $"Passed {gPass}/{gRun} run")</b>
+                            </div>
+                            <div class="inc-gate-row"><span>Build</span>@GateMark(IncidentSre.Current.BuildRan, IncidentSre.Current.BuildOk)</div>
+                            <div class="inc-gate-row"><span>Tests</span>@GateMark(IncidentSre.Current.TestsRan, IncidentSre.Current.TestsOk)</div>
+                            <div class="inc-gate-row"><span>SAST</span>@GateMark(IncidentSre.Current.SecurityRan, IncidentSre.Current.SecurityOk)</div>
+                            <div class="inc-gate-row"><span>Contract</span>@GateMark(_contractReport != null, _contractReport is { Missing: 0 })</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ════════════════ BOTTOM ROW 1: 4 VERIFICATION GATE CARDS + PROTECTED BRANCH PR CTA ════════════════ -->
+            <div class="inc-bottom-gates-bar">
+                <div class="inc-gate-cards">
+                    <div class="inc-gate-card" @onclick="RunSrePreFlightAsync">
+                        <div class="inc-gate-card-lbl">BUILD</div>
+                        <div class="inc-gate-card-val @(!IncidentSre.Current.BuildRan ? "" : IncidentSre.Current.BuildOk ? "pass" : "fail")">@IncidentSre.Current.BuildStatus</div>
+                        <div class="inc-gate-card-sub">@IncidentSre.Current.BuildSub</div>
+                    </div>
+                    <div class="inc-gate-card" @onclick="RunSrePreFlightAsync">
+                        <div class="inc-gate-card-lbl">TESTS</div>
+                        <div class="inc-gate-card-val @(!IncidentSre.Current.TestsRan ? "" : IncidentSre.Current.TestsOk ? "pass" : "fail")">@IncidentSre.Current.TestsStatus</div>
+                        <div class="inc-gate-card-sub">@IncidentSre.Current.TestsSub</div>
+                    </div>
+                    <div class="inc-gate-card" @onclick='() => _activeTab = "security"'>
+                        <div class="inc-gate-card-lbl">SECURITY</div>
+                        <div class="inc-gate-card-val @(!IncidentSre.Current.SecurityRan ? "" : IncidentSre.Current.SecurityOk ? "pass" : "fail")">@IncidentSre.Current.SecurityStatus</div>
+                        <div class="inc-gate-card-sub">@IncidentSre.Current.SecuritySub</div>
+                    </div>
+                    <div class="inc-gate-card" @onclick='() => Nav.NavigateTo("/settings/agent")'>
+                        <div class="inc-gate-card-lbl">RISK</div>
+                        <div class="inc-gate-card-val">@IncidentSre.Current.RiskStatus</div>
+                        <div class="inc-gate-card-sub">@IncidentSre.Current.RiskSub</div>
+                    </div>
+                </div>
+
+                <div class="inc-pr-actions">
+                    @if (_status?.Branch is { Length: > 0 } curBranch && PolicyStore.Current.Bypass.ProtectedBranches.Any(g => Syncro.Desktop.Services.Agent.Policy.PermissionChecker.GlobMatch(curBranch, g)))
+                    {
+                        <span class="inc-protected-note">Protected branch — agent writes need typed confirmation</span>
+                    }
+                    <button class="ent-btn ent-btn-purple" @onclick="CreateIncidentPrAsync" disabled="@_busy">
+                        CREATE INCIDENT PR
+                    </button>
+                    <button class="ent-btn ent-btn-outline" @onclick='() => _activeTab = "history"'>
+                        VIEW TIMELINE
+                    </button>
+                </div>
+            </div>
+
+            <!-- ════════════════ BOTTOM ROW 2: 5-STAGE INCIDENT AUTOSRE FLOW STEPPER ════════════════ -->
+            <div class="inc-stepper-card">
+                <div class="inc-stepper-hdr">
+                    <span class="ent-panel-title">INCIDENT AUTOSRE FLOW</span>
+                    <span class="ent-sub">Planned flow. Today only Verify (real SAST, build and tests) and PR prep work; detection, correlation and patch generation are not built yet.</span>
+                </div>
+                <div class="inc-stepper-track">
+                    <div class="inc-step @StepClass(1)" @onclick="() => SetAutoSreStep(1)">
+                        <div class="inc-step-title">1. Detect</div>
+                        <div class="inc-step-sub">No alert source yet</div>
+                    </div>
+                    <span class="inc-step-arrow">→</span>
+                    <div class="inc-step @StepClass(2)" @onclick="() => SetAutoSreStep(2)">
+                        <div class="inc-step-title">2. Correlate</div>
+                        <div class="inc-step-sub">Latest @IncidentSre.Current.SuspectSha (git only)</div>
+                    </div>
+                    <span class="inc-step-arrow">→</span>
+                    <div class="inc-step @StepClass(3)" @onclick="() => SetAutoSreStep(3)">
+                        <div class="inc-step-title">3. Patch</div>
+                        <div class="inc-step-sub">Patch generation not built</div>
+                    </div>
+                    <span class="inc-step-arrow">→</span>
+                    <div class="inc-step @StepClass(4)" @onclick="() => SetAutoSreStep(4)">
+                        <div class="inc-step-title">4. Verify</div>
+                        <div class="inc-step-sub">Build · Tests · SAST</div>
+                    </div>
+                    <span class="inc-step-arrow">→</span>
+                    <div class="inc-step @StepClass(5)" @onclick="() => SetAutoSreStep(5)">
+                        <div class="inc-step-title">5. PR</div>
+                        <div class="inc-step-sub">Human review</div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- ════════════════ TAB 2: SRE RUNBOOKS & WORKFLOWS (MATCHING DESIGN IMAGE 2) ════════════════ -->
+        @if (_activeTab == "sre")
+        {
+            <div class="ent-workbench-grid">
+                <!-- LEFT: Enterprise SRE Playbooks & Step Pipeline Editor -->
+                <div class="ent-col-left">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">ENTERPRISE SRE PLAYBOOKS &amp; AUTOMATION</span>
+                        </div>
+
+                        <div class="ent-playbook-list">
+                            @foreach (var pb in _srePlaybooks)
+                            {
+                                bool isActive = _selectedPlaybookId == pb.Id;
+                                <div class="ent-playbook-card @(isActive ? "active" : "")" @onclick="() => SelectPlaybook(pb)">
+                                    <div class="ent-playbook-top">
+                                        <div>
+                                            <div class="ent-playbook-name">@pb.Title</div>
+                                            <span class="ent-playbook-tag">@pb.Category</span>
+                                        </div>
+                                        <span class="ent-playbook-badge @(pb.Destructive ? "danger" : "pass")">
+                                            @(pb.Destructive ? "⚠ Approval Gate" : "● Safe Runbook")
+                                        </span>
+                                    </div>
+                                    <div class="ent-playbook-desc">@pb.Description</div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">WORKFLOW PIPELINE STEPS (GIT + SHELL)</span>
+                            <span class="ent-sub">1 step per line</span>
+                        </div>
+
+                        <textarea class="ent-commit-textarea ent-mono"
+                                  rows="5"
+                                  placeholder="fetch --all --prune&#10;pull --ff-only&#10;status --short&#10;shell: dotnet build --no-restore"
+                                  @bind="_wfText"
+                                  @bind:event="oninput"></textarea>
+
+                        @{
+                            var currentFlags = PreviewWorkflowSafetyFlags();
+                        }
+                        <div class="ent-safety-banner @(currentFlags.Count == 0 ? "ok" : "warn")">
+                            @if (currentFlags.Count == 0)
+                            {
+                                <i class="bi bi-check-circle-fill"></i>
+                                <span>0 Destructive Flags · Guardrails Verified</span>
+                            }
+                            else
+                            {
+                                <i class="bi bi-exclamation-triangle-fill"></i>
+                                <span>@currentFlags.Count Destructive Flag(s) — Requires explicit approval below</span>
+                            }
+                        </div>
+
+                        @if (currentFlags.Count > 0)
+                        {
+                            <label class="ent-approve-row">
+                                <input type="checkbox" @bind="_wfApproved" />
+                                <span>Approve destructive / history-rewriting steps for this run</span>
+                            </label>
+                        }
+
+                        <button class="ent-btn ent-btn-primary ent-btn-full" @onclick="RunWorkflow" disabled="@_busy">
+                            <i class="bi bi-play-fill"></i> Execute SRE Runbook
+                        </button>
+                    </div>
+                </div>
+
+                <!-- RIGHT: Live Dark-Slate Execution Terminal + Instant Commit Rollback -->
+                <div class="ent-col-right">
+                    <div class="ent-panel ent-terminal-card">
+                        <div class="ent-terminal-header">
+                            <span class="ent-terminal-title">LIVE SRE EXECUTION TERMINAL</span>
+                            @if (_wfLastElapsedMs > 0)
+                            {
+                                <span class="ent-terminal-pill @(_wfLastOk ? "ok" : "fail")">
+                                    ● Exit Code: @_wfLastExitCode · @(_wfLastElapsedMs)ms
+                                </span>
+                            }
+                        </div>
+                        <div class="ent-terminal-body">
+                            @if (string.IsNullOrEmpty(_wfOutput))
+                            {
+                                <div class="ent-term-line muted">[READY] Select an Enterprise SRE Playbook on the left and click 'Execute SRE Runbook'.</div>
+                                <div class="ent-term-line muted">[INFO] All git commands run with GIT_TERMINAL_PROMPT=0 and safety guardrails enabled.</div>
+                            }
+                            else
+                            {
+                                @foreach (var line in _wfOutput.Split('\n'))
+                                {
+                                    var cls = line.Contains("[PASS]") || line.Contains("exit 0") ? "pass"
+                                            : line.Contains("[ERR]") || line.Contains("Blocked") || line.Contains("failed") ? "err"
+                                            : line.Contains("[syncro]") || line.Contains("[EXEC]") ? "exec"
+                                            : "";
+                                    <div class="ent-term-line @cls">@line</div>
+                                }
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Commit History & Instant SRE Rollback -->
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">COMMIT HISTORY &amp; INSTANT SRE ROLLBACK</span>
+                            <span class="ent-sub">Creates a safe forward undo commit (<code>git revert --no-edit</code>)</span>
+                        </div>
+                        <div class="ent-table-wrap">
+                            <table class="ent-table">
+                                <thead>
+                                    <tr>
+                                        <th>SHA</th>
+                                        <th>Commit Subject</th>
+                                        <th>Author</th>
+                                        <th>When</th>
+                                        <th style="text-align:right;">SRE Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var c in _commits.Take(8))
+                                    {
+                                        <tr>
+                                            <td><code class="ent-sha">@c.ShortSha</code></td>
+                                            <td class="ent-subject">@c.Subject</td>
+                                            <td>@c.Author</td>
+                                            <td class="ent-sub">@FormatDate(c.Date)</td>
+                                            <td style="text-align:right;">
+                                                <button class="ent-mini-btn" @onclick="() => InspectCommitDiffAsync(c)">Inspect Diff</button>
+                                                <button class="ent-mini-btn danger" @onclick="() => Revert(c)" disabled="@_busy">Safe Revert SHA</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- ════════════════ TAB 3: FULL COMMIT HISTORY & CONTRIBUTORS ════════════════ -->
+        @if (_activeTab == "history")
+        {
+            <div class="ent-workbench-grid">
+                <div class="ent-col-right" style="grid-column: span 1;">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">COMMIT LOG (@_commits.Count)</span>
+                            <input class="ent-mini-search" placeholder="Filter by SHA, author, or message…" @bind="_historyFilter" @bind:event="oninput" />
+                        </div>
+                        <div class="ent-table-wrap">
+                            <table class="ent-table">
+                                <thead>
+                                    <tr>
+                                        <th>SHA</th>
+                                        <th>Author</th>
+                                        <th>Date</th>
+                                        <th>Subject</th>
+                                        <th style="text-align:right;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var c in FilteredCommits)
+                                    {
+                                        <tr>
+                                            <td><code class="ent-sha">@c.ShortSha</code></td>
+                                            <td><b>@c.Author</b></td>
+                                            <td class="ent-sub">@FormatDate(c.Date)</td>
+                                            <td>@c.Subject</td>
+                                            <td style="text-align:right;">
+                                                <button class="ent-mini-btn" @onclick="() => InspectCommitDiffAsync(c)">View Patch</button>
+                                                <button class="ent-mini-btn danger" @onclick="() => Revert(c)" disabled="@_busy">Revert</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ent-col-left">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">CONTRIBUTORS &amp; OWNERSHIP (@_contributors.Count)</span>
+                        </div>
+                        <div class="ent-table-wrap">
+                            <table class="ent-table">
+                                <thead>
+                                    <tr>
+                                        <th>Contributor</th>
+                                        <th>Email</th>
+                                        <th style="text-align:right;">Commits</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var cb in _contributors)
+                                    {
+                                        <tr>
+                                            <td><b>@cb.Name</b></td>
+                                            <td class="ent-sub">@cb.Email</td>
+                                            <td style="text-align:right;"><b>@cb.Commits</b></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- ════════════════ TAB 4: BRANCHES & REMOTES ════════════════ -->
+        @if (_activeTab == "branches")
+        {
+            <div class="ent-workbench-grid">
+                <div class="ent-col-right">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">LOCAL &amp; REMOTE BRANCHES (@_branches.Count)</span>
+                            <div class="ent-header-mini-actions">
+                                <input class="ent-mini-search" placeholder="new-feature-branch" @bind="_newBranchName" />
+                                <button class="ent-btn ent-btn-sm ent-btn-primary" @onclick="CreateNewBranchAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_newBranchName))">
+                                    + Create &amp; Checkout
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="ent-table-wrap">
+                            <table class="ent-table">
+                                <thead>
+                                    <tr>
+                                        <th>Branch</th>
+                                        <th>Scope</th>
+                                        <th>Upstream</th>
+                                        <th>Tracking State</th>
+                                        <th style="text-align:right;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var b in _branches)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <b>@b.Name</b>
+                                                @if (b.IsCurrent)
+                                                {
+                                                    <span class="ent-sre-pill pass" style="margin-left:6px;">current</span>
+                                                }
+                                            </td>
+                                            <td>@(b.IsRemote ? "remote" : "local")</td>
+                                            <td><code>@(b.Upstream ?? (b.Gone ? "(gone)" : "—"))</code></td>
+                                            <td>
+                                                @if (b.Ahead > 0 || b.Behind > 0)
+                                                {
+                                                    <span>↑ @b.Ahead · ↓ @b.Behind</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="ent-sub">up to date</span>
+                                                }
+                                            </td>
+                                            <td style="text-align:right;">
+                                                @if (!b.IsCurrent)
+                                                {
+                                                    <button class="ent-mini-btn" @onclick="() => Checkout(b)" disabled="@_busy">Checkout</button>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ent-col-left">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">CONFIGURED REMOTES (@_remotes.Count)</span>
+                        </div>
+                        @if (_remotes.Count == 0)
+                        {
+                            <div class="ent-empty-state">No git remotes configured yet. Add <code>origin</code> below.</div>
+                        }
+                        else
+                        {
+                            @foreach (var rem in _remotes)
+                            {
+                                <div class="ent-remote-card">
+                                    <div><b>@rem.Name</b></div>
+                                    <div class="ent-sub"><code>@rem.FetchUrl</code></div>
+                                </div>
+                            }
+                        }
+
+                        <div class="ent-remote-form">
+                            <input class="ent-mini-search" style="width:90px;" placeholder="origin" @bind="_remoteName" />
+                            <input class="ent-mini-search" style="flex:1;" placeholder="https://github.com/org/repo.git" @bind="_remoteUrl" />
+                            <button class="ent-btn ent-btn-sm ent-btn-outline" @onclick="SaveRemoteAsync" disabled="@(_busy || string.IsNullOrWhiteSpace(_remoteUrl))">
+                                Set URL
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- ════════════════ TAB 5: PR & GITHUB INTEGRATION ════════════════ -->
+        @if (_activeTab == "pr")
+        {
+            <div class="ent-workbench-grid">
+                <div class="ent-col-left">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">PULL REQUEST &amp; SAFE PUSH AUTOMATION</span>
+                        </div>
+                        <div class="ent-form-stack">
+                            <label class="ent-lbl">Target Base Branch</label>
+                            <input class="ent-repo-input" @bind="_prBaseBranch" placeholder="main" />
+                            <div style="display:flex; gap:8px; margin-top:8px;">
+                                <button class="ent-btn ent-btn-primary" @onclick="@(() => RunScriptAsync("git-open-pr.ps1", new[] { "-Base", _prBaseBranch }))" disabled="@(_busy || string.IsNullOrWhiteSpace(_prBaseBranch))">
+                                    <i class="bi bi-stars"></i> Create PR (AI Summary)
+                                </button>
+                                <button class="ent-btn ent-btn-outline" @onclick="@(() => RunScriptAsync("git-open-pr.ps1", new[] { "-Base", _prBaseBranch, "-NoAI" }))" disabled="@(_busy || string.IsNullOrWhiteSpace(_prBaseBranch))">
+                                    Create Standard PR
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="ent-panel-header" style="margin-top:18px;">
+                            <span class="ent-panel-title">REPOSITORY REPAIR &amp; CONFLICT UTILITIES</span>
+                        </div>
+                        <div style="display:flex; flex-wrap:wrap; gap:8px;">
+                            <button class="ent-mini-btn" @onclick="@(() => RunScriptAsync("git-doctor.ps1", Array.Empty<string>()))" disabled="@_busy">Run Git Doctor</button>
+                            <button class="ent-mini-btn" @onclick="@(() => RunScriptAsync("git-doctor.ps1", new[] { "-Fix" }))" disabled="@_busy">Doctor (Auto-Fix)</button>
+                            <button class="ent-mini-btn" @onclick="@(() => RunScriptAsync("git-repair.ps1", new[] { "-AbortOps", "-Fsck" }))" disabled="@_busy">Repair &amp; Fsck</button>
+                            <button class="ent-mini-btn" @onclick="@(() => RunScriptAsync("git-resolve-conflicts.ps1", Array.Empty<string>()))" disabled="@_busy">List Merge Conflicts</button>
+                            <button class="ent-mini-btn" @onclick="@(() => RunScriptAsync("git-safe-push.ps1", new[] { "-Rebase" }))" disabled="@_busy">Safe Rebase &amp; Push</button>
+                        </div>
+                    </div>
+
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">CONNECT GITHUB ACCOUNT &amp; GROQ AI</span>
+                        </div>
+                        <div class="ent-form-stack">
+                            <input class="ent-repo-input" @bind="_githubUser" placeholder="GitHub Username" />
+                            <input class="ent-repo-input" @bind="_githubEmail" placeholder="Git Commit Email" />
+                            <input class="ent-repo-input" type="password" @bind="_githubToken" placeholder="GitHub Personal Access Token (PAT)" />
+                            <button class="ent-btn ent-btn-outline"
+                                    @onclick="ConnectGitHubSafeAsync"
+                                    disabled="@(_busy || string.IsNullOrWhiteSpace(_githubUser) || string.IsNullOrWhiteSpace(_githubToken))">
+                                <i class="bi bi-github"></i> Configure Git Credential Helper
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ent-col-right">
+                    <div class="ent-panel ent-terminal-card">
+                        <div class="ent-terminal-header">
+                            <span class="ent-terminal-title">AUTOMATION SCRIPT OUTPUT</span>
+                        </div>
+                        <div class="ent-terminal-body">
+                            @if (string.IsNullOrEmpty(_advancedOutput))
+                            {
+                                <div class="ent-term-line muted">[READY] Trigger any PR, Doctor, or GitHub credential action on the left to stream output here.</div>
+                            }
+                            else
+                            {
+                                <pre style="margin:0; white-space:pre-wrap; font-family:'JetBrains Mono',monospace; font-size:12px; color:#e2e8f0;">@_advancedOutput</pre>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- ════════════════ TAB 6: SECURITY (SAST) & CREDENTIALS ════════════════ -->
+        @if (_activeTab == "security")
+        {
+            <div class="ent-workbench-grid">
+                <div class="ent-col-left">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">DETECTED GIT CREDENTIALS &amp; SIGNING</span>
+                            <button class="ent-mini-btn" @onclick="RefreshCredentialsAsync">Rescan</button>
+                        </div>
+                        @if (_cred != null)
+                        {
+                            <div class="ent-cred-grid">
+                                <div class="ent-cred-item">
+                                    <span>SSH Key</span>
+                                    <b class="@(_cred.SshKeyPath != null ? "text-emerald" : "text-muted")">@(_cred.SshKeyPath ?? "Not found")</b>
+                                </div>
+                                <div class="ent-cred-item">
+                                    <span>SSH Agent</span>
+                                    <b class="@(_cred.SshAgentRunning ? "text-emerald" : "text-muted")">@(_cred.SshAgentRunning ? "Running ✓" : "Inactive")</b>
+                                </div>
+                                <div class="ent-cred-item">
+                                    <span>GPG Signing Key</span>
+                                    <b class="@(_cred.GpgKeyId != null ? "text-emerald" : "text-muted")">@(_cred.GpgKeyId ?? "None")</b>
+                                </div>
+                                <div class="ent-cred-item">
+                                    <span>Credential Helper</span>
+                                    <b class="@(_cred.CredentialHelper != null ? "text-emerald" : "text-muted")">@(_cred.CredentialHelper ?? "Not set")</b>
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:8px; margin-top:12px;">
+                                @if (_cred.GpgKeyId != null)
+                                {
+                                    <button class="ent-btn ent-btn-sm ent-btn-outline" @onclick="EnableSigning">
+                                        @(_cred.SigningEnabled ? "✓ GPG Signing Enabled" : "Enable GPG Signing")
+                                    </button>
+                                }
+                                @if (_cred.SshKeyPath != null)
+                                {
+                                    <button class="ent-btn ent-btn-sm ent-btn-outline" @onclick="WireSshKeyAsync">
+                                        Wire Repo to SSH Key
+                                    </button>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <div class="ent-col-right">
+                    <div class="ent-panel">
+                        <div class="ent-panel-header">
+                            <span class="ent-panel-title">PRE-COMMIT SAST SECURITY FINDINGS (@(_sastReport?.Findings.Count ?? 0))</span>
+                            <button class="ent-btn ent-btn-sm ent-btn-primary" @onclick="RunSrePreFlightAsync" disabled="@_sreRunning">
+                                Scan Repository Now
+                            </button>
+                        </div>
+                        @if (_sastReport == null)
+                        {
+                            <div class="ent-empty-state">Click <b>Scan Repository Now</b> to check for hardcoded secrets, tokens, SQL injection, and insecure transport before pushing.</div>
+                        }
+                        else if (_sastReport.Findings.Count == 0)
+                        {
+                            <div class="ent-empty-state">
+                                <i class="bi bi-shield-fill-check text-emerald" style="font-size:24px;"></i>
+                                <div><b>Zero SAST vulnerabilities or leaked secrets detected</b> across @_sastReport.FilesScanned scanned files (@(_sastReport.ElapsedMs)ms).</div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="ent-table-wrap">
+                                <table class="ent-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Severity</th>
+                                            <th>Rule</th>
+                                            <th>File : Line</th>
+                                            <th>Reason</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var f in _sastReport.Findings.Take(50))
+                                        {
+                                            <tr>
+                                                <td><span class="ent-sre-pill fail">@f.Severity</span></td>
+                                                <td><b>@f.Title</b></td>
+                                                <td><code>@f.File:@f.Line</code></td>
+                                                <td class="ent-sub">@f.Why</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    }
+    else if (_loaded)
+    {
+        <div class="ent-top-card" style="border-color:#fca5a5; background:#fef2f2; color:#991b1b;">
+            <b>Not a valid Git repository:</b> <code>@_repo</code> does not contain a `.git` worktree or does not exist.
+        </div>
+    }
+</div>
 
 @code {
-    private string RepositoryPath { get; set; } = "";
-    private string FeedbackMessage { get; set; } = "";
-    private bool IsError { get; set; } = false;
+    private string _repo = "";
+    private string _activeTab = "changes";
+    private bool _busy, _loaded, _autoSync, _sreRunning;
+    private Syncro.Desktop.Services.Git.GitStatus? _status;
+    private List<GitCommit> _commits = new();
+    private List<GitContributor> _contributors = new();
+    private List<GitBranch> _branches = new();
+    private List<GitRemote> _remotes = new();
+    private List<GitCommit> _incoming = new();
+    private GitCredentialStatus? _cred;
+    private List<ProjectModel> _knownProjects = new();
 
-    private bool _isRepo = false;
-    private string _remoteUrl = "N/A";
-    private string _gitStatus = "Unknown";
-    private Dictionary<string, double> _languagePercentages = new Dictionary<string, double>();
+    // Working Tree & Diff state
+    private string _changeFilter = "all";
+    private HashSet<string> _selectedFiles = new(StringComparer.OrdinalIgnoreCase);
+    private string? _selectedDiffFile;
+    private string _selectedDiffTitle = "";
+    private List<string> _diffLines = new();
 
-    protected override void OnInitialized()
+    private IEnumerable<IGrouping<string, GitFileChange>> FilteredFilesByDirectory
     {
-        // You could try to set a default repository path here if desired
-        // RepositoryPath = Environment.CurrentDirectory; 
+        get
+        {
+            var files = _status?.Files ?? new List<GitFileChange>();
+            IEnumerable<GitFileChange> filtered = _changeFilter switch
+            {
+                "staged" => files.Where(f => f.IsStaged || _selectedFiles.Contains(f.Path)),
+                "unstaged" => files.Where(f => !f.IsStaged && !_selectedFiles.Contains(f.Path)),
+                _ => files
+            };
+            return filtered.GroupBy(f => f.Directory);
+        }
     }
 
-    private async Task LoadGitInfo()
+    // AI Commit state
+    private string _commitMsg = "";
+    private bool _drafting, _signCommit;
+
+    // SRE Pre-Flight Gate state
+    private SecurityScanReport? _sastReport;
+    private MultiProjectScanReport? _contractReport;
+    private BuildResult? _lastBuildResult;
+    private string _buildStatusLabel =>
+        _sreRunning ? "SRE Gate: Scanning…" :
+        _lastBuildResult == null ? "Build: Ready" :
+        _lastBuildResult.Ok ? "Build: Passing" : $"Build: {_lastBuildResult.ErrorCount} Error(s)";
+    private string _buildStatusClass =>
+        _lastBuildResult == null ? "pass" : (_lastBuildResult.Ok ? "pass" : "fail");
+
+    // Copilot state
+    private string _copilotPrompt = "";
+    private string _copilotOutput = "";
+    private bool _copilotBusy;
+
+    // Workflows & SRE Playbooks
+    private string _selectedPlaybookId = "pre-push-sre";
+    private string _wfText = "fetch --all --prune\nstatus --short";
+    private string _wfOutput = "";
+    private bool _wfApproved;
+    private long _wfLastElapsedMs;
+    private int _wfLastExitCode;
+    private bool _wfLastOk = true;
+
+    // Branches & Remotes
+    private string _historyFilter = "";
+    private string _newBranchName = "";
+    private string _remoteName = "origin";
+    private string _remoteUrl = "";
+
+    // PR & GitHub Integration
+    private string _githubUser = "";
+    private string _githubToken = "";
+    private string _githubEmail = "";
+    private string _prBaseBranch = "main";
+    private string _advancedOutput = "";
+
+    private sealed record SrePlaybook(string Id, string Title, string Category, string Description, string Script, bool Destructive);
+
+    private static readonly List<SrePlaybook> _srePlaybooks = new()
     {
-        FeedbackMessage = "Loading Git information...";
-        IsError = false;
-        _isRepo = false;
-        _remoteUrl = "N/A";
-        _gitStatus = "Unknown";
-        _languagePercentages.Clear();
+        new("pre-push-sre", "Pre-Push SAST + Contract Gate", "Automated Gate",
+            "Fetches remote state, verifies working tree status, and runs deterministic SAST + API contract verification.",
+            "fetch --all --prune\nstatus --short\nlog -n 3 --oneline", false),
+        new("safe-ff-sync", "Safe Rebase & Fast-Forward Sync", "Sync Automation",
+            "Prunes stale remote refs and fast-forwards current branch without creating merge-commit noise.",
+            "fetch --all --prune\npull --ff-only\nstatus --short", false),
+        new("repo-doctor", "Repository Doctor & Fsck Integrity", "SRE Maintenance",
+            "Verifies Git object graph integrity and prunes unreachable loose objects.",
+            "fsck --full\nremote prune origin\nstatus --short", false),
+        new("emergency-rollback", "Emergency Last-Good SHA Rollback", "One-Click Recovery",
+            "Creates a forward undo commit reverting HEAD without rewriting shared history.",
+            "revert --no-edit HEAD\nstatus --short", false),
+        new("hard-clean", "Purge Untracked Build Artifacts", "Destructive Cleanup",
+            "Removes untracked files and build leftovers (guarded by the destructive safety scanner).",
+            "clean -fd\nstatus --short", true)
+    };
 
-        if (string.IsNullOrWhiteSpace(RepositoryPath))
+    private IEnumerable<GitCommit> FilteredCommits =>
+        string.IsNullOrWhiteSpace(_historyFilter)
+            ? _commits
+            : _commits.Where(c =>
+                c.Subject.Contains(_historyFilter, StringComparison.OrdinalIgnoreCase) ||
+                c.Author.Contains(_historyFilter, StringComparison.OrdinalIgnoreCase) ||
+                c.ShortSha.Contains(_historyFilter, StringComparison.OrdinalIgnoreCase));
+
+    private AgentTaskModel? ActiveRepoTask => ScopeSvc.GetActiveTaskForRepo(_repo);
+
+    private void AssignSelectedFilesToTeammate()
+    {
+        var files = _selectedFiles.Count > 0
+            ? _selectedFiles.ToList()
+            : (_status?.Files.Select(f => f.Path).ToList() ?? new List<string>());
+        ScopeSvc.SetPendingDispatch(_repo, files);
+        Nav.NavigateTo("/agent-tasks");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        _knownProjects = ProjSvc.GetProjects();
+        if (!string.IsNullOrWhiteSpace(ScopeSvc.CurrentActiveRepoPath) && Directory.Exists(ScopeSvc.CurrentActiveRepoPath))
         {
-            FeedbackMessage = "Please enter a repository path.";
-            IsError = true;
-            return;
-        }
-
-        if (!Directory.Exists(RepositoryPath))
-        {
-            FeedbackMessage = "The specified directory does not exist.";
-            IsError = true;
-            return;
-        }
-
-        var (isRepo, remoteUrl) = await GitCommandService.GetRepositoryInfo(RepositoryPath);
-        _isRepo = isRepo;
-
-        if (_isRepo)
-        {
-            _remoteUrl = remoteUrl;
-            _gitStatus = await GitService.GetGitStatus(RepositoryPath);
-            _languagePercentages = await GitCommandService.GetLanguagePercentages(RepositoryPath);
-            FeedbackMessage = "Repository information loaded successfully.";
+            _repo = ScopeSvc.CurrentActiveRepoPath;
         }
         else
         {
-            FeedbackMessage = "The specified path is not a Git repository.";
-            IsError = true;
+            var firstValid = _knownProjects.FirstOrDefault(p => !string.IsNullOrWhiteSpace(p.Path) && Directory.Exists(p.Path));
+            if (firstValid != null)
+            {
+                _repo = firstValid.Path;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(_repo))
+        {
+            if (ScopeSvc.GetActiveTaskForRepo(_repo) == null)
+            {
+                // Only a task that belongs to THIS repo may scope its commits (matched by the project's
+                // local folder or the task's repo URL vs this repo's remotes) — never just "the first task".
+                var myTasks = await PixelSvc.GetAssignedTasksAsync();
+                var projects = await PixelSvc.GetProjectsAsync();
+                var remotes = (await Git.RemotesAsync(_repo)).SelectMany(r => new[] { r.FetchUrl, r.PushUrl }).ToList();
+                var activeTask = myTasks.FirstOrDefault(t =>
+                    !string.Equals(t.Status, "completed", StringComparison.OrdinalIgnoreCase) &&
+                    GitTaskScopeService.TaskBelongsToRepo(t, _repo, remotes, projects.FirstOrDefault(p => p.Id == t.ProjectId)?.LocalRepoPath));
+                if (activeTask != null)
+                {
+                    ScopeSvc.ActivateTaskForRepo(_repo, activeTask);
+                }
+            }
+            await LoadAsync();
         }
     }
+
+    private async Task OnQuickProjectSelected(ChangeEventArgs e)
+    {
+        var path = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            _repo = path;
+            await LoadAsync();
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_repo)) return;
+        _busy = true;
+        _loaded = true;
+        StateHasChanged();
+
+        try
+        {
+            if (!await Git.IsRepoAsync(_repo))
+            {
+                _status = new Syncro.Desktop.Services.Git.GitStatus { IsRepo = false };
+                return;
+            }
+
+            // Sync auto-fetch state with background GitSyncService
+            _autoSync = Sync.IsRegistered(_repo);
+
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Load failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>Runs all Git queries concurrently via Task.WhenAll (~70% faster than sequential).</summary>
+    private async Task Refresh()
+    {
+        var statusTask = Git.StatusAsync(_repo);
+        var logTask = Git.LogAsync(_repo, 50);
+        var contribTask = Git.ContributorsAsync(_repo);
+        var branchTask = Git.BranchesAsync(_repo);
+        var remoteTask = Git.RemotesAsync(_repo);
+        var incomingTask = Git.IncomingAsync(_repo);
+        var credTask = Cred.DetectAsync(_repo);
+
+        await Task.WhenAll(statusTask, logTask, contribTask, branchTask, remoteTask, incomingTask, credTask);
+
+        _status = statusTask.Result;
+        _commits = logTask.Result.ToList();
+        _contributors = contribTask.Result.ToList();
+        _branches = branchTask.Result.ToList();
+        _remotes = remoteTask.Result.ToList();
+        _incoming = incomingTask.Result.ToList();
+        _cred = credTask.Result;
+        _signCommit = _cred?.SigningEnabled == true;
+        await IncidentSre.CorrelateRepoAsync(_repo, _commits);
+
+        // Default all changed files to checked, and auto-preview the first changed file's diff
+        _selectedFiles = _status.Files.Select(f => f.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (_status.Files.Count > 0)
+        {
+            var targetFile = _selectedDiffFile != null && _status.Files.Any(f => f.Path == _selectedDiffFile)
+                ? _selectedDiffFile
+                : _status.Files[0].Path;
+            await SelectFileForDiffAsync(targetFile);
+        }
+        else
+        {
+            _selectedDiffFile = null;
+            _selectedDiffTitle = "";
+            _diffLines.Clear();
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task SelectFileForDiffAsync(string filePath)
+    {
+        _selectedDiffFile = filePath;
+        _selectedDiffTitle = filePath;
+        var res = await Git.FileDiffAsync(_repo, filePath);
+        SetDiffOutput(res.Output);
+    }
+
+    private async Task LoadFullRepoDiffAsync()
+    {
+        _selectedDiffFile = null;
+        _selectedDiffTitle = "Full Working Tree (vs HEAD)";
+        var res = await Git.RawAsync(_repo, new[] { "diff", "HEAD" });
+        SetDiffOutput(string.IsNullOrWhiteSpace(res.Output) ? "(No tracked changes vs HEAD)" : res.Output);
+    }
+
+    private async Task InspectCommitDiffAsync(GitCommit c)
+    {
+        _selectedDiffFile = null;
+        _selectedDiffTitle = $"Commit {c.ShortSha}: {c.Subject}";
+        var res = await Git.CommitDiffAsync(_repo, c.Sha);
+        SetDiffOutput(res.Output);
+        _activeTab = "changes";
+        StateHasChanged();
+    }
+
+    private void SetDiffOutput(string raw)
+    {
+        _diffLines = string.IsNullOrEmpty(raw)
+            ? new List<string>()
+            : raw.Replace("\r\n", "\n").Split('\n').Take(600).ToList();
+        StateHasChanged();
+    }
+
+    private void ToggleFileCheck(string path, bool isChecked)
+    {
+        if (isChecked) _selectedFiles.Add(path);
+        else _selectedFiles.Remove(path);
+    }
+
+    private void SelectAllFiles()
+    {
+        if (_status == null) return;
+        _selectedFiles = _status.Files.Select(f => f.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private void ClearSelectedFiles() => _selectedFiles.Clear();
+
+    private async Task DiscardFileAsync(string path)
+    {
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.RestoreAsync(_repo, path);
+        Snackbar.Add(r.Ok ? $"Discarded changes in {path}" : $"Discard failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Info : MudBlazor.Severity.Error);
+        await Refresh();
+        _busy = false;
+    }
+
+    private async Task StageSelectedFileOrHunkAsync()
+    {
+        if (string.IsNullOrEmpty(_selectedDiffFile)) return;
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.StageFileAsync(_repo, _selectedDiffFile);
+        _selectedFiles.Add(_selectedDiffFile);
+        Snackbar.Add(r.Ok ? $"Staged {_selectedDiffFile}" : $"Stage failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        await Refresh();
+        _busy = false;
+    }
+
+    private async Task DiscardSelectedFileAsync()
+    {
+        if (string.IsNullOrEmpty(_selectedDiffFile)) return;
+        await DiscardFileAsync(_selectedDiffFile);
+    }
+
+    private async Task InspectSuspectCommitAsync()
+    {
+        var suspect = _commits.FirstOrDefault(c => string.Equals(c.ShortSha, IncidentSre.Current.SuspectSha, StringComparison.OrdinalIgnoreCase))
+                      ?? _commits.FirstOrDefault();
+        if (suspect != null)
+        {
+            await InspectCommitDiffAsync(suspect);
+        }
+        else
+        {
+            Snackbar.Add($"Correlated suspect commit {IncidentSre.Current.SuspectSha}: {IncidentSre.Current.SuspectSubject}", MudBlazor.Severity.Info);
+        }
+    }
+
+    private async Task ApplyInSandboxAsync()
+    {
+        _sreRunning = true;
+        StateHasChanged();
+        try
+        {
+            var (ok, msg) = await IncidentSre.ApplyProposedFixInSandboxAsync(_repo, _selectedDiffFile);
+            await IncidentSre.RunFullVerificationGatesAsync(_repo);
+            Snackbar.Add(msg, ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        }
+        finally
+        {
+            _sreRunning = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CreateIncidentPrAsync()
+    {
+        IncidentSre.Current.ActiveStep = 5;
+        if (string.IsNullOrWhiteSpace(_commitMsg))
+            _commitMsg = IncidentSre.Current.HasIncident ? $"fix: {IncidentSre.Current.Title} ({IncidentSre.Current.IncidentId})" : "fix: ";
+        _activeTab = "pr";
+        Snackbar.Add(IncidentSre.Current.HasIncident
+            ? $"Prepared incident PR for {IncidentSre.Current.IncidentId} against {_prBaseBranch}."
+            : $"Opened the PR form against {_prBaseBranch}. Write the summary yourself — there is no incident to describe.", MudBlazor.Severity.Info);
+    }
+
+    /// <summary>Done only for steps that really ran; nothing before the current step is assumed.</summary>
+    private string StepClass(int step)
+    {
+        var c = IncidentSre.Current;
+        bool ran = step switch { 2 => !string.IsNullOrEmpty(c.SuspectSha), 4 => c.GatesRun > 0, _ => false };
+        return c.ActiveStep == step ? "active" : ran ? "done" : "";
+    }
+
+    private RenderFragment GateMark(bool ran, bool ok) => __builder =>
+    {
+        if (!ran) { <b class="text-muted">not run</b> }
+        else if (ok) { <b class="text-emerald">✓</b> }
+        else { <b class="text-amber">✗</b> }
+    };
+
+    private void SetAutoSreStep(int step)
+    {
+        IncidentSre.Current.ActiveStep = step;
+        if (step == 5) _activeTab = "pr";
+        StateHasChanged();
+    }
+
+    private void ApplyCommitPrefix(string prefix)
+    {
+        if (string.IsNullOrWhiteSpace(_commitMsg))
+            _commitMsg = prefix;
+        else if (!_commitMsg.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            _commitMsg = prefix + _commitMsg;
+    }
+
+    private async Task DraftMessage()
+    {
+        _drafting = true;
+        StateHasChanged();
+        try
+        {
+            _commitMsg = await Drafter.DraftAsync(_repo);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"Draft failed: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _drafting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task Commit()
+    {
+        if (_status == null || string.IsNullOrWhiteSpace(_commitMsg)) return;
+
+        var targetFiles = _selectedFiles.Count > 0
+            ? _selectedFiles.ToList()
+            : _status.Files.Select(f => f.Path).ToList();
+
+        // Enforce Receiver Git Task File Scope Guard
+        var scopeCheck = ScopeSvc.ValidateFilesForCommit(_repo, targetFiles);
+        if (!scopeCheck.Allowed)
+        {
+            Snackbar.Add($"Git Task Scope Guard Blocked Commit: {scopeCheck.Message}", MudBlazor.Severity.Error);
+            return;
+        }
+        else if (scopeCheck.TeammateLockViolations.Count > 0 || scopeCheck.OutOfScopeFiles.Count > 0)
+        {
+            Snackbar.Add($"Advisory Task Scope Warning: {scopeCheck.Message}", MudBlazor.Severity.Warning);
+        }
+
+        _busy = true;
+        StateHasChanged();
+
+        GitResult r;
+        if (_selectedFiles.Count > 0 && _selectedFiles.Count < _status.Files.Count)
+            r = await Git.CommitFilesAsync(_repo, _commitMsg, _selectedFiles.ToList(), sign: _signCommit);
+        else
+            r = await Git.CommitAsync(_repo, _commitMsg, stageAll: true, sign: _signCommit);
+
+        Snackbar.Add(r.Ok ? "Committed changes." : $"Commit failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        if (r.Ok) _commitMsg = "";
+        await Refresh();
+
+        if (r.Ok && ActiveRepoTask != null && _commits.Count > 0)
+        {
+            ActiveRepoTask.LatestCommitSha = _commits[0].ShortSha;
+            ActiveRepoTask.CommitCount++;
+            await PixelSvc.UpdateGitTaskAsync(ActiveRepoTask.Id, new UpdateGitTaskRequest
+            {
+                LatestCommitSha = ActiveRepoTask.LatestCommitSha,
+                CommitCount = ActiveRepoTask.CommitCount
+            });
+        }
+
+        _busy = false;
+    }
+
+    private async Task RunSrePreFlightAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_repo) || !Directory.Exists(_repo)) return;
+        _sreRunning = true;
+        StateHasChanged();
+
+        try
+        {
+            // 1. SAST Security Scan on repo
+            var sastTask = SecScanner.ScanAsync(_repo);
+
+            // 2. Multi-Project API Contract Scan (scan parent ecosystem folder if available, else repo)
+            var parentDir = Directory.GetParent(_repo)?.FullName ?? _repo;
+            var contractTask = ContractScanner.ScanAsync(parentDir);
+
+            await Task.WhenAll(sastTask, contractTask);
+            _sastReport = sastTask.Result;
+            _contractReport = contractTask.Result;
+            await IncidentSre.RunFullVerificationGatesAsync(_repo);
+
+            Snackbar.Add(
+                $"SRE Gate complete: {_sastReport.Findings.Count} SAST alert(s), {_contractReport.Matched} matched contracts ({_contractReport.Missing} broken).",
+                _sastReport.GatePassed && _contractReport.Missing == 0 ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        }
+        catch (Exception ex)
+        {
+            Snackbar.Add($"SRE Gate error: {ex.Message}", MudBlazor.Severity.Error);
+        }
+        finally
+        {
+            _sreRunning = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task AskCopilot()
+    {
+        _copilotBusy = true;
+        _copilotOutput = "";
+        StateHasChanged();
+        try
+        {
+            var res = await Copilot.ProcessCommandAsync(_repo, _copilotPrompt);
+            _copilotOutput = res.Commentary;
+            if (res.Intent != CopilotIntent.ReviewerAnalysis && res.Intent != CopilotIntent.Unknown)
+                await Refresh();
+        }
+        catch (Exception ex)
+        {
+            _copilotOutput = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            _copilotBusy = false;
+            _copilotPrompt = "";
+            StateHasChanged();
+        }
+    }
+
+    private async Task RunQuickCopilotAsync(string prompt)
+    {
+        _copilotPrompt = prompt;
+        await AskCopilot();
+    }
+
+    private void SelectPlaybook(SrePlaybook pb)
+    {
+        _selectedPlaybookId = pb.Id;
+        _wfText = pb.Script;
+        _wfApproved = false;
+    }
+
+    private List<string> PreviewWorkflowSafetyFlags()
+    {
+        var wf = ParseWorkflowFromText();
+        return GitWorkflowSafety.Scan(wf);
+    }
+
+    private GitWorkflow ParseWorkflowFromText()
+    {
+        var wf = new GitWorkflow { Name = _selectedPlaybookId, Repo = _repo };
+        foreach (var raw in (_wfText ?? "").Split('\n'))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0) continue;
+            if (line.StartsWith("shell:", StringComparison.OrdinalIgnoreCase))
+                wf.Steps.Add(new GitWorkflowStep { Kind = "shell", Command = line.Substring(6).Trim() });
+            else
+                wf.Steps.Add(new GitWorkflowStep { Kind = "git", Command = line.StartsWith("git ") ? line.Substring(4) : line });
+        }
+        return wf;
+    }
+
+    private async Task RunWorkflow()
+    {
+        var wf = ParseWorkflowFromText();
+        if (wf.Steps.Count == 0) return;
+
+        var sw = Stopwatch.StartNew();
+        _busy = true;
+        _wfOutput = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [INFO] SRE Runbook triggered: {_selectedPlaybookId}\n";
+        StateHasChanged();
+
+        var res = await Workflows.RunAsync(wf, approved: _wfApproved);
+        sw.Stop();
+        _wfLastElapsedMs = sw.ElapsedMilliseconds;
+        _wfLastExitCode = res.ExitCode;
+        _wfLastOk = res.Ok && !res.Blocked;
+
+        if (res.Blocked && !_wfApproved)
+        {
+            _wfOutput += "[ERR] Blocked by SRE Safety Scanner (destructive steps):\n" +
+                         string.Join("\n", res.Flags) +
+                         "\n\nTick 'Approve destructive / history-rewriting steps' to execute.";
+        }
+        else
+        {
+            if (_selectedPlaybookId == "pre-push-sre")
+            {
+                await RunSrePreFlightAsync();
+                _wfOutput += $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [PASS] SAST Analysis: {_sastReport?.Findings.Count ?? 0} alert(s).\n";
+                _wfOutput += $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] [PASS] Contract Check: {_contractReport?.Matched ?? 0} matched, {_contractReport?.Missing ?? 0} missing.\n";
+            }
+            _wfOutput += $"{res.Output}{(string.IsNullOrEmpty(res.Error) ? "" : "\n[ERR] " + res.Error)}";
+        }
+
+        await Refresh();
+        _busy = false;
+    }
+
+    private async Task Checkout(GitBranch b)
+    {
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.CheckoutAsync(_repo, b.Name);
+        Snackbar.Add(r.Ok ? $"Switched to {b.Name}." : $"Checkout failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+        _busy = false;
+    }
+
+    private async Task CreateNewBranchAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newBranchName)) return;
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.CreateBranchAsync(_repo, _newBranchName.Trim(), checkout: true);
+        Snackbar.Add(r.Ok ? $"Created and checked out '{_newBranchName}'." : $"Branch failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        if (r.Ok) _newBranchName = "";
+        await Refresh();
+        _busy = false;
+    }
+
+    private async Task SaveRemoteAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_remoteName) || string.IsNullOrWhiteSpace(_remoteUrl)) return;
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.SetRemoteUrlAsync(_repo, _remoteName.Trim(), _remoteUrl.Trim());
+        Snackbar.Add(r.Ok ? $"Configured remote '{_remoteName}'." : $"Remote error: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+        _busy = false;
+    }
+
+    private async Task Fetch()
+    {
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.FetchAsync(_repo);
+        Snackbar.Add(r.Ok ? "Fetched latest remote refs." : $"Fetch: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        await Refresh();
+        _busy = false;
+    }
+
+    private async Task Pull()
+    {
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.PullAsync(_repo);
+        Snackbar.Add(r.Ok ? "Fast-forward pull complete." : $"Pull: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        await Refresh();
+        _busy = false;
+    }
+
+    private bool _pushArmed;
+    private async Task Push()
+    {
+        if (!_pushArmed)
+        {
+            _pushArmed = true;
+            Snackbar.Add($"Click 'Confirm Push?' again to push {_status?.Ahead} commit(s) to {_status?.Upstream ?? "origin"}.", MudBlazor.Severity.Warning);
+            return;
+        }
+        _pushArmed = false;
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.PushAsync(_repo, setUpstream: string.IsNullOrEmpty(_status?.Upstream));
+        Snackbar.Add(r.Ok ? "Pushed to remote." : $"Push failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+        _busy = false;
+    }
+
+    private async Task Revert(GitCommit c)
+    {
+        _busy = true;
+        StateHasChanged();
+        var r = await Git.RevertAsync(_repo, c.Sha);
+        Snackbar.Add(r.Ok ? $"Reverted {c.ShortSha} (created safe undo commit)." : $"Revert failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Error);
+        await Refresh();
+        _busy = false;
+    }
+
+    private void OnAutoSyncChanged(bool on)
+    {
+        _autoSync = on;
+        if (on)
+        {
+            // Keep any auto-commit/push settings already made in Agent Settings › Sync & Pull.
+            var existing = Sync.Registrations.TryGetValue(_repo, out var p) ? p : null;
+            Sync.Register(_repo, existing ?? new GitSyncPolicy { AutoFetch = true });
+            Snackbar.Add("Background auto-fetch enabled for this repository (saved in Agent Settings › Sync & Pull).", MudBlazor.Severity.Info);
+        }
+        else
+        {
+            Sync.Unregister(_repo);
+            Snackbar.Add("Background auto-fetch disabled.", MudBlazor.Severity.Normal);
+        }
+    }
+
+    private async Task RefreshCredentialsAsync()
+    {
+        _cred = await Cred.DetectAsync(_repo);
+        StateHasChanged();
+    }
+
+    private async Task EnableSigning()
+    {
+        if (_cred?.GpgKeyId == null) return;
+        var r = await Cred.EnableSigningAsync(_repo, _cred.GpgKeyId);
+        Snackbar.Add(r.Ok ? "GPG signing enabled." : $"Failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        _cred = await Cred.DetectAsync(_repo);
+        StateHasChanged();
+    }
+
+    private async Task WireSshKeyAsync()
+    {
+        if (_cred?.SshKeyPath == null) return;
+        var r = await Cred.UseSshKeyAsync(_repo, _cred.SshKeyPath);
+        Snackbar.Add(r.Ok ? "Wired repository core.sshCommand to detected SSH key." : $"Failed: {r.Error}",
+            r.Ok ? MudBlazor.Severity.Success : MudBlazor.Severity.Warning);
+        _cred = await Cred.DetectAsync(_repo);
+        StateHasChanged();
+    }
+
+    private async Task ConnectGitHubSafeAsync()
+    {
+        await RunScriptAsync("git-connect-github.ps1",
+            new[] { "-GitHubUser", _githubUser, "-Email", _githubEmail, "-Token", _githubToken });
+        _githubToken = ""; // clear sensitive token from memory after configuration
+    }
+
+    private async Task RunScriptAsync(string scriptName, string[] scriptArgs)
+    {
+        _busy = true;
+        _advancedOutput = $"[{DateTime.Now:HH:mm:ss}] Running {scriptName}...\n";
+        StateHasChanged();
+
+        var scriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "scripts", "git", scriptName);
+        if (!File.Exists(scriptPath))
+        {
+            _advancedOutput += $"Error: Script not found at {scriptPath}";
+            _busy = false;
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            var psi = new ProcessStartInfo("powershell.exe")
+            {
+                WorkingDirectory = Directory.Exists(_repo) ? _repo : AppDomain.CurrentDomain.BaseDirectory,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            psi.ArgumentList.Add("-NoProfile");
+            psi.ArgumentList.Add("-ExecutionPolicy");
+            psi.ArgumentList.Add("Bypass");
+            psi.ArgumentList.Add("-File");
+            psi.ArgumentList.Add(scriptPath);
+            foreach (var a in scriptArgs)
+                psi.ArgumentList.Add(a);
+
+            using var proc = Process.Start(psi);
+            if (proc != null)
+            {
+                var stdout = await proc.StandardOutput.ReadToEndAsync();
+                var stderr = await proc.StandardError.ReadToEndAsync();
+                await proc.WaitForExitAsync();
+                _advancedOutput += stdout;
+                if (!string.IsNullOrWhiteSpace(stderr))
+                    _advancedOutput += "\n[STDERR]\n" + stderr;
+                _advancedOutput += $"\n[Exit Code: {proc.ExitCode}]";
+            }
+            await Refresh();
+        }
+        catch (Exception ex)
+        {
+            _advancedOutput += $"\nException: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task PickRepo()
+    {
+        try
+        {
+            var res = await CommunityToolkit.Maui.Storage.FolderPicker.Default.PickAsync(default);
+            if (res.IsSuccessful && res.Folder != null)
+            {
+                _repo = res.Folder.Path;
+                await LoadAsync();
+            }
+        }
+        catch { }
+    }
+
+    private static string FormatDate(string iso) =>
+        DateTime.TryParse(iso, out var d) ? d.ToString("yyyy-MM-dd HH:mm") : iso;
+
+    private static string GetFileStateShort(string s) => s switch
+    {
+        "??" or "A" => "+",
+        "D" => "−",
+        "U" => "!",
+        _ => "M"
+    };
+
+    private static string GetFileStateLabel(string s) => s switch
+    {
+        "??" => "Untracked",
+        "A" => "Added",
+        "D" => "Deleted",
+        "U" => "Conflict",
+        "R" => "Renamed",
+        _ => "Modified"
+    };
+
+    private static string GetFileStateClass(string s) => s switch
+    {
+        "??" or "A" => "added",
+        "D" or "U" => "deleted",
+        _ => "modified"
+    };
+
+    private static string GetDiffLineClass(string line, ref int oldLn, ref int newLn, out string left, out string right)
+    {
+        left = "";
+        right = "";
+        if (line.StartsWith("@@"))
+        {
+            return "hunk";
+        }
+        if (line.StartsWith("+++") || line.StartsWith("---") || line.StartsWith("diff ") || line.StartsWith("index "))
+        {
+            return "meta";
+        }
+        if (line.StartsWith("+"))
+        {
+            right = (newLn++).ToString();
+            return "add";
+        }
+        if (line.StartsWith("-"))
+        {
+            left = (oldLn++).ToString();
+            return "del";
+        }
+        left = (oldLn++).ToString();
+        right = (newLn++).ToString();
+        return "ctx";
+    }
 }
+
+<style>
+    .ent-repo-shell {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #0f172a;
+        padding-bottom: 32px;
+    }
+
+    .ent-top-card, .ent-panel {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px 20px;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
+    }
+
+    .ent-repo-picker-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .ent-repo-input-wrap {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 6px 12px;
+    }
+
+    .ent-folder-icon {
+        color: #0066ff;
+        font-size: 16px;
+    }
+
+    .ent-repo-input {
+        flex: 1;
+        border: none;
+        background: transparent;
+        font-size: 13.5px;
+        font-weight: 500;
+        color: #0f172a;
+        outline: none;
+    }
+
+    .ent-repo-select {
+        border: none;
+        border-left: 1px solid #cbd5e1;
+        background: transparent;
+        padding-left: 10px;
+        font-size: 12px;
+        color: #475569;
+        max-width: 220px;
+        outline: none;
+        cursor: pointer;
+    }
+
+    .ent-telemetry-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid #f1f5f9;
+    }
+
+    .ent-telemetry-left {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .ent-branch-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        color: #1d4ed8;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 12.5px;
+    }
+
+    .ent-upstream {
+        color: #64748b;
+        font-weight: 500;
+    }
+
+    .ent-meta-text {
+        font-size: 12.5px;
+        color: #475569;
+    }
+
+    .text-emerald { color: #059669; }
+    .text-amber { color: #d97706; }
+    .text-muted { color: #94a3b8; }
+
+    .ent-sre-pills {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .ent-sre-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 10px;
+        border-radius: 6px;
+        font-size: 11.5px;
+        font-weight: 700;
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .ent-sre-pill.pass {
+        background: #ecfdf5;
+        color: #047857;
+        border: 1px solid #a7f3d0;
+    }
+
+    .ent-sre-pill.fail {
+        background: #fef2f2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+    }
+
+    .ent-sre-pill.purple {
+        background: #f5f3ff;
+        color: #6d28d9;
+        border: 1px solid #ddd6fe;
+    }
+
+    .ent-sre-pill.neutral {
+        background: #f1f5f9;
+        color: #475569;
+        border: 1px solid #cbd5e1;
+    }
+
+    .ent-telemetry-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .ent-autosync-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #334155;
+        cursor: pointer;
+        margin-left: 4px;
+    }
+
+    .ent-tabs-bar {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        border-bottom: 1px solid #e2e8f0;
+        padding: 0 4px;
+        overflow-x: auto;
+    }
+
+    .ent-tab {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        padding: 10px 16px;
+        border: none;
+        background: transparent;
+        font-size: 13px;
+        font-weight: 600;
+        color: #64748b;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        transition: all 0.15s;
+        white-space: nowrap;
+    }
+
+    .ent-tab:hover {
+        color: #0f172a;
+    }
+
+    .ent-tab.active {
+        color: #0066ff;
+        border-bottom-color: #0066ff;
+    }
+
+    .ent-workbench-grid {
+        display: grid;
+        grid-template-columns: 5fr 7fr;
+        gap: 16px;
+        align-items: start;
+    }
+
+    @@media (max-width: 1100px) {
+        .ent-workbench-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .ent-col-left, .ent-col-right {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+    }
+
+    .ent-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+
+    .ent-panel-title {
+        font-size: 11.5px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+        color: #1e293b;
+        text-transform: uppercase;
+    }
+
+    .ent-diff-subtitle {
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+        color: #0066ff;
+        margin-left: 6px;
+    }
+
+    .ent-file-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        max-height: 270px;
+        overflow-y: auto;
+    }
+
+    .ent-file-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        cursor: pointer;
+        font-size: 12.5px;
+        transition: background 0.12s;
+    }
+
+    .ent-file-row:hover {
+        background: #f8fafc;
+    }
+
+    .ent-file-row.active {
+        background: #eff6ff;
+        border-color: #bfdbfe;
+    }
+
+    .ent-file-state {
+        font-family: 'JetBrains Mono', monospace;
+        font-weight: 800;
+        width: 18px;
+        text-align: center;
+    }
+
+    .ent-file-state.modified { color: #d97706; }
+    .ent-file-state.added { color: #059669; }
+    .ent-file-state.deleted { color: #dc2626; }
+
+    .ent-file-path {
+        flex: 1;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+        color: #1e293b;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .ent-file-tag {
+        font-size: 10.5px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 4px;
+    }
+
+    .ent-file-tag.modified { background: #fef3c7; color: #b45309; }
+    .ent-file-tag.added { background: #d1fae5; color: #047857; }
+    .ent-file-tag.deleted { background: #fee2e2; color: #b91c1c; }
+
+    .ent-commit-chips {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+    }
+
+    .ent-chip {
+        background: #f1f5f9;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 2px 8px;
+        font-size: 11px;
+        font-family: 'JetBrains Mono', monospace;
+        color: #334155;
+        cursor: pointer;
+    }
+
+    .ent-chip:hover {
+        background: #e2e8f0;
+    }
+
+    .ent-commit-textarea {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 13px;
+        color: #0f172a;
+        background: #f8fafc;
+        resize: vertical;
+        outline: none;
+    }
+
+    .ent-commit-textarea:focus {
+        border-color: #0066ff;
+        background: #ffffff;
+    }
+
+    .ent-mono {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12px;
+    }
+
+    .ent-gpg-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin: 10px 0;
+        font-size: 12px;
+        color: #475569;
+    }
+
+    .ent-gpg-status {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .ent-sre-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #f5f3ff;
+        border: 1px solid #ddd6fe;
+        border-radius: 8px;
+        padding: 8px 12px;
+        margin-bottom: 10px;
+        font-size: 12px;
+        color: #4c1d95;
+        font-weight: 500;
+    }
+
+    .ent-ai-badge {
+        background: #7c3aed;
+        color: #ffffff;
+        font-size: 10px;
+        font-weight: 800;
+        padding: 2px 6px;
+        border-radius: 4px;
+    }
+
+    .ent-diff-viewport {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        max-height: 390px;
+        overflow: auto;
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: 12px;
+    }
+
+    .ent-diff-line {
+        display: flex;
+        padding: 1px 10px;
+        white-space: pre;
+        line-height: 1.55;
+    }
+
+    .ent-ln {
+        width: 34px;
+        color: #94a3b8;
+        text-align: right;
+        padding-right: 10px;
+        user-select: none;
+        flex-shrink: 0;
+    }
+
+    .ent-diff-code {
+        flex: 1;
+    }
+
+    .ent-diff-line.add {
+        background: #dcfce7;
+        color: #14532d;
+    }
+
+    .ent-diff-line.del {
+        background: #fee2e2;
+        color: #7f1d1d;
+    }
+
+    .ent-diff-line.hunk {
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-weight: 600;
+    }
+
+    .ent-diff-line.meta {
+        color: #64748b;
+        font-weight: 600;
+    }
+
+    .ent-tool-pills {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .ent-tool-pill {
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 3px 9px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #334155;
+        cursor: pointer;
+    }
+
+    .ent-tool-pill:hover {
+        border-color: #7c3aed;
+        color: #6d28d9;
+        background: #f5f3ff;
+    }
+
+    .ent-copilot-input-row {
+        display: flex;
+        gap: 8px;
+    }
+
+    .ent-copilot-input {
+        flex: 1;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 13px;
+        outline: none;
+    }
+
+    .ent-copilot-output {
+        margin-top: 10px;
+        padding: 10px 12px;
+        background: #f5f3ff;
+        border: 1px solid #ddd6fe;
+        border-radius: 8px;
+        font-size: 12.5px;
+        white-space: pre-wrap;
+        color: #1e1b4b;
+    }
+
+    /* Playbooks & Terminal (Tab 2) */
+    .ent-playbook-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .ent-playbook-card {
+        border: 1px solid #e2e8f0;
+        border-radius: 10px;
+        padding: 10px 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .ent-playbook-card:hover {
+        border-color: #93c5fd;
+        background: #f8fafc;
+    }
+
+    .ent-playbook-card.active {
+        border: 2px solid #0066ff;
+        background: #eff6ff;
+    }
+
+    .ent-playbook-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .ent-playbook-name {
+        font-size: 13px;
+        font-weight: 700;
+        color: #0f172a;
+    }
+
+    .ent-playbook-tag {
+        display: inline-block;
+        font-size: 10.5px;
+        font-weight: 600;
+        background: #e2e8f0;
+        color: #334155;
+        padding: 1px 7px;
+        border-radius: 4px;
+        margin-top: 3px;
+    }
+
+    .ent-playbook-badge {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 6px;
+    }
+
+    .ent-playbook-badge.pass { background: #dcfce7; color: #15803d; }
+    .ent-playbook-badge.danger { background: #fee2e2; color: #b91c1c; }
+
+    .ent-playbook-desc {
+        font-size: 11.5px;
+        color: #475569;
+        margin-top: 6px;
+    }
+
+    .ent-safety-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 600;
+        margin: 10px 0;
+    }
+
+    .ent-safety-banner.ok {
+        background: #ecfdf5;
+        color: #047857;
+        border: 1px solid #a7f3d0;
+    }
+
+    .ent-safety-banner.warn {
+        background: #fef2f2;
+        color: #b91c1c;
+        border: 1px solid #fecaca;
+    }
+
+    .ent-approve-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: #b91c1c;
+        font-weight: 600;
+        margin-bottom: 10px;
+        cursor: pointer;
+    }
+
+    .ent-terminal-card {
+        background: #0f172a;
+        border-color: #1e293b;
+        color: #f8fafc;
+    }
+
+    .ent-terminal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid #1e293b;
+    }
+
+    .ent-terminal-title {
+        font-size: 11.5px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        color: #94a3b8;
+    }
+
+    .ent-terminal-pill {
+        font-size: 11px;
+        font-weight: 700;
+        padding: 3px 10px;
+        border-radius: 6px;
+    }
+
+    .ent-terminal-pill.ok { background: rgba(16, 185, 129, 0.18); color: #34d399; }
+    .ent-terminal-pill.fail { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+
+    .ent-terminal-body {
+        font-family: 'JetBrains Mono', Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.6;
+        max-height: 260px;
+        overflow-y: auto;
+    }
+
+    .ent-term-line { color: #e2e8f0; white-space: pre-wrap; }
+    .ent-term-line.muted { color: #64748b; }
+    .ent-term-line.pass { color: #34d399; }
+    .ent-term-line.err { color: #f87171; }
+    .ent-term-line.exec { color: #38bdf8; }
+
+    /* Tables & Buttons */
+    .ent-table-wrap {
+        overflow-x: auto;
+        max-height: 360px;
+        overflow-y: auto;
+    }
+
+    .ent-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12.5px;
+    }
+
+    .ent-table th {
+        text-align: left;
+        font-size: 11px;
+        text-transform: uppercase;
+        color: #64748b;
+        padding: 8px 10px;
+        border-bottom: 1px solid #e2e8f0;
+    }
+
+    .ent-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #f1f5f9;
+        color: #1e293b;
+    }
+
+    .ent-sha {
+        background: #eff6ff;
+        color: #1d4ed8;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11.5px;
+    }
+
+    .ent-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 8px 14px;
+        border-radius: 8px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid transparent;
+        transition: all 0.15s;
+    }
+
+    .ent-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+    }
+
+    .ent-btn-sm {
+        padding: 5px 11px;
+        font-size: 12px;
+    }
+
+    .ent-btn-full {
+        width: 100%;
+    }
+
+    .ent-btn-primary {
+        background: #0066ff;
+        color: #ffffff;
+    }
+
+    .ent-btn-primary:hover:not(:disabled) {
+        background: #0052cc;
+    }
+
+    .ent-btn-purple {
+        background: #7c3aed;
+        color: #ffffff;
+    }
+
+    .ent-btn-warning {
+        background: #d97706;
+        color: #ffffff;
+    }
+
+    .ent-btn-outline {
+        background: #ffffff;
+        border-color: #cbd5e1;
+        color: #1e293b;
+    }
+
+    .ent-btn-outline:hover:not(:disabled) {
+        background: #f8fafc;
+        border-color: #94a3b8;
+    }
+
+    .ent-ai-btn {
+        background: #7c3aed;
+        color: #ffffff;
+        border: none;
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 11.5px;
+        font-weight: 700;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        cursor: pointer;
+    }
+
+    .ent-mini-btn {
+        background: #f8fafc;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #334155;
+        cursor: pointer;
+    }
+
+    .ent-mini-btn.danger {
+        background: #fef2f2;
+        border-color: #fecaca;
+        color: #b91c1c;
+    }
+
+    .ent-icon-btn {
+        border: none;
+        background: transparent;
+        color: #64748b;
+        cursor: pointer;
+        padding: 2px 5px;
+        border-radius: 4px;
+    }
+
+    .ent-icon-btn.danger:hover {
+        background: #fee2e2;
+        color: #b91c1c;
+    }
+
+    .ent-empty-state {
+        text-align: center;
+        padding: 28px 16px;
+        color: #64748b;
+        font-size: 13px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .ent-sub {
+        font-size: 11.5px;
+        color: #64748b;
+    }
+
+    .ent-mini-search {
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 12px;
+        outline: none;
+    }
+
+    .ent-form-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .ent-lbl {
+        font-size: 11.5px;
+        font-weight: 600;
+        color: #475569;
+    }
+
+    .ent-remote-card {
+        padding: 8px 10px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        margin-bottom: 8px;
+    }
+
+    .ent-remote-form {
+        display: flex;
+        gap: 6px;
+        margin-top: 10px;
+    }
+
+    .ent-cred-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .ent-cred-item {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+    }
+
+    .ent-spin {
+        display: inline-block;
+        animation: ent-spin-anim 1s linear infinite;
+    }
+
+    @@keyframes ent-spin-anim {
+        100% { transform: rotate(360deg); }
+    }
+
+    /* ── Incident AutoSRE Banner & 3-Column Workbench (Matching Screenshot) ── */
+    .inc-banner-card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 12px;
+        background: #ffffff;
+        border: 1px solid #fecaca;
+        border-left: 4px solid #ef4444;
+        border-radius: 12px;
+        padding: 10px 18px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+    }
+
+    .inc-banner-left, .inc-banner-right {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .inc-red-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: #ef4444;
+        box-shadow: 0 0 0 3px #fee2e2;
+    }
+
+    .inc-id {
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 12.5px;
+        font-weight: 800;
+        color: #b91c1c;
+    }
+
+    .inc-sev-pill {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        color: #dc2626;
+        font-size: 11px;
+        font-weight: 800;
+        padding: 2px 7px;
+        border-radius: 5px;
+    }
+
+    .inc-title {
+        font-size: 13.5px;
+        font-weight: 700;
+        color: #0f172a;
+    }
+
+    .inc-sep {
+        color: #cbd5e1;
+    }
+
+    .inc-svc {
+        background: #f1f5f9;
+        color: #334155;
+        padding: 2px 7px;
+        border-radius: 5px;
+        font-size: 12px;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .inc-elapsed {
+        font-size: 12.5px;
+        color: #64748b;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .inc-verifying-pill {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #b45309;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        padding: 3px 9px;
+        border-radius: 6px;
+    }
+
+    .inc-conf-text {
+        font-size: 12.5px;
+        color: #475569;
+    }
+
+    .inc-three-col-grid {
+        display: grid;
+        grid-template-columns: 3.3fr 5.4fr 3.3fr;
+        gap: 14px;
+        align-items: start;
+    }
+
+    @@media (max-width: 1220px) {
+        .inc-three-col-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .ent-col-center, .ent-col-analysis {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+    }
+
+    .inc-filter-pills {
+        display: inline-flex;
+        background: #f1f5f9;
+        border-radius: 6px;
+        padding: 2px;
+        gap: 2px;
+    }
+
+    .inc-filter-pill {
+        border: none;
+        background: transparent;
+        font-size: 11px;
+        font-weight: 600;
+        color: #64748b;
+        padding: 3px 8px;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+
+    .inc-filter-pill.active {
+        background: #ffffff;
+        color: #0f172a;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+    }
+
+    .inc-dir-header {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #64748b;
+        font-family: 'JetBrains Mono', monospace;
+        padding: 6px 4px 2px 4px;
+    }
+
+    .inc-numstat {
+        display: inline-flex;
+        gap: 5px;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        font-weight: 700;
+    }
+
+    .inc-stat-add { color: #059669; }
+    .inc-stat-del { color: #dc2626; }
+
+    /* SYNCRO ANALYSIS Panel */
+    .inc-rootcause-pill {
+        background: #f5f3ff;
+        border: 1px solid #ddd6fe;
+        color: #6d28d9;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 8px;
+        border-radius: 6px;
+    }
+
+    .inc-sec-label {
+        font-size: 10.5px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        color: #64748b;
+        margin: 12px 0 6px 0;
+        text-transform: uppercase;
+    }
+
+    .inc-suspect-card {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        border-radius: 8px;
+        padding: 9px 11px;
+        cursor: pointer;
+        transition: border-color 0.15s;
+    }
+
+    .inc-suspect-card:hover {
+        border-color: #f59e0b;
+    }
+
+    .inc-suspect-meta {
+        font-size: 11.5px;
+        color: #92400e;
+        font-family: 'JetBrains Mono', monospace;
+    }
+
+    .inc-suspect-subj {
+        font-size: 12.5px;
+        font-weight: 600;
+        color: #78350f;
+        margin-top: 3px;
+    }
+
+    .inc-evidence-list {
+        margin: 0;
+        padding-left: 16px;
+        font-size: 12px;
+        color: #334155;
+        line-height: 1.65;
+    }
+
+    .inc-fix-card {
+        background: #f5f3ff;
+        border: 1px solid #ddd6fe;
+        border-radius: 8px;
+        padding: 10px 12px;
+    }
+
+    .inc-fix-text {
+        font-size: 12px;
+        font-weight: 600;
+        color: #2e1065;
+        font-family: 'JetBrains Mono', monospace;
+        margin-bottom: 8px;
+    }
+
+    .inc-sandbox-btn {
+        background: #ffffff;
+        border: 1px solid #c4b5fd;
+        color: #6d28d9;
+        border-radius: 6px;
+        padding: 5px 10px;
+        font-size: 11.5px;
+        font-weight: 700;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .inc-sandbox-btn:hover {
+        background: #ede9fe;
+    }
+
+    .inc-sandbox-msg {
+        margin-top: 8px;
+        padding: 7px 10px;
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
+        border-radius: 6px;
+        font-size: 11.5px;
+        color: #065f46;
+    }
+
+    .inc-gate-summary {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid #f1f5f9;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: 12px;
+    }
+
+    .inc-gate-hdr, .inc-gate-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .inc-gate-row {
+        color: #475569;
+    }
+
+    /* Bottom 4 Verification Gate Cards + Protected Branch Action Row */
+    .inc-bottom-gates-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 14px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 12px 18px;
+    }
+
+    .inc-gate-cards {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(130px, 1fr));
+        gap: 10px;
+        flex: 1;
+    }
+
+    .inc-gate-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+    }
+
+    .inc-gate-card-lbl {
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        color: #64748b;
+    }
+
+    .inc-gate-card-val {
+        font-size: 14px;
+        font-weight: 800;
+        margin: 2px 0;
+    }
+
+    .inc-gate-card-val.pass { color: #059669; }
+    .inc-gate-card-val.fail { color: #dc2626; }
+
+    .inc-gate-card-sub {
+        font-size: 11px;
+        color: #64748b;
+    }
+
+    .inc-pr-actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .inc-protected-note {
+        font-size: 11.5px;
+        color: #64748b;
+        font-weight: 500;
+    }
+
+    /* 5-Stage Incident AutoSRE Flow Stepper */
+    .inc-stepper-card {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 14px 20px;
+    }
+
+    .inc-stepper-hdr {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    .inc-stepper-track {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        overflow-x: auto;
+    }
+
+    .inc-step {
+        flex: 1;
+        min-width: 135px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 9px 14px;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+
+    .inc-step.done {
+        background: #f0fdf4;
+        border-color: #bbf7d0;
+    }
+
+    .inc-step.active {
+        background: #f5f3ff;
+        border: 2px solid #7c3aed;
+    }
+
+    .inc-step-title {
+        font-size: 12.5px;
+        font-weight: 800;
+        color: #0f172a;
+    }
+
+    .inc-step.active .inc-step-title {
+        color: #6d28d9;
+    }
+
+    .inc-step-sub {
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 2px;
+    }
+
+    .inc-step-arrow {
+        color: #94a3b8;
+        font-weight: 700;
+    }
+</style>

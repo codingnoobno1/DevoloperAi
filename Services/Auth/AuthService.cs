@@ -13,6 +13,8 @@ namespace Syncro.Desktop.Services.Auth
 
         public string? Token { get; private set; }
         public string? CurrentUserId { get; private set; }
+        public string? CurrentUserName { get; private set; }
+        public string? CurrentUserEmail { get; private set; }
 
         public AuthService(HttpClient httpClient)
         {
@@ -32,6 +34,8 @@ namespace Syncro.Desktop.Services.Auth
                     {
                         Token = result.Token;
                         CurrentUserId = result.UserId;
+                        CurrentUserName = model.Name;
+                        CurrentUserEmail = model.Email;
                         return (true, result.Message ?? "Registration successful");
                     }
                     return (false, result?.Message ?? $"Registration failed with status {response.StatusCode}");
@@ -63,6 +67,8 @@ namespace Syncro.Desktop.Services.Auth
                     {
                         Token = result.Token;
                         CurrentUserId = result.User?.Id ?? result.UserId;
+                        CurrentUserName = result.User?.Name;
+                        CurrentUserEmail = result.User?.Email ?? email;
                         return (true, "Login successful");
                     }
                     return (false, result?.Message ?? $"Login failed: {response.StatusCode}");
@@ -80,6 +86,8 @@ namespace Syncro.Desktop.Services.Auth
         {
             Token = null;
             CurrentUserId = null;
+            CurrentUserName = null;
+            CurrentUserEmail = null;
         }
     }
 
